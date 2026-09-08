@@ -8,7 +8,7 @@ import {
   Rocket, Loader2, Eye, Database, Key, Globe, Terminal,
   RefreshCw, Server, PanelLeftClose, PanelLeft, Monitor, Smartphone,
   ExternalLink, Sparkles, ChevronDown, FolderOpen, Plus,
-  Clock, Github, Code2, ArrowLeft, Figma,
+  Clock, Github, Code2, ArrowLeft, Figma, Copy,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -22,8 +22,11 @@ import { SecretsModal } from "@/components/workspace/SecretsModal";
 import { DomainModal } from "@/components/workspace/DomainModal";
 import { GithubModal } from "@/components/workspace/GithubModal";
 import { DeployControl } from "@/components/workspace/DeployControl";
+import { CloneProjectDialog } from "@/components/workspace/ProjectTransferDialogs";
 import { DiffViewer, type DiffSource } from "@/components/workspace/DiffViewer";
 import { Modal } from "@/components/primitives";
+import { ImportOverlay } from "@/components/workspace/ImportOverlay";
+import { looksLikePlaceholder } from "@/lib/preview-health";
 import type { VcaasProject, ConversationMessage, ProjectVersion } from "@/lib/vcaas-types";
 import { useServerWake } from "@/components/workspace/use-server-wake";
 import { ServerWakeNotice } from "@/components/workspace/ServerWakeNotice";
@@ -32,7 +35,7 @@ import { FigmaModal } from "@/components/workspace/FigmaModal";
 import { OperationBanner } from "@/components/workspace/OperationBanner";
 import { PublishedModal } from "@/components/workspace/PublishedModal";
 import { useProjectOperation } from "@/components/workspace/use-project-operation";
-import { OPERATION_COPY, OPERATION_PROFILES } from "@/lib/project-operation";
+import { OPERATION_COPY, OPERATION_PROFILES, shouldAdoptServerRebuild } from "@/lib/project-operation";
 import { getPublishedHost, getPreviewUrlField } from "@/lib/project-status";
 import { useVisualEditor } from "@/components/workspace/visual-editor/use-visual-editor";
 import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEditorPanel";
@@ -65,6 +68,21 @@ function isCachedPreview(proj: VcaasProject): boolean {
  */
 type WorkspaceModal = "versions" | "secrets" | "domain" | "github" | "figma";
 
+/** The rebuild watch after a visual apply — the platform's numbers, verbatim. */
+const REBUILD_POLL_INTERVAL_MS = 6_000;
+const REBUILD_POLL_TIMEOUT_MS = 10 * 60_000;
+/** `idle` is only believed after the job has had this many polls to appear. */
+const IDLE_POLLS_BEFORE_GIVING_UP = 3;
+/** "success" is not "the app is serving" — probe the preview before reloading it. */
+const PREVIEW_PROBE_ATTEMPTS = 10;
+const PREVIEW_PROBE_INTERVAL_MS = 3_000;
+/**
+ * After an import's lock clears, how long to keep waiting for the app to actually serve
+ * before calling it done anyway — the platform's number. The import DID finish; this is
+ * only about not dropping the overlay onto the sandbox's "preview building" placeholder.
+ */
+const IMPORT_PREVIEW_GRACE_MS = 90_000;
+
 export default function WorkspacePage() {
   const params = useParams();
   const router = useRouter();
@@ -82,6 +100,18 @@ export default function WorkspacePage() {
   const serverWake = useServerWake(projectId);
   const [openModal, setOpenModal] = useState<WorkspaceModal | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
+  /**
+   * ⭐ DUPLICATE, FROM THE PROJECT MENU. The dialog is the dashboard's (export → create →
+   * import behind one button) and it wants the names already in use to suggest a free
+   * copy name, so the list is fetched when the menu entry is pressed, not on every load.
+   */
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [takenNames, setTakenNames] = useState<ReadonlySet<string>>(() => new Set());
+  const openClone = useCallback(async () => {
+    const res = await vcaasApi.projects.list({ limit: 100 });
+    if (res.ok && Array.isArray(res.data)) setTakenNames(new Set(res.data.map((p) => p.projectId)));
+    setCloneOpen(true);
+  }, []);
   const [figmaConnected, setFigmaConnected] = useState(false);
   const [githubConnected, setGithubConnected] = useState(false);
 
@@ -343,10 +373,31 @@ export default function WorkspacePage() {
     let cancelled = false;
     async function init() {
       setLoading(true);
-      const [proj] = await Promise.all([fetchProject(), fetchConversation(), fetchGithubStatus()]);
+      const [proj, , , rebuildStatus] = await Promise.all([fetchProject(), fetchConversation(), fetchGithubStatus(), vcaasApi.rebuild.status(projectId)]);
       if (cancelled) return; setLoading(false);
       if (proj?.agentProcessStatus === "init") startAgentPolling();
       if (proj?.deployment?.status === "deploying") { setDeploying(true); pollDeployOnce(); }
+      /**
+       * ⭐ A REBUILD THE SERVER IS RUNNING AND WE HAVE NO STAMP FOR. A visual apply (or a
+       * file save) starts a rebuild on the server; until now the only record of it was
+       * the `localStorage` stamp written by the tab that pressed Save. Reload mid-rebuild
+       * and the workspace looked idle over a dev server being replaced. Adopting it here
+       * restores the banner, and the watcher below settles it — same as the platform.
+       */
+      if (shouldAdoptServerRebuild(rebuildStatus.ok ? rebuildStatus.data?.status : null, operation.current())) {
+        operation.adopt("rebuild");
+      }
+      /**
+       * ⭐⭐ AN IMPORT IS ADOPTED WITH THE SERVER'S OWN CLOCK, AND IT OUTRANKS THE REST.
+       * `importInProgress` is a lock held and dated by the server, so a clone that was
+       * started in the dashboard (which stamps the slot and navigates here) — or in
+       * another tab, or before a reload — shows the overlay on the first frame and keeps
+       * the true elapsed time. Upstream refuses every other long operation while it is
+       * set, so whatever a local stamp claims is in flight, it is not.
+       */
+      if (proj?.importInProgress) {
+        operation.adopt("import", Date.parse(proj.importInProgress.startedAt) || undefined);
+      }
     }
     init(); return () => { cancelled = true; stopAgentPolling(); };
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -444,18 +495,39 @@ export default function WorkspacePage() {
    * of the session, so the watch gives up after `MAX_WATCH_ATTEMPTS` and says it stopped
    * watching rather than claiming a failure it did not observe.
    *
-   * ⚠️ `publish` AND `rebuild` ARE NOT HERE. Both already have a poll that owns them (the
-   * deploy poll below, and the Code panel's rebuild poll), and two watchers on one job is
-   * how a banner gets cleared while the work is still running.
+   * ⚠️ `publish` IS NOT HERE — the deploy poll below owns it, and two watchers on one job
+   * is how a banner gets cleared while the work is still running. `rebuild` IS here: the
+   * Code panel's poll dies with the panel, and a visual apply starts a rebuild with no
+   * panel at all, so this is the watch that survives a tab switch and a reload.
    */
   useEffect(() => {
     const kind = operation.kind;
-    if (!kind || kind === "publish" || kind === "rebuild") return;
+    if (!kind || kind === "publish") return;
 
     const MAX_WATCH_ATTEMPTS = 60; // 60 × 8s = 8 minutes
     let cancelled = false;
     let attempts = 0;
+    let idleSeen = 0;
+    /** Import only: whether the lock was ever seen, and when it was seen to clear. */
+    let sawImporting = false;
+    let importClearedAt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+
+    /**
+     * ⚠️ A 200 IS NOT ENOUGH. While the server is down the sandbox serves its own
+     * "preview building, expired or broken" page with a perfectly good status code.
+     * `looksLikePlaceholder` is the platform's check, copied, so there is one definition
+     * of "that is not your app".
+     */
+    const appIsServing = async (): Promise<boolean> => {
+      try {
+        const response = await fetch(`/api/preview/${encodeURIComponent(projectId)}/`, { cache: "no-store" });
+        if (!response.ok) return false;
+        return !looksLikePlaceholder(await response.text());
+      } catch {
+        return false; // indistinguishable from "not up yet"
+      }
+    };
 
     const finish = (message?: string) => {
       operation.end(kind);
@@ -474,11 +546,46 @@ export default function WorkspacePage() {
         if (detail.ok && detail.data?.agentServerStatus === "Active") return finish("Your server is back");
       }
 
+      if (kind === "rebuild") {
+        const status = await vcaasApi.rebuild.status(projectId);
+        if (cancelled) return;
+        if (status.ok && status.data?.status === "success") return finish(translate("workspace.code.rebuildDone"));
+        if (status.ok && status.data?.status === "error") { toast.error(status.data.errorMessage || translate("workspace.code.rebuildFailed")); return finish(); }
+        // `idle` means "never rebuilt here", not "finished" — believe it only once the job
+        // has had a few polls to appear, and then give up rather than claim success.
+        if (status.ok && status.data?.status === "idle" && ++idleSeen >= IDLE_POLLS_BEFORE_GIVING_UP) { operation.end(kind); return; }
+      }
+
       if (kind === "githubPull") {
         const status = await vcaasApi.github.pullStatus(projectId);
         if (cancelled) return;
         if (status.ok && status.data && status.data.status !== "pulling") {
           return finish(status.data.status === "error" ? undefined : "Pulled from GitHub");
+        }
+      }
+
+      /**
+       * ⭐ IMPORT — the platform's rule, verbatim: the server's lock must clear, then
+       * the sandbox must be `Active` AND serving the project's own app. If the lock was
+       * never seen at all, give it a few polls to appear before believing "not running".
+       * Once the lock has cleared, a bounded grace covers the cold build, after which the
+       * import is a success either way — it DID finish; only the preview is late.
+       */
+      if (kind === "import") {
+        const detail = await vcaasApi.projects.get(projectId);
+        if (cancelled) return;
+        if (detail.ok && detail.data) {
+          if (detail.data.importInProgress) {
+            sawImporting = true;
+            importClearedAt = 0;
+          } else if (sawImporting || ++idleSeen >= IDLE_POLLS_BEFORE_GIVING_UP || importClearedAt !== 0) {
+            if (importClearedAt === 0) importClearedAt = Date.now();
+            const graceExpired = Date.now() - importClearedAt > IMPORT_PREVIEW_GRACE_MS;
+            if ((detail.data.agentServerStatus === "Active" && (await appIsServing())) || graceExpired) {
+              if (cancelled) return;
+              return finish(translate("workspace.operation.import.succeeded"));
+            }
+          }
         }
       }
 
@@ -564,6 +671,80 @@ export default function WorkspacePage() {
     setVisualEditorOpen(false);
     void visual.apply();
   }, [visual]);
+
+  /**
+   * ═══⭐⭐ WHEN THE REBUILD THE EDITOR STARTED FINISHES ═════════════════════
+   *
+   * The apply route writes the files and starts a rebuild, and the hook parks in
+   * `rebuilding` until SOMEONE tells it the rebuild ended. In the platform that someone
+   * is this effect in `WorkspaceShell`; it was never copied here, so the bar's loader ran
+   * for ever and only a manual reload showed the change. Copied now, verbatim apart from
+   * the preview key, plus one line that stamps the operation slot so the banner (and a
+   * reload — see the adoption in `init`) knows a rebuild is running.
+   *
+   * ⭐ "SUCCESS" IS NOT "THE APP IS SERVING". The platform measured rebuilds that
+   * reported success and then served 503 for minutes; reloading the frame on that answer
+   * drops the user into a dead page. So the preview is probed before declaring victory.
+   *
+   * ⚠️ `visual` IS DELIBERATELY NOT A DEPENDENCY — it is a fresh object every render and
+   * would restart this timer on every poll tick. The two callbacks are stable.
+   */
+  const visualFinishRebuild = visual.finishRebuild;
+  const visualFailRebuild = visual.failRebuild;
+  useEffect(() => {
+    if (visual.phase !== "rebuilding") return;
+    if (!operation.isActive("rebuild")) operation.begin("rebuild");
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
+    let idleSeen = 0;
+
+    const previewAnswers = async (): Promise<boolean> => {
+      for (let attempt = 0; attempt < PREVIEW_PROBE_ATTEMPTS; attempt++) {
+        if (cancelled) return false;
+        try {
+          const response = await fetch(`/api/preview/${encodeURIComponent(projectId)}/`, { method: "HEAD", cache: "no-store" });
+          if (response.ok) return true;
+        } catch {
+          // Network hiccup — indistinguishable from "not up yet", so retry.
+        }
+        await new Promise(resolve => setTimeout(resolve, PREVIEW_PROBE_INTERVAL_MS));
+      }
+      return false;
+    };
+
+    const settle = async (outcome: "success" | "error", code?: string) => {
+      if (cancelled) return;
+      operation.end("rebuild");
+      if (outcome === "error") { visualFailRebuild(code || "REBUILD_FAILED"); return; }
+      const alive = await previewAnswers();
+      if (cancelled) return;
+      if (!alive) { visualFailRebuild("REBUILD_OK_APP_DOWN"); return; }
+      visualFinishRebuild();
+      fetchProject();
+      setPreviewKey(value => value + 1);
+    };
+
+    const poll = async () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt > REBUILD_POLL_TIMEOUT_MS) { operation.end("rebuild"); visualFailRebuild("REBUILD_TIMEOUT"); return; }
+
+      const response = await vcaasApi.rebuild.status(projectId);
+      if (cancelled) return;
+      if (!response.ok) { timer = setTimeout(poll, REBUILD_POLL_INTERVAL_MS); return; }
+
+      const status = response.data?.status ?? null;
+      if (status === "success") { void settle("success"); return; }
+      if (status === "error") { void settle("error", "REBUILD_FAILED"); return; }
+      if (status === "idle" && ++idleSeen >= IDLE_POLLS_BEFORE_GIVING_UP) { operation.end("rebuild"); visualFailRebuild("REBUILD_NOT_FOUND"); return; }
+
+      timer = setTimeout(poll, REBUILD_POLL_INTERVAL_MS);
+    };
+
+    timer = setTimeout(poll, REBUILD_POLL_INTERVAL_MS);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [visual.phase, projectId, visualFinishRebuild, visualFailRebuild]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStopAgent = async () => { await vcaasApi.agent.stop(projectId); toast.info("Stop signal sent"); };
   // Autofill the chat prompt with an edit instruction for the given file, then focus the chat.
@@ -769,6 +950,10 @@ export default function WorkspacePage() {
             </button>
           );
         })}
+        <button onClick={() => { setMenuOpen(false); void openClone(); }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-gray-700 dark:text-gray-200">
+          <Copy className="w-4 h-4 text-gray-400" /> {"Duplicate project"}
+        </button>
       </div>
       <div className="border-t py-1" style={{ borderColor: darkMode ? "#444" : "#eee" }}>
         {/* Publish on mobile */}
@@ -1072,6 +1257,14 @@ export default function WorkspacePage() {
         onPull={() => void handleGithubPull()}
         blockedReason={githubPulling ? null : operationBusyReason}
       />
+      {/* ⭐ Duplicate — the dashboard's dialog; on success it navigates to the copy itself. */}
+      <CloneProjectDialog
+        open={cloneOpen}
+        onOpenChange={setCloneOpen}
+        projectId={projectId}
+        takenNames={takenNames}
+        onCloned={() => {}}
+      />
       <FigmaModal
         open={openModal === "figma"}
         onOpenChange={open => setOpenModal(open ? "figma" : null)}
@@ -1099,6 +1292,17 @@ export default function WorkspacePage() {
           />
         </div>
       </Modal>
+      {/*
+        ═══⭐⭐ THE IMPORT OVERLAY — the one operation that covers the screen ═══════
+        A clone or import replaces EVERYTHING underneath: code, data, the running server.
+        There is nothing to work with until it lands, so the platform covers the workspace
+        with its first-build narrative rather than a banner. Copied unchanged; it renders
+        whenever the slot says `import`, which the dashboard stamps before navigating here
+        and the load effect adopts from the server's own lock after a reload.
+      */}
+      {operation.kind === "import" && (
+        <ImportOverlay elapsedMs={operation.elapsedMs} projectId={projectId} />
+      )}
     </div>
   );
 }

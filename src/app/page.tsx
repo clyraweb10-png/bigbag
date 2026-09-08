@@ -406,17 +406,25 @@ export default function DashboardPage() {
 
     const res = await vcaasApi.projects.create({ projectId: id, description: firstPrompt.trim().slice(0, 200) });
     if (!res.ok) {
-      setBuildError(`Could not create "${id}". This name is probably already taken — please choose a different project name.`);
+      setBuildError(res.error || `Could not create "${id}".`);
       setBuildCreating(false);
       return;
     }
+    /**
+     * ⚠️ THE CREATED ID, NOT THE REQUESTED ONE. A taken name is no longer an error:
+     * the API creates `my-app-k7` and says so, and every call from here on — Figma,
+     * the uploads, the stash, the navigation — must go to the project that exists.
+     */
+    const requested = id;
+    const id2 = res.data?.projectId || requested;
+    if (id2 !== requested) toast.info(`"${requested}" was taken — your project is "${id2}".`);
     /**
      * ⭐ CONNECT FIGMA NOW THAT THERE IS A PROJECT — before the prompt is stashed, since
      * the workspace runs it on arrival. A failure here does not fail the creation: the
      * project exists and has been paid for, so say Figma did not connect and move on.
      */
     if (figmaToken) {
-      const figma = await vcaasApi.figma.connect(id, { token: figmaToken });
+      const figma = await vcaasApi.figma.connect(id2, { token: figmaToken });
       setFigmaToken(null);
       if (!figma.ok) toast.warning(t("workspace.figma.pendingConnectFailed"), { description: figma.error || undefined });
     }
@@ -427,17 +435,17 @@ export default function DashboardPage() {
     let uploadedFiles: { name: string; url: string; imageDescription: string }[] = [];
     setUploading(true);
     // Retries built in — a just-created project's storage can need a moment.
-    uploadedFiles = await uploadFilesToProjectHelper(id, attachedFiles.map((f) => f.file));
+    uploadedFiles = await uploadFilesToProjectHelper(id2, attachedFiles.map((f) => f.file));
     setUploading(false);
     if (uploadedFiles.length < attachedFiles.length) {
       toast.error("Some attachments could not be uploaded. The agent may not see them.");
     }
     // Stash the first prompt (and uploaded files, with real URLs) so the workspace auto-submits it.
     try {
-      sessionStorage.setItem(`vibebuild:pendingPrompt:${id}`, firstPrompt.trim());
-      if (uploadedFiles.length > 0) sessionStorage.setItem(`vibebuild:pendingFiles:${id}`, JSON.stringify(uploadedFiles));
+      sessionStorage.setItem(`vibebuild:pendingPrompt:${id2}`, firstPrompt.trim());
+      if (uploadedFiles.length > 0) sessionStorage.setItem(`vibebuild:pendingFiles:${id2}`, JSON.stringify(uploadedFiles));
     } catch { /* ignore */ }
-    router.push(`/project/${id}`);
+    router.push(`/project/${id2}`);
   };
 
   // Keep the raw File objects around — we can't upload here because the project

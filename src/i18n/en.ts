@@ -4878,7 +4878,7 @@ export const en = {
        * serves every action that needs the live app; its copy has to describe the STATE,
        * and let the button the user pressed be the thing they press again.
        */
-      startingTitle: "Your project is still starting",
+      startingTitle: "Your project server is still starting",
       startingBody:
         "Your app isn't answering yet, so there's nothing to work with. Give it a couple of minutes and try again.",
       appErrorTitle: "Your app isn't running",
