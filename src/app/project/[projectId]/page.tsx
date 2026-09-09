@@ -26,6 +26,7 @@ import { CloneProjectDialog } from "@/components/workspace/ProjectTransferDialog
 import { DiffViewer, type DiffSource } from "@/components/workspace/DiffViewer";
 import { Modal } from "@/components/primitives";
 import { ImportOverlay } from "@/components/workspace/ImportOverlay";
+import { PathPicker } from "@/components/workspace/PathPicker";
 import { looksLikePlaceholder } from "@/lib/preview-health";
 import type { VcaasProject, ConversationMessage, ProjectVersion, AgentRunOptions, AgentInputFile } from "@/lib/vcaas-types";
 import { loadAttachments, saveAttachments } from "@/lib/composer-attachments";
@@ -1132,7 +1133,20 @@ export default function WorkspacePage() {
                 <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
                 <div className="w-px h-3.5 bg-gray-200 dark:bg-gray-600 shrink-0" />
                 <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}</button>
-                <input value={iframePath} onChange={(e) => setIframePath(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") setPreviewKey((k) => k + 1); }} className="flex-1 min-w-0 bg-transparent border-0 outline-none text-sm font-mono text-gray-600 dark:text-gray-300 placeholder:text-gray-400 px-1" placeholder="/" />
+                {/*
+                  ⭐ THE ADDRESS BOX LISTS THE PROJECT'S OWN PAGES. It was a bare text
+                  input, so reaching any page but `/` meant knowing its URL by heart.
+                  `PathPicker` (the platform's, copied) reads the file tree — free, not
+                  the charged source download — turns the route files into a list, and
+                  filters it as you type; picking one navigates the preview.
+                */}
+                <PathPicker
+                  projectId={projectId}
+                  path={iframePath}
+                  onPathChange={setIframePath}
+                  onRefresh={() => setPreviewKey((k) => k + 1)}
+                  className="flex-1 min-w-0"
+                />
                 <button className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0" onClick={() => { fetchProject(); setPreviewKey((k) => k + 1); }}><RefreshCw className="w-3.5 h-3.5" /></button>
                 {previewUrl && <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>}
               </div>
