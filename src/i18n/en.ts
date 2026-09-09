@@ -4896,6 +4896,7 @@ export const en = {
       actionConnect: "connect GitHub",
       actionPull: "pull from GitHub",
       actionRestore: "restore that version",
+      actionSendPrompt: "send that prompt",
     },
 
     github: {

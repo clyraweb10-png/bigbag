@@ -147,6 +147,49 @@ export default function WorkspacePage() {
    * on. Both are lifted from totalum-platform unchanged — see the notes in those files.
    */
   const serverWake = useServerWake(projectId);
+
+  /**
+   * ═══⭐⭐⭐ TOUCHING THE PROJECT STARTS ITS SLEEPING SERVER ═════════════════
+   *
+   * A sandbox is archived after a spell of inactivity, and an archived project opens
+   * onto a dead end: the preview is a cached snapshot, and the first real thing the
+   * user does — send a prompt, save a file, publish, pull — comes back
+   * `SERVER_NOT_READY` two or three minutes before it could have worked. Starting it
+   * when they engage means that wait overlaps with them reading their project instead
+   * of following it.
+   *
+   * ⚠️⚠️ MERELY OPENING THE PAGE IS NOT ENOUGH, and that is the whole point of the
+   * latch. Opening a project is the cheapest thing a user does: a link from the
+   * dashboard, a bookmark, a tab the browser restored, a glance at a preview. Starting
+   * a server for each of those spends credits and minutes of machine time on something
+   * nobody was going to use. The project has to be TOUCHED first.
+   *
+   * ⚠️ THE HEADER IS EXCLUDED ON PURPOSE — totalum-platform does the same. It is
+   * scaffolding, not the project: the project name, the theme toggle, the menu,
+   * Dashboard. Clicking those is usually how someone LEAVES, and waking a server on the
+   * way out is the same waste in a costlier disguise.
+   *
+   * ⚠️ A ONE-WAY LATCH, HELD IN A REF AS WELL AS IN STATE. The ref is what the listener
+   * reads, so it never has to re-subscribe; the state is what re-runs the start effect,
+   * which is otherwise idle.
+   */
+  const workspaceTouched = useRef(false);
+  const [touchedProject, setTouchedProject] = useState(false);
+
+  // A different project has not been touched yet, whatever the last one had.
+  useEffect(() => {
+    workspaceTouched.current = false;
+    setTouchedProject(false);
+  }, [projectId]);
+
+  const markWorkspaceTouched = useCallback((event: React.MouseEvent<HTMLElement>) => {
+    if (workspaceTouched.current) return;
+    // `closest`, not the event's own currentTarget: a click can land on any node inside
+    // the header (an icon, inside a button, inside the menu trigger).
+    if ((event.target as HTMLElement | null)?.closest?.("[data-workspace-header]")) return;
+    workspaceTouched.current = true;
+    setTouchedProject(true);
+  }, []);
   const [openModal, setOpenModal] = useState<WorkspaceModal | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   /**
@@ -539,8 +582,38 @@ export default function WorkspacePage() {
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
       pendingRunRef.current = true; runWaitPollsRef.current = 0;
       startAgentPolling();
+    } else {
+      /**
+       * ═══⭐⭐ A REFUSED PROMPT PUTS EVERYTHING BACK ═══════════════════════════
+       *
+       * ⚠️ THE OPTIMISTIC MESSAGE MUST GO. Leaving it would show the agent an
+       * instruction it never received — the user would sit watching for a reply to a
+       * prompt that was never accepted.
+       *
+       * ⚠️ AND THE PROMPT ITSELF COMES BACK TO THE BOX, with its attachments. The
+       * answer to a sleeping server is "press send again in a minute", which is
+       * impossible if sending emptied the composer.
+       */
+      setMessages((prev) => prev.slice(0, -1));
+      if (hasFiles) sentFilesRef.current.pop();
+      setPrompt(text);
+      if (hasFiles) setAttachedFiles(files!);
+
+      /**
+       * ⭐⭐ THE SERVER WAS ASLEEP, SO THE API STARTED IT AND REFUSED THE PROMPT.
+       * That is not a failure and must not read as one: `claim` turns the refusal into
+       * the wake strip with its clock, and tells the user the moment they can send.
+       * Publish, pull and restore already did this; the composer was the one action
+       * still answering a sleeping server with a red error.
+       */
+      if (serverWake.claim(res, () => toast.success(translate("workspace.serverWake.readyFor", { action: translate("workspace.serverWake.actionSendPrompt") })))) {
+        setSending(false);
+        sendingRef.current = false;
+        return;
+      }
+
+      toast.error(res.error || "Failed to start agent");
     }
-    else { toast.error(res.error || "Failed to start agent"); }
     setSending(false);
     sendingRef.current = false;
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -549,6 +622,81 @@ export default function WorkspacePage() {
     if (project?.agentProcessStatus === "init") return;
     await sendPromptText(prompt, files, options);
   };
+
+  /**
+   * ═══⭐⭐ THE AUTOMATIC START ITSELF ═══════════════════════════════════════
+   *
+   * Every guard below rules the start out from a different angle, and all of them have
+   * to agree. This mirrors totalum-platform's effect in `WorkspaceShell`.
+   *
+   * ⚠️ `Archived` ONLY. Not `Archiving` (on its way down, startable in a moment), not
+   * the in-transition states (already coming up), and NOT a missing `agentServerStatus`
+   * — an absent field is far more likely to be a partial read than a dead VM, and
+   * spending credits on that guess, unprompted, is the wrong way to be wrong. A
+   * genuinely dead sandbox still self-heals on the first real action the user takes.
+   *
+   * ⚠️ NOT WHILE ANYTHING ELSE OWNS THE SANDBOX. A project created moments ago has no
+   * sandbox yet and its first prompt is already creating one; firing a second start
+   * into that is wasted at best.
+   *
+   * ⚠️ ONCE PER PROJECT PER MOUNT, via the ref. A reload can still fire it again, and
+   * that is free: the API refuses without charging while a sandbox is `Unarchiving`,
+   * and `claim` renders that refusal as the same wait strip.
+   */
+  const autoStartedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (loading || !project) return;
+    if (autoStartedFor.current === projectId) return;
+
+    // ⚠️ Nothing starts until the user engages with the project — see the latch above.
+    if (!touchedProject) return;
+
+    // Anything already in motion owns the sandbox; do not touch it.
+    // (`isBuilding` is exactly this status check, and is declared further down.)
+    if (operation.kind || project.agentProcessStatus === "init") return;
+
+    // A wake is already in flight; a second start would cost a credit for nothing.
+    if (serverWake.waking) return;
+
+    if (project.agentServerStatus !== "Archived") return;
+
+    // ⚠️ PROOF THE PROJECT HAS EVER BEEN BUILT. A conversation with no user message has
+    // never had a prompt run against it, so there is nothing archived worth restoring.
+    if (!messages.some((message) => message.author === "user")) return;
+
+    autoStartedFor.current = projectId;
+
+    void (async () => {
+      const res = await vcaasApi.agent.restartServer(projectId);
+      if (!mountedRef.current) return;
+
+      /**
+       * ⚠️ THE SUCCESS PATH IS THE ONE THAT NEEDS THE STRIP. `start-or-restart` answers
+       * a 200, so `claim` — which only recognises `SERVER_NOT_READY` — would never see
+       * it. Enter the wait directly, with no retry callback: nothing was refused, so
+       * there is nothing to redo. When it is up, show the live app instead of the
+       * snapshot the frame has been serving.
+       */
+      if (res.ok) {
+        serverWake.begin(() => { void fetchProject(); setPreviewKey((k) => k + 1); });
+        return;
+      }
+
+      // Somebody else got there first, or it is already starting: same strip, silently.
+      // ⚠️ `silent` — THE USER PRESSED NOTHING, so the dialog that answers a refused
+      // button press would here be thrown at somebody who has just arrived.
+      if (serverWake.claim(res, undefined, { silent: true })) return;
+
+      /**
+       * ⚠️ A REAL FAILURE IS SWALLOWED, DELIBERATELY. They asked to open their project,
+       * not to start a server. A red toast about a start they never requested is noise,
+       * and every action they might take next starts it again and reports properly.
+       */
+      console.warn("[workspace] auto server start refused:", res.code || res.error);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, project, projectId, touchedProject, operation.kind, messages, serverWake]);
 
   /**
    * ⭐ ATTACHMENTS SURVIVE A RELOAD. Read on arrival, written on every change. Both
@@ -1090,13 +1238,13 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden dark:text-gray-200" style={{ background: pageBg }}>
+    <div className="h-screen flex flex-col overflow-hidden dark:text-gray-200" style={{ background: pageBg }} onClickCapture={markWorkspaceTouched}>
       {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
 
       {/* ═══ DESKTOP LAYOUT ═══ */}
       <div className="hidden sm:flex flex-col h-full">
         {/* Desktop header 48px */}
-        <header className="flex items-stretch shrink-0 z-10" style={{ height: 48 }}>
+        <header data-workspace-header className="flex items-stretch shrink-0 z-10" style={{ height: 48 }}>
           {/* LEFT: aside width */}
           <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
             <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0">
@@ -1275,7 +1423,7 @@ export default function WorkspacePage() {
       {/* ═══ MOBILE LAYOUT: header → content → fixed switch → fixed textarea ═══ */}
       <div className="flex sm:hidden flex-col h-full">
         {/* Mobile header */}
-        <header className="flex items-center gap-1 px-2 shrink-0 z-10" style={{ height: 44 }}>
+        <header data-workspace-header className="flex items-center gap-1 px-2 shrink-0 z-10" style={{ height: 44 }}>
           <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0">
             <ArrowLeft className="w-4 h-4" />
           </Link>
@@ -1288,6 +1436,18 @@ export default function WorkspacePage() {
             {popupMenu}
           </div>
         </header>
+
+        {/*
+          ⭐ THE WAKE STRIP ON MOBILE, ABOVE BOTH TABS. The desktop strip lives in the
+          panel column, which on a phone is a SEPARATE VIEW from the chat — so a server
+          started from the composer came up with no visible sign of it anywhere. Here it
+          sits above the switch, so the wait is on screen whichever tab is open.
+        */}
+        {(serverWake.waking || serverWake.failed) && (
+          <div className="shrink-0 px-2 pt-2">
+            <ServerWakeNotice wake={serverWake} manualRetry={!serverWake.willRetry} />
+          </div>
+        )}
 
         {/* Mobile content area */}
         <div className="flex-1 overflow-hidden" style={{ background: cardBg }}>
