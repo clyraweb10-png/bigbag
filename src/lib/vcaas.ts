@@ -53,6 +53,7 @@ import type {
   VcaasProjectSummary,
   AgentStatus,
   AgentInputFile,
+  AgentRunOptions,
   ConversationHistory,
   ConversationMessage,
   ProjectVersion,
@@ -103,6 +104,12 @@ export interface VcaasResponse<T> extends ApiResponse<T> {
   details?: VcaasErrorDetails;
   /** Header-derived paging state. Present only on paginated list endpoints. */
   meta?: VcaasPageMeta;
+  /**
+   * ⚠️ `false` MEANS "DO NOT TRY AGAIN". Set by the upload proxy so a refusal that can
+   * never succeed — a file over the size limit, above all — is not retried three times
+   * before the user is told. Absent everywhere else, where the caller decides.
+   */
+  retryable?: boolean;
 }
 
 /**
@@ -422,7 +429,16 @@ export const vcaasApi = {
     },
 
     /** POST …/agent/start — kick off an agent run with a prompt and optional files. */
-    start: (projectId: string, body: { prompt: string; inputFiles: AgentInputFile[] }): Promise<VcaasResponse<unknown>> =>
+    start: (
+      projectId: string,
+      /**
+       * ⭐ `model` / `effort` / `fastMode` are OPTIONAL per-run overrides. Totalum's own
+       * routing already picks the best model and effort for each prompt, so they are sent
+       * only when the user explicitly chose one — see `normalizeRunOptions`. An unusable
+       * value never fails the request; upstream drops it and reports it in `warnings`.
+       */
+      body: { prompt: string; inputFiles: AgentInputFile[] } & AgentRunOptions
+    ): Promise<VcaasResponse<unknown>> =>
       proxy.post(`${project(projectId)}/agent/start`, body),
 
     /** POST …/agent/stop — request the current run to stop. */

@@ -10,29 +10,42 @@ import {
 import { vcaasApi } from "@/lib/vcaas";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { GithubPromptButton } from "@/components/prompt/GithubPromptButton";
+import { RunOptionsMenu, RunOptionsChips, useRunOptions } from "@/components/workspace/RunOptionsMenu";
+import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
+import { filesFromClipboard } from "@/lib/attachments";
 import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ConfirmDialog } from "@/components/primitives";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { uploadFilesToProject } from "@/lib/upload";
-import type { ConversationMessage, VcaasSecret, AgentInputFile } from "@/lib/vcaas-types";
-
-// An attachment is an image we can preview inline when its name looks like one.
-function isImageFile(name: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(name);
-}
+import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
+import { toast } from "sonner";
+import type { ConversationMessage, VcaasSecret, AgentInputFile, AgentRunOptions } from "@/lib/vcaas-types";
 
 interface ChatPanelProps {
   messages: ConversationMessage[];
   isBuilding: boolean;
   prompt: string;
   setPrompt: (v: string) => void;
-  onSend: (files?: { name: string; url: string; imageDescription: string }[]) => void;
+  /**
+   * ⭐ `options` carries the model / effort / fast-mode choice for THIS prompt. It is
+   * `{}` unless the user opened the run-options menu, so the API's own routing applies
+   * by default — see `RunOptionsMenu`.
+   */
+  onSend: (files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => void;
   onStop: () => void;
   sending: boolean;
   projectId: string;
   projectSecrets?: VcaasSecret[];
+
+  /**
+   * ⭐ THE ATTACHMENTS ARE THE PAGE'S, NOT THIS PANEL'S. Both composers (mobile and
+   * desktop) are mounted at once, so a list kept here would exist twice and drift;
+   * and only the page can persist it across a reload. See the workspace page.
+   */
+  attachedFiles: AgentInputFile[];
+  setAttachedFiles: React.Dispatch<React.SetStateAction<AgentInputFile[]>>;
 
   /**
    * ═══⭐ THE TOOL TRAY — GitHub, Figma and the visual editor live IN THE COMPOSER ═══
@@ -152,25 +165,19 @@ function FormattedText({ text }: { text: string }) {
 const USER_MSG_PREVIEW_CHARS = 550; // length of the preview shown when collapsed
 const USER_MSG_TRUNCATE_AT = 700;   // only truncate messages longer than this
 
+/**
+ * ⭐ WHAT WAS SENT WITH A PAST PROMPT — the same chips as the composer, read-only.
+ * An image shows itself, anything else shows its kind plate; the whole chip opens the
+ * file in a new tab. See `AttachmentPreview.tsx`.
+ */
 function UserAttachments({ files }: { files: AgentInputFile[] }) {
   if (!files || files.length === 0) return null;
   return (
-    <div className="flex flex-wrap gap-1.5 mt-2">
-      {files.map((f, i) =>
-        isImageFile(f.name) ? (
-          <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" title={f.name}
-            className="block w-14 h-14 rounded-lg overflow-hidden border border-black/10 dark:border-white/10 bg-white/40">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={f.url} alt={f.name} className="w-full h-full object-cover" />
-          </a>
-        ) : (
-          <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" title={f.name}
-            className="flex items-center gap-1 bg-white/60 dark:bg-black/20 text-gray-700 dark:text-gray-200 rounded-md px-2 py-1 text-[11px] border border-black/5 dark:border-white/10 hover:bg-white transition-colors">
-            <Paperclip className="w-2.5 h-2.5" /><span className="truncate max-w-[120px]">{f.name}</span>
-          </a>
-        )
-      )}
-    </div>
+    <AttachmentPreviews
+      className="mt-2"
+      compact
+      items={files.map((f) => ({ name: f.name, url: f.url }))}
+    />
   );
 }
 
@@ -538,15 +545,23 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
 
 export function ChatPanel({
   messages, isBuilding, prompt, setPrompt, onSend, onStop, sending, projectId, projectSecrets,
+  attachedFiles, setAttachedFiles,
   onOpenFigma, figmaConnected = false, onDisconnectFigma,
   onOpenGithub, onGithubStatusChange, onGithubPull, githubPulling = false,
   visualEditAvailable = false, visualEditActive = false, visualEditBusy = false, onToggleVisualEdit,
 }: ChatPanelProps) {
   const t = useT();
+  /** Per-project, per-tab memory of the picker — the platform's hook, copied. */
+  const [runOptions, setRunOptions] = useRunOptions(projectId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [attachedFiles, setAttachedFiles] = useState<{ name: string; url: string; imageDescription: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  /**
+   * ⚠️ STOPPING IS CONFIRMED, BECAUSE IT IS NOT A PAUSE. The button sits exactly where
+   * Send sits, a millimetre from the key people press by reflex, and the run it kills
+   * has already been paid for and cannot be resumed — only started again.
+   */
+  const [confirmingStop, setConfirmingStop] = useState(false);
 
   // --- Load-on-demand for long conversations ---
   // Rather than rendering every message group (which gets heavy on long chats),
@@ -559,7 +574,7 @@ export function ChatPanel({
   useEffect(() => { if (textareaRef.current) { textareaRef.current.style.height = "auto"; textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + "px"; } }, [prompt]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
-  const handleSend = () => { if (!prompt.trim() && attachedFiles.length === 0) return; onSend(attachedFiles.length > 0 ? attachedFiles : undefined); setAttachedFiles([]); };
+  const handleSend = () => { if (!prompt.trim() && attachedFiles.length === 0) return; onSend(attachedFiles.length > 0 ? attachedFiles : undefined, runOptions); setAttachedFiles([]); };
 
   const handleTellAiSecretsReady = useCallback((count: number) => {
     const msg = `I have already filled and saved ${count} secret key${count > 1 ? "s" : ""}. Please continue.`;
@@ -584,16 +599,60 @@ export function ChatPanel({
     });
   }, [prompt, setPrompt]);
 
+  /**
+   * One path for the picker and the paste, so both behave identically.
+   *
+   * ⚠️ A FILE THAT DID NOT UPLOAD IS SAID OUT LOUD. Selecting several photos used to
+   * attach only the ones that happened to be small: everything over the upload size
+   * limit was refused, dropped, and never mentioned, so the chips silently disagreed
+   * with what the user picked. Each failure now names its file and its reason.
+   */
+  const uploadAndAttach = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+
+    /**
+     * ⭐ TOO BIG IS ANSWERED BEFORE THE UPLOAD, NOT AFTER. The API refuses these anyway,
+     * so sending them means seconds of pointless upload before the same answer — and on
+     * a phone connection a 20 MB file is a long wait for a refusal.
+     */
+    const { allowed, tooLarge } = splitBySize(files);
+    if (tooLarge.length === 1) {
+      toast.error(t("prompt.attachments.tooLarge", { name: tooLarge[0].name, size: MAX_UPLOAD_MB }), { description: TOO_LARGE_ADVICE });
+    } else if (tooLarge.length > 1) {
+      toast.error(t("prompt.attachments.tooLargeMany", { count: tooLarge.length, size: MAX_UPLOAD_MB }), { description: TOO_LARGE_ADVICE });
+    }
+    if (allowed.length === 0) return;
+
+    setUploading(true);
+    // Real multipart upload (with retry) so the agent receives publicly-fetchable URLs.
+    const { uploaded, failed } = await uploadFilesToProjectDetailed(projectId, allowed);
+    if (uploaded.length > 0) setAttachedFiles((prev) => [...prev, ...uploaded]);
+    for (const failure of failed) toast.error(`${failure.name}: ${failure.reason}`);
+    setUploading(false);
+  }, [projectId, setAttachedFiles, t]);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = "";
-    if (files.length === 0) return;
-    setUploading(true);
-    // Real multipart upload (with retry) so the agent receives publicly-fetchable URLs.
-    const uploaded = await uploadFilesToProject(projectId, files);
-    if (uploaded.length > 0) setAttachedFiles((prev) => [...prev, ...uploaded]);
-    setUploading(false);
+    await uploadAndAttach(files);
   };
+
+  /**
+   * ⭐ ⌘/Ctrl+V ATTACHES WHAT IS ON THE CLIPBOARD. A screenshot, or a file copied in the
+   * file manager, is uploaded and attached instead of being lost.
+   *
+   * ⚠️ ONLY WHEN THE CLIPBOARD IS NOT REALLY TEXT. `filesFromClipboard` (the platform's,
+   * copied) reads BOTH `files` and `items`, and refuses when a meaningful `text/plain`
+   * is present — otherwise a Word or Excel paste, which carries its own image payload,
+   * would attach a picture of what the user meant to type.
+   */
+  const handlePaste = useCallback((event: React.ClipboardEvent) => {
+    if (isBuilding) return;
+    const pasted = filesFromClipboard(event.clipboardData);
+    if (!pasted.length) return;
+    event.preventDefault();
+    void uploadAndAttach(pasted);
+  }, [isBuilding, uploadAndAttach]);
 
   const messageGroups = groupMessages(messages);
   const hiddenCount = Math.max(0, messageGroups.length - visibleCount);
@@ -659,20 +718,23 @@ export function ChatPanel({
         )}
       </div>
 
-      {attachedFiles.length > 0 && (
-        <div className="px-4 pb-1 flex gap-1.5 flex-wrap">
-          {attachedFiles.map((f, i) => (
-            <div key={i} className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-md px-2 py-0.5 text-[11px]">
-              <Paperclip className="w-2.5 h-2.5" /><span className="truncate max-w-[100px]">{f.name}</span>
-              <button onClick={() => setAttachedFiles((prev) => prev.filter((_, j) => j !== i))}><X className="w-2.5 h-2.5 hover:text-red-500" /></button>
-            </div>
-          ))}
-        </div>
-      )}
+      {/*
+        ⭐ THE CHOICE IS VISIBLE AT THE MOMENT OF SENDING. A Sonnet or fast-mode prompt is
+        never sent by surprise, and each chip's × clears just that option.
+      */}
+      <RunOptionsChips value={runOptions} onChange={setRunOptions} disabled={isBuilding} className="px-4 pb-1" />
+
+      {/* ⭐ The attachments, with a real preview for images and a kind plate otherwise. */}
+      <AttachmentPreviews
+        className="px-3 pb-1"
+        compact
+        items={attachedFiles.map((f) => ({ name: f.name, url: f.url }))}
+        onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
+      />
 
       <div className="shrink-0 px-3 pb-3 pt-2">
         <div className="rounded-2xl overflow-hidden transition-all focus-within:ring-2 focus-within:ring-gray-200 dark:focus-within:ring-gray-600" style={{ background: "var(--textarea-bg, #f3f1ee)" }}>
-          <textarea data-chat-input ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown}
+          <textarea data-chat-input ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
             placeholder={isBuilding ? "Agent is working..." : "Ask anything..."}
             className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-gray-400 min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed dark:text-gray-200"
             disabled={isBuilding} rows={1} />
@@ -713,6 +775,8 @@ export function ChatPanel({
                   disabled={isBuilding}
                 />
               )}
+              {/* ⭐ MODEL · EFFORT · FAST MODE for the NEXT prompt — the platform's menu. */}
+              <RunOptionsMenu value={runOptions} onChange={setRunOptions} disabled={isBuilding} />
               {visualEditAvailable && onToggleVisualEdit && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -734,7 +798,7 @@ export function ChatPanel({
               )}
             </div>
             {isBuilding ? (
-              <button onClick={onStop} className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors"><Square className="w-3 h-3 text-white" /></button>
+              <button onClick={() => setConfirmingStop(true)} aria-label={t("workspace.chat.stop")} className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors"><Square className="w-3 h-3 text-white" /></button>
             ) : (
               <button onClick={handleSend} disabled={(!prompt.trim() && attachedFiles.length === 0) || sending}
                 className="w-8 h-8 rounded-full bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 disabled:bg-gray-300 dark:disabled:bg-gray-600 flex items-center justify-center transition-colors">
@@ -744,6 +808,23 @@ export function ChatPanel({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmingStop}
+        onOpenChange={setConfirmingStop}
+        tone="danger"
+        title={t("workspace.chat.stopConfirmTitle")}
+        description={t("workspace.chat.stopConfirmBody")}
+        confirmLabel={t("workspace.chat.stopConfirmAction")}
+        /* "Cancel" next to "Stop" is two words for the same thing. */
+        cancelLabel={t("workspace.chat.stopConfirmKeep")}
+        /*
+          ⚠️ NO TYPED PHRASE. Deleting a project asks you to type its name because it
+          destroys work irreversibly; this loses the rest of one run, and someone whose
+          build has gone off the rails needs to be able to stop it in two clicks.
+        */
+        onConfirm={onStop}
+      />
     </div>
   );
 }

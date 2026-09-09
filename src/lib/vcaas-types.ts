@@ -224,6 +224,19 @@ export interface AgentInputFile {
   imageDescription: string;
 }
 
+/** Claude model alias for a run (`POST /agent/start` → `model`). `opus` is the default. */
+export type AgentModel = "opus" | "sonnet";
+/** Claude Code effort level (`POST /agent/start` → `effort`). Absent = Claude Code default. */
+export type AgentEffort = "low" | "medium" | "high" | "xhigh";
+
+/** Optional per-run options; only the keys the user actually chose are sent. */
+export interface AgentRunOptions {
+  model?: AgentModel;
+  effort?: AgentEffort;
+  /** Claude Code fast mode — Opus only, ignored with `sonnet`. */
+  fastMode?: boolean;
+}
+
 export interface ConversationMessage {
   author: "user" | "agent";
   message: string;
@@ -242,9 +255,25 @@ export interface ConversationMessage {
    */
   secretKeysNeeded?: Record<string, SecretKeyRequest>;
   gitDiffUrl?: string;
-  // Files the user attached to this message. Client-side only (the VCaaS
-  // conversation API does not echo attachments back), used to render the
-  // attachment chips/thumbnails on the user's chat bubble.
+  /**
+   * ⚠️ WHAT THE API ACTUALLY RETURNS FOR A USER MESSAGE'S ATTACHMENTS. It is named
+   * `files`, not `inputFiles`, and it IS echoed back by `agent/full-conversation` —
+   * a long-standing comment here claimed the opposite, which is why attachments used
+   * to vanish from the history on every reload.
+   *
+   * ⚠️ ITS URLS ARE HTML-ESCAPED. Every string in a VCaaS request body is escaped
+   * upstream (`&` becomes `&amp;`), and an attachment's signed URL is stored exactly
+   * as it arrived — so the persisted URL has `&amp;` between its query parameters and
+   * answers **403** until it is decoded. React sets `src` as a DOM property, which
+   * does no entity decoding, so nothing else undoes it for us. Read this field only
+   * through the workspace page's normaliser, never directly.
+   */
+  files?: AgentInputFile[];
+  /**
+   * The same attachments, normalised for rendering: `files` with its entities decoded,
+   * or this session's own upload results (which never passed through the escaping).
+   * This is what the chat bubble reads.
+   */
   inputFiles?: AgentInputFile[];
 }
 

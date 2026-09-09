@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FigmaModal } from "@/components/workspace/FigmaModal";
 import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
+import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
+import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -27,7 +29,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 import { toast } from "sonner";
-import { uploadFilesToProject as uploadFilesToProjectHelper } from "@/lib/upload";
+import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { SetupBanners } from "@/components/SetupBanners";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 
@@ -435,10 +437,13 @@ export default function DashboardPage() {
     let uploadedFiles: { name: string; url: string; imageDescription: string }[] = [];
     setUploading(true);
     // Retries built in — a just-created project's storage can need a moment.
-    uploadedFiles = await uploadFilesToProjectHelper(id2, attachedFiles.map((f) => f.file));
+    const upload = await uploadFilesToProjectDetailed(id2, attachedFiles.map((f) => f.file));
+    uploadedFiles = upload.uploaded;
     setUploading(false);
-    if (uploadedFiles.length < attachedFiles.length) {
-      toast.error("Some attachments could not be uploaded. The agent may not see them.");
+    // ⚠️ NAME THE FILE AND THE REASON. "Some attachments could not be uploaded" left the
+    // user guessing which of four photos the agent will never see, and why.
+    for (const failure of upload.failed) {
+      toast.error(`${failure.name}: ${failure.reason}`, { description: "The agent will not see this file." });
     }
     // Stash the first prompt (and uploaded files, with real URLs) so the workspace auto-submits it.
     try {
@@ -451,12 +456,41 @@ export default function DashboardPage() {
   // Keep the raw File objects around — we can't upload here because the project
   // doesn't exist yet, and blob URLs die on navigation. The real upload happens in
   // confirmBuild once the project is created (see uploadFilesToProject).
+  /**
+   * ⭐ THE SIZE IS CHECKED AT ATTACH TIME, NOT AT BUILD TIME. Nothing is uploaded from
+   * this screen — the project does not exist yet — so an oversized file would otherwise
+   * sit in the tray looking fine and be dropped minutes later, after the project was
+   * created and the user had walked away.
+   */
+  const attachLocalFiles = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    const { allowed, tooLarge } = splitBySize(files);
+    if (tooLarge.length === 1) {
+      toast.error(t("prompt.attachments.tooLarge", { name: tooLarge[0].name, size: MAX_UPLOAD_MB }), { description: TOO_LARGE_ADVICE });
+    } else if (tooLarge.length > 1) {
+      toast.error(t("prompt.attachments.tooLargeMany", { count: tooLarge.length, size: MAX_UPLOAD_MB }), { description: TOO_LARGE_ADVICE });
+    }
+    if (allowed.length === 0) return;
+    setAttachedFiles((prev) => [...prev, ...allowed.map((file) => ({ name: file.name, imageDescription: file.name, file }))]);
+  }, [t]);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
-    if (files.length === 0) return;
-    setAttachedFiles((prev) => [...prev, ...files.map((file) => ({ name: file.name, imageDescription: file.name, file }))]);
+    attachLocalFiles(files);
     e.target.value = "";
   };
+
+  /**
+   * ⭐ ⌘/Ctrl+V ATTACHES WHAT IS ON THE CLIPBOARD — a screenshot, or a file copied in
+   * the file manager. Same rule as the workspace chat: `filesFromClipboard` refuses when
+   * the clipboard carries real text, so a Word or Excel paste stays text.
+   */
+  const handleHeroPaste = useCallback((event: React.ClipboardEvent) => {
+    const pasted = filesFromClipboard(event.clipboardData);
+    if (!pasted.length) return;
+    event.preventDefault();
+    attachLocalFiles(pasted);
+  }, [attachLocalFiles]);
 
   // Perform the actual deletion once the user confirms in the modal.
   const confirmDelete = async () => {
@@ -521,17 +555,18 @@ export default function DashboardPage() {
                   placeholder="Describe your app... e.g. 'A project management tool with kanban boards'"
                   className="w-full min-h-[90px] sm:min-h-[110px] resize-none text-[15px] p-5 pb-2 outline-none placeholder:text-gray-400 bg-transparent"
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); openBuildModal(); } }}
+                  onPaste={handleHeroPaste}
                 />
-                {attachedFiles.length > 0 && (
-                  <div className="px-5 pb-2 flex gap-1.5 flex-wrap">
-                    {attachedFiles.map((f, i) => (
-                      <div key={i} className="flex items-center gap-1 bg-gray-100 text-gray-600 rounded-md px-2 py-0.5 text-[11px]">
-                        <Paperclip className="w-2.5 h-2.5" /><span className="truncate max-w-[100px]">{f.name}</span>
-                        <button onClick={() => setAttachedFiles((prev) => prev.filter((_, j) => j !== i))}><X className="w-2.5 h-2.5 hover:text-red-500" /></button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {/*
+                  ⭐ The attachments, previewed. Nothing is uploaded yet here — the project
+                  does not exist — so an image is shown from the browser's own copy through
+                  an object URL. See `AttachmentPreview.tsx`.
+                */}
+                <AttachmentPreviews
+                  className="px-5 pb-2"
+                  items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
+                  onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
+                />
                 <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100/80">
                   <div className="flex items-center gap-1">
                     <label className="cursor-pointer flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors px-1.5 py-1 rounded-lg hover:bg-gray-50">

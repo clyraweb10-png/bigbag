@@ -24,7 +24,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/primitives";
 import { useT } from "@/i18n";
 import { currentTextSize, setColorClass, stepTextSize } from "@/lib/visual-edit";
-import { uploadFileToProject } from "@/lib/upload";
+import { uploadFileToProject, MAX_UPLOAD_BYTES } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
 import type { SelectedElement } from "./use-visual-editor";
@@ -478,8 +478,14 @@ export function VisualEditorPanel({
  */
 const ACCEPTED_IMAGE_TYPES = "image/png,image/jpeg,image/webp,image/gif,image/svg+xml,video/mp4,video/webm";
 
-/** Refuse locally rather than spend a round trip and a credit on a doomed upload. */
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/**
+ * Refuse locally rather than spend a round trip and a credit on a doomed upload.
+ *
+ * ⚠️ IT WAS 10 MB, WHICH THE API WOULD HAVE REFUSED. The one limit lives in
+ * `lib/upload.ts` and matches what the server actually enforces; a local ceiling above
+ * the real one only moves the refusal further away from the user.
+ */
+const MAX_IMAGE_BYTES = MAX_UPLOAD_BYTES;
 
 function ImageDropzone({
     projectId,
@@ -516,12 +522,14 @@ function ImageDropzone({
         }
 
         setUploading(true);
-        const uploaded = await uploadFileToProject(projectId, file);
+        const result = await uploadFileToProject(projectId, file);
         if (!mounted.current) return;
         setUploading(false);
 
-        if (!uploaded?.url) return setError(t("workspace.visualEditor.mediaUploadFailed"));
-        onUploaded(uploaded.url);
+        // ⚠️ THE REAL REASON BEATS THE GENERIC ONE. "Upload failed" for a file the proxy
+        // refused for its size tells the user nothing they can act on.
+        if ("error" in result) return setError(result.error || t("workspace.visualEditor.mediaUploadFailed"));
+        onUploaded(result.file.url);
     }
 
     return (

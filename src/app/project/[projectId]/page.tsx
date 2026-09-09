@@ -27,7 +27,8 @@ import { DiffViewer, type DiffSource } from "@/components/workspace/DiffViewer";
 import { Modal } from "@/components/primitives";
 import { ImportOverlay } from "@/components/workspace/ImportOverlay";
 import { looksLikePlaceholder } from "@/lib/preview-health";
-import type { VcaasProject, ConversationMessage, ProjectVersion } from "@/lib/vcaas-types";
+import type { VcaasProject, ConversationMessage, ProjectVersion, AgentRunOptions, AgentInputFile } from "@/lib/vcaas-types";
+import { loadAttachments, saveAttachments } from "@/lib/composer-attachments";
 import { useServerWake } from "@/components/workspace/use-server-wake";
 import { ServerWakeNotice } from "@/components/workspace/ServerWakeNotice";
 import { ServerBlockedDialog, useServerBlocked } from "@/components/workspace/ServerBlockedDialog";
@@ -82,6 +83,53 @@ const PREVIEW_PROBE_INTERVAL_MS = 3_000;
  * only about not dropping the overlay onto the sandbox's "preview building" placeholder.
  */
 const IMPORT_PREVIEW_GRACE_MS = 90_000;
+
+/**
+ * One shared empty list, so "this project has no attachments" is always the SAME
+ * array. A fresh `[]` per render would change identity every time and re-run every
+ * effect and memo downstream of it.
+ */
+const EMPTY_ATTACHMENTS: AgentInputFile[] = [];
+
+/**
+ * The entities the upstream sanitiser produces. `&amp;` is the one that matters — it
+ * sits between every query parameter of a signed URL — but a file NAME can carry any
+ * of the others, and a chip labelled `photo &#39;final&#39;.png` is its own small bug.
+ */
+const HTML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&#x27;": "'",
+  "&#x2F;": "/",
+  "&#47;": "/",
+};
+
+function decodeEntities(value: string): string {
+  return value.replace(/&(?:amp|lt|gt|quot|#39|#x27|#x2F|#47);/g, (entity) => HTML_ENTITIES[entity] ?? entity);
+}
+
+/**
+ * A persisted message's attachments, made renderable — or `undefined` when there are
+ * none, so a message without files is left byte-identical rather than given an empty
+ * array that would re-render every chip list downstream.
+ *
+ * ⚠️ TRUST NOTHING IN THE SHAPE. This crosses a network boundary; a row missing its
+ * `url` would render a chip that links nowhere.
+ */
+function decodeAttachments(files: AgentInputFile[] | undefined): AgentInputFile[] | undefined {
+  if (!files?.length) return undefined;
+  const decoded = files
+    .filter((file) => file && typeof file.name === "string" && typeof file.url === "string")
+    .map((file) => ({
+      name: decodeEntities(file.name),
+      url: decodeEntities(file.url),
+      imageDescription: decodeEntities(file.imageDescription ?? file.name),
+    }));
+  return decoded.length ? decoded : undefined;
+}
 
 export default function WorkspacePage() {
   const params = useParams();
@@ -206,6 +254,32 @@ export default function WorkspacePage() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [activeTab, setActiveTab] = useState("preview");
   const [prompt, setPrompt] = useState("");
+  /**
+   * ⭐ THE COMPOSER'S ATTACHMENTS LIVE HERE, NOT IN `ChatPanel`, FOR TWO REASONS.
+   * The mobile and desktop composers are BOTH mounted (one is hidden by CSS), so
+   * panel-local state would give the two lists that drift apart — sending on one
+   * would leave the chip on the other. And state on the page can be persisted, which
+   * is what makes an attachment survive a reload; see `composer-attachments.ts`.
+   *
+   * ⚠️ THE PROJECT IS PART OF THE STATE, NOT JUST OF THE STORAGE KEY. This route
+   * reuses the component when the id changes, so for one render the state still holds
+   * the PREVIOUS project's files while `projectId` is already the new one. Tagging the
+   * list with the project it belongs to is what stops that render from saving one
+   * project's attachments under another's key, and from showing them for a moment.
+   */
+  const [attachments, setAttachments] = useState<{ projectId: string | null; files: AgentInputFile[] }>(
+    { projectId: null, files: [] }
+  );
+  const attachedFiles = useMemo(
+    () => (attachments.projectId === projectId ? attachments.files : EMPTY_ATTACHMENTS),
+    [attachments, projectId]
+  );
+  const setAttachedFiles = useCallback((update: React.SetStateAction<AgentInputFile[]>) => {
+    setAttachments((prev) => {
+      const base = prev.projectId === projectId ? prev.files : EMPTY_ATTACHMENTS;
+      return { projectId, files: typeof update === "function" ? update(base) : update };
+    });
+  }, [projectId]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [deploying, setDeploying] = useState(false);
@@ -286,17 +360,29 @@ export default function WorkspacePage() {
     const res = await vcaasApi.agent.fullConversation(projectId);
     if (res.ok && res.data && mountedRef.current) setMessages(rehydrateAttachments(res.data.conversation || []));
   }
-  // The server conversation has no attachment info; walk it in order and re-attach
-  // the files we recorded when sending, so attachment chips survive a refetch.
+  /**
+   * ═══⭐ THE ATTACHMENTS ON A PAST MESSAGE ════════════════════════════════════
+   *
+   * Two sources, and the session's own uploads win where both have something:
+   *
+   *  1. **What we sent this session** (`sentFilesRef`) — the exact URLs the upload
+   *     endpoint returned, never round-tripped through the API, so never escaped.
+   *  2. **What the API persisted** (`message.files`) — the only source that survives a
+   *     reload, and the reason this function is no longer a no-op for a fresh tab.
+   *
+   * ⚠️ THE PERSISTED URL MUST BE ENTITY-DECODED OR IT 403s. See `ConversationMessage.files`.
+   */
   function rehydrateAttachments(conversation: ConversationMessage[]): ConversationMessage[] {
-    if (sentFilesRef.current.length === 0) return conversation;
     const pending = [...sentFilesRef.current];
     return conversation.map((m) => {
       if (m.author !== "user") return m;
       const idx = pending.findIndex((p) => p.message === m.message);
-      if (idx === -1) return m;
-      const [match] = pending.splice(idx, 1);
-      return { ...m, inputFiles: match.files };
+      if (idx !== -1) {
+        const [match] = pending.splice(idx, 1);
+        return { ...m, inputFiles: match.files };
+      }
+      const persisted = decodeAttachments(m.files);
+      return persisted ? { ...m, inputFiles: persisted } : m;
     });
   }
   // Lightweight GitHub connection check — drives the green "connected" marks.
@@ -435,7 +521,7 @@ export default function WorkspacePage() {
   // Core send routine — accepts an explicit prompt text so it can be driven both
   // by the chat input and by the auto-submit flow (a project just created from the
   // dashboard whose first prompt is carried over via sessionStorage).
-  const sendPromptText = useCallback(async (text: string, files?: { name: string; url: string; imageDescription: string }[]) => {
+  const sendPromptText = useCallback(async (text: string, files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
     if ((!text.trim() && (!files || files.length === 0)) || sendingRef.current) return;
     sendingRef.current = true;
     setSending(true);
@@ -443,7 +529,11 @@ export default function WorkspacePage() {
     if (hasFiles) sentFilesRef.current.push({ message: text, files: files! });
     setMessages((prev) => [...prev, { author: "user", message: text, messageType: "regular", createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined }]);
     setPrompt("");
-    const res = await vcaasApi.agent.start(projectId, { prompt: text, inputFiles: files || [] });
+    /**
+     * ⚠️ ONLY WHAT THE USER CHOSE IS SENT. `options` is `{}` unless the run-options menu
+     * was touched, so Totalum's own model/effort routing stays in charge by default.
+     */
+    const res = await vcaasApi.agent.start(projectId, { prompt: text, inputFiles: files || [], ...(options || {}) });
     if (res.ok) {
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
       pendingRunRef.current = true; runWaitPollsRef.current = 0;
@@ -454,10 +544,24 @@ export default function WorkspacePage() {
     sendingRef.current = false;
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSendPrompt = async (files?: { name: string; url: string; imageDescription: string }[]) => {
+  const handleSendPrompt = async (files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
     if (project?.agentProcessStatus === "init") return;
-    await sendPromptText(prompt, files);
+    await sendPromptText(prompt, files, options);
   };
+
+  /**
+   * ⭐ ATTACHMENTS SURVIVE A RELOAD. Read on arrival, written on every change. Both
+   * effects are no-ops until the state is tagged with THIS project, which is what keeps
+   * the first render after a project switch from writing the previous one's list.
+   */
+  useEffect(() => {
+    setAttachments({ projectId, files: loadAttachments(projectId) });
+  }, [projectId]);
+
+  useEffect(() => {
+    if (attachments.projectId !== projectId) return;
+    saveAttachments(projectId, attachments.files);
+  }, [projectId, attachments]);
 
   // Auto-submit the first prompt when arriving from the dashboard "Build" flow.
   // The dashboard stashes the prompt (and any files) in sessionStorage keyed by
@@ -973,6 +1077,8 @@ export default function WorkspacePage() {
 
   // The chat's composer props that both layouts share — the tool tray's wiring.
   const composerProps = {
+    attachedFiles,
+    setAttachedFiles,
     onOpenFigma: () => setOpenModal("figma"),
     figmaConnected,
     onDisconnectFigma: handleDisconnectFigma,

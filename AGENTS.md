@@ -53,7 +53,10 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 | Dashboard, hero prompt, project list | `src/app/page.tsx` | Submit → name dialog → `projects.launch` (create + first prompt in one call). "New" focuses the textarea; there is no empty-project form. |
 | Figma in the hero (pending mode) | `page.tsx` + `FigmaModal` without `projectId` | Token validated by Figma, held in memory, sent as `figma.token` on `launch`, then dropped. |
 | Workspace shell | `src/app/project/[projectId]/page.tsx` | Owns polling, the operation slot, all modals, the visual editor toggle. |
-| Chat + composer tool tray | `components/workspace/ChatPanel.tsx` | Tray order: attach · Figma · GitHub · edit visually (`components/prompt/*PromptButton.tsx`). |
+| Chat + composer tool tray | `components/workspace/ChatPanel.tsx` | Tray order: attach · Figma · GitHub · run options · edit visually (`components/prompt/*PromptButton.tsx`, `RunOptionsMenu.tsx`). Run options (model / effort / fast mode) are per-project, per-tab and sent only when chosen. |
+| Attachments (both composers + history) | `components/workspace/AttachmentPreview.tsx`, `lib/attachments.ts`, `lib/composer-attachments.ts` | Image thumbnail or per-kind colour plate, with size. ⌘/Ctrl+V attaches clipboard files. Previews are confirmed with `decode()`, never `onError` (React 19). The workspace composer's attachments are page state, persisted per project, so they survive a reload; the dashboard hero's are raw `File`s and deliberately are not. History attachments come from the API's own `files` field (NOT `inputFiles`), and its URLs must be entity-decoded or they answer 403 — see `decodeAttachments` in the workspace page. |
+| Attachment upload limits | `lib/upload.ts` (`MAX_UPLOAD_BYTES`), `api/vcaas/upload/[projectId]/route.ts` | **8 MB per file**, checked in the browser before anything is sent and enforced again by the API. Keep the client constant equal to, or below, the server's. Oversized files are refused instantly with `prompt.attachments.tooLarge{,Many}` plus the advice to paste a public link instead. The proxy forwards the real upstream status and message
+| Stopping a run | `ChatPanel.tsx` → `ConfirmDialog` | The stop button confirms first (`workspace.chat.stopConfirm*`). The run is paid for and cannot be resumed, and the button sits where Send sits. |
 | Live preview / wake / blocked dialogs | `PreviewPanel`, `use-server-wake.ts`, `ServerWakeNotice`, `ServerBlockedDialog` | `SERVER_NOT_READY` → wait strip, never a silent failure. |
 | Code editor + rebuild | `CodePanel.tsx` | Monaco; save = `files.write`, then rebuild. |
 | Database browser | `DatabasePanel.tsx` + `lib/totalum-schema.ts` | Reads the project's own DB through `vcaasApi.database`. |
@@ -72,7 +75,7 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 4. **Agent runs and deploys are async.** Poll `agent/status` / `deployments/status` every 10–15 s; never assume completion from the start response.
 5. **New endpoint?** Add the typed function in `vcaas.ts`, the type in `vcaas-types.ts`, and let the catch-all proxy carry it. Only add a dedicated route under `src/app/api/vcaas/` when the request is not plain JSON (uploads, downloads).
 6. **New user-facing string?** Add the key to totalum-platform's `en.ts` first, then copy the file here. Do not fork the dictionary.
-7. **Mobile and desktop layouts are both mounted** in the workspace page (hidden by CSS). Only the desktop `PreviewPanel` gets `frameRef`; only the desktop `ChatPanel` gets the visual-editor pencil.
+7. **Mobile and desktop layouts are both mounted** in the workspace page (hidden by CSS). Only the desktop `PreviewPanel` gets `frameRef`; only the desktop `ChatPanel` gets the visual-editor pencil. Anything the composer *holds* (the prompt, the attachments) must therefore be page state passed down, never `useState` inside `ChatPanel` — two mounted copies would drift, and sending on one would leave the other's chips behind.
 
 ## Common next steps
 
