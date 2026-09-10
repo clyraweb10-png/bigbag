@@ -1154,6 +1154,23 @@ export default function WorkspacePage() {
   };
 
   const isBuilding = project?.agentProcessStatus === "init";
+  /**
+   * ═══⭐ THE FIRST BUILD SHOWS THE LOADER, NEVER THE TEMPORAL PREVIEW ═════════
+   *
+   * ⚠️⚠️ VCaaS PUBLISHES `temporalDevelopmentProjectUrl` AS SOON AS THE SANDBOX EXISTS,
+   * minutes before the very first build serves anything. So on the FIRST prompt, a page
+   * reload would set `previewUrl` from that link and point an iframe at a server that is
+   * not up yet — the user watching their first build gets a broken preview instead of the
+   * loader. A not-yet-built app is the EXPECTED state during the first run, not an error.
+   *
+   * "Has never completed a build" = the conversation carries no `finished` message. It is
+   * refetched on every load (the page's full-screen `loading` gate holds render until the
+   * conversation has resolved), so this is reload-proof. ONLY the first build: a follow-up
+   * run has a prior `finished` message, so it keeps showing the existing preview while it
+   * rebuilds. And it self-releases anyway the moment `isBuilding` turns false.
+   */
+  const isFirstBuild = isBuilding && !messages.some((m) => m.messageType === "finished");
+  const shownPreviewUrl = isFirstBuild ? null : previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
   const pageBg = darkMode ? "#1a1a1a" : "#fcfbf8";
   const cardBg = darkMode ? "#222" : "#fff";
@@ -1364,7 +1381,7 @@ export default function WorkspacePage() {
               </div>
             )}
             <div className={`flex-1 overflow-hidden ${activeTab === "preview" ? "rounded-none" : "m-2 sm:m-3 rounded-xl shadow-sm"}`} style={{ background: cardBg }}>
-              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={previewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} /* ⭐ Same-origin ONLY while the editor is open — and for the length of an apply, which outlives the panel: dropping the proxy mid-apply would reload the frame and throw away the preview-only edits the user is watching. */ proxiedSrc={visualEditorOpen || visualLocked ? `/api/preview/${encodeURIComponent(projectId)}` : null} />}
+              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} /* ⭐ Same-origin ONLY while the editor is open — and for the length of an apply, which outlives the panel: dropping the proxy mid-apply would reload the frame and throw away the preview-only edits the user is watching. */ proxiedSrc={visualEditorOpen || visualLocked ? `/api/preview/${encodeURIComponent(projectId)}` : null} />}
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>
@@ -1458,7 +1475,7 @@ export default function WorkspacePage() {
             </div>
           ) : (
             <div className="h-full overflow-hidden">
-              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={previewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={false} iframePath={iframePath} />}
+              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={false} iframePath={iframePath} />}
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>
