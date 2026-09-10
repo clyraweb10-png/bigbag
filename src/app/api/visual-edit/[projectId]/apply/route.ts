@@ -11,19 +11,19 @@ import { vcaasRequest } from "@/lib/vcaas-server";
 import { applyEdits, verifyEdits, type VisualChange } from "@/lib/visual-edit";
 import { resolveChangesDeep } from "@/lib/visual-edit-resolve";
 import { installSourceTags } from "@/lib/visual-edit-upgrade";
-import { urlRejectionReason } from "@/lib/safe-url";
+import { publicUrlRejectionReason } from "@/lib/safe-url";
 
 export const dynamic = "force-dynamic";
 
 /**
- * ═══ APPLY VISUAL CHANGES (Feature F12) ═════════════════════════════════════
+ * ═══ APPLY VISUAL CHANGES (the visual editor) ═════════════════════════════════════
  *
  * `POST { changes: VisualChange[] }` → resolve each change to a concrete file edit,
  * write the touched files, start a rebuild, and report exactly what could not be
  * placed.
  *
  * It is built entirely on **Feature 11's** endpoints — `files/tree`,
- * `files/content` (GET and PUT) and `rebuild` — which is why F11 came first.
+ * `files/content` (GET and PUT) and `rebuild`.
  *
  * ⚠️ THE SESSION IS THE ONLY IDENTITY. `resolveVcaasContext()` mints the caller's
  * own VCaaS key server-side; the body carries changes, never a user, a project owner
@@ -31,7 +31,7 @@ export const dynamic = "force-dynamic";
  *
  * ⚠️ IT READS ONLY THE FILES IT MIGHT NEED. Fetching the whole project would be
  * dozens of round trips; instead it reads the source files (`.tsx`/`.jsx`) from the
- * tree, capped, and searches those. F11's server-side snapshot cache means those
+ * tree, capped, and searches those. The project-files API's server-side snapshot cache means those
  * reads are one upstream archive fetch, not one per file.
  *
  * ⚠️ NOTHING IS WRITTEN UNTIL EVERY CHANGE HAS BEEN RESOLVED. A half-applied batch
@@ -42,7 +42,7 @@ export const dynamic = "force-dynamic";
 /**
  * Source files worth searching.
  *
- * ⭐ G5 — `.ts` AND `.js` ARE IN THE LIST NOW, and the audit's "not fixed, and why"
+ * ⭐ `.ts` AND `.js` ARE IN THE LIST NOW, and the audit's "not fixed, and why"
  * entry is the reason. Two real failures needed them: `src={assets.hero}`, whose URL is
  * a constant in `src/assets/files.ts`, and every `.map()`-rendered feature list, whose
  * copy lives in `src/data/*.ts` rather than in any markup.
@@ -61,7 +61,7 @@ const MAX_FILES = 200;
 const VISUAL_EDIT_CREDIT_COST = 0.3;
 
 /**
- * ⭐⭐ G4 — DOES THE FILE ENDPOINT STORE WHAT WE SEND IT?
+ * ⭐⭐ DOES THE FILE ENDPOINT STORE WHAT WE SEND IT?
  *
  * Process-wide, because the answer is a property of the backend deployment rather than
  * of any project or user, and because finding it out costs a credit (see the long note
@@ -75,7 +75,7 @@ let writeFidelity: "unknown" | "faithful" | "unfaithful" = "unknown";
  * ⚠️⚠️ SOURCE CODE MUST NEVER BE SENT AS A UTF-8 STRING, AND THIS IS THE FIX FOR THE
  * `WRITE_NOT_FAITHFUL` REFUSAL THE CANARY BELOW WAS BUILT TO CATCH.
  *
- * `totalum-backend/src/app.ts` mounts a GLOBAL `sanitizeMiddleware` — it runs
+ * the Totalum API backend mounts a GLOBAL `sanitizeMiddleware` — it runs
  * `sanitize-html` over every string in every request body before any route sees it. It
  * exists for user-generated HTML, but the VCaaS file-write route sits behind it too, so
  * React source posted to it is parsed as a web page and stripped to a tag allowlist:
@@ -83,7 +83,7 @@ let writeFidelity: "unknown" | "faithful" | "unfaithful" = "unknown";
  *     PUT <div id="probe" className="flex gap-2">  →  stored <div>
  *
  * `className` is not in that allowlist (only `class` and `style` are), so it vanishes;
- * `<script>` is deleted whole. G4 measured this and — correctly — chose to refuse rather
+ * `<script>` is deleted whole. We measured this and — correctly — chose to refuse rather
  * than corrupt anyone's file.
  *
  * ⚠️ THE ANSWER IS NOT TO PATCH THE MIDDLEWARE. It guards every other route in a
@@ -147,7 +147,7 @@ async function probeWriteFidelity(base: string, ctx: Parameters<typeof vcaasRequ
 }
 
 /**
- * ⭐⭐⭐ G6 — AN UPLOADED IMAGE IS COPIED INTO THE PROJECT, NOT LINKED FROM OUR STORAGE.
+ * ⭐⭐⭐ AN UPLOADED IMAGE IS COPIED INTO THE PROJECT, NOT LINKED FROM OUR STORAGE.
  *
  * ⚠️⚠️ THE URL THE DROPZONE PRODUCES IS A SIGNED `storage.googleapis.com` LINK, and
  * writing one into a customer's source file is wrong in two separate ways:
@@ -234,7 +234,7 @@ export async function POST(
 
     /**
      * ⚠️⚠️ THE MANAGER-SCOPE GATE. THIS ROUTE WRITES SOURCE FILES, and it did not
-     * have one — finding #7. `/api/vcaas/*` checks scope on every call, but this
+     * have one — an earlier review. `/api/vcaas/*` checks scope on every call, but this
      * endpoint reaches the same project through its own `vcaasRequest` calls below,
      * so it bypassed that entirely: a manager scoped to one project could rewrite
      * the code of every other project on the account. Upstream cannot catch it —
@@ -282,9 +282,9 @@ export async function POST(
         .map(entry => entry.path);
 
     /**
-     * ⭐ G3/P4 — RANK BEFORE CAPPING, AND SAY WHEN THE CAP BITES.
+     * ⭐ RANK BEFORE CAPPING, AND SAY WHEN THE CAP BITES.
      *
-     * G2 measured a real project with 52 source files of which **41 were
+     * A real project measured 52 source files of which **41 were
      * `src/components/ui/*`** — shadcn primitives that can never contain the user's
      * own text. Alphabetically those sort ahead of most real pages, so on a larger
      * project the cap would have thrown away exactly the files worth searching and
@@ -295,7 +295,7 @@ export async function POST(
         if (/(^|\/)app\/.*\/page\.[jt]sx$/.test(path) || /(^|\/)app\/page\.[jt]sx$/.test(path)) return 0;
         if (/(^|\/)app\//.test(path)) return 1;
         if (/(^|\/)components\/ui\//.test(path)) return 4;
-        // G5 — the data and asset modules the markup renders FROM, ahead of the UI kit.
+        // the data and asset modules the markup renders FROM, ahead of the UI kit.
         if (/(^|\/)(data|content|constants|config|assets)\//.test(path)) return 2;
         if (/\.[jt]sx$/.test(path)) return 3;
         // Everything else `.ts`/`.js`: server routes, helpers. Read last, and only if
@@ -334,7 +334,7 @@ export async function POST(
     }
 
     /**
-     * ── 2b. G6 — bring uploaded images into the project ────────────────────
+     * bring uploaded images into the project ────────────────────
      *
      * Before anything is resolved, so every planner downstream sees a root-relative
      * path and none of them has to know an upload happened. See `UPLOAD_DIR` above.
@@ -365,7 +365,8 @@ export async function POST(
              *
              * Same guard the upload route has always used — see `@/lib/safe-url`.
              */
-            const rejection = urlRejectionReason(original);
+            // Resolves the name too: a public hostname pointing at a private address is refused.
+            const rejection = await publicUrlRejectionReason(original);
             if (rejection) throw new Error(rejection);
 
             const download = await fetch(original, {
@@ -424,7 +425,7 @@ export async function POST(
     /**
      * ── 3. Resolve every change BEFORE writing anything ────────────────────
      *
-     * ⭐⭐ G5 — `resolveChangesDeep`, NOT `resolveChanges`. The tiered engine parses the
+     * ⭐⭐ `resolveChangesDeep`, NOT `resolveChanges`. The tiered engine parses the
      * project and matches structurally; the original regex matcher is still in there as
      * its last tier, so nothing it used to place has stopped being placeable.
      */
@@ -484,9 +485,9 @@ export async function POST(
     }
 
     /**
-     * ⭐⭐ G3 — NOTHING IS SENT THAT WE CANNOT PROVE IS ONLY OUR EDIT.
+     * ⭐⭐ NOTHING IS SENT THAT WE CANNOT PROVE IS ONLY OUR EDIT.
      *
-     * See `verifyEdits`. During G3's live run a real project's `page.tsx` came back
+     * See `verifyEdits`. In a live run a real project's `page.tsx` came back
      * with every attribute stripped and the rebuilt app was published unstyled.
      * `applyEdits` is provably surgical (unit-tested: identical length and identical
      * `className` count for a one-token change), so the platform is almost certainly
@@ -523,17 +524,17 @@ export async function POST(
     }
 
     /**
-     * ⭐⭐⭐ G4 — THE CANARY. WE VERIFY THE PIPE BEFORE WE PUT ANYTHING REAL IN IT.
+     * ⭐⭐⭐ THE CANARY. WE VERIFY THE PIPE BEFORE WE PUT ANYTHING REAL IN IT.
      *
-     * G3 recorded an unattributed incident: a real project's `page.tsx` came back with
+     * We recorded an unexplained regression: a real project's `page.tsx` came back with
      * every `className` and `id` stripped and the rebuilt app was published unstyled.
-     * G4 reproduced it on a brand-new project and traced it, and it is not the matcher
+     * It was reproduced on a brand-new project and traced, and it is not the matcher
      * and not `applyEdits` — it is the write endpoint itself. Measured, one round-trip:
      *
      *     PUT 179 chars  →  reported bytesWritten 103  →  stored 87 chars
      *     <div id="probe" className="flex gap-2">  →  <div>
      *
-     * The cause is upstream, in `totalum-backend/src/app.ts`: a global
+     * The cause is upstream, in the Totalum API backend: a global
      * `sanitizeMiddleware` runs `sanitize-html` over EVERY string in EVERY request body
      * before any route sees it. It is meant for user-generated HTML, and the VCaaS
      * file-write route sits behind it, so React source posted to it is parsed as a web
@@ -565,7 +566,7 @@ export async function POST(
     if (writeFidelity === "unfaithful") {
         console.error(
             "[visual-edit] write-check failed — the file endpoint did not return what was sent. " +
-                "Refusing to write. See totalum-backend/src/app.ts sanitizeMiddleware."
+                "Refusing to write. See the Totalum API backend sanitizeMiddleware."
         );
         return NextResponse.json(
             {
@@ -595,7 +596,7 @@ export async function POST(
 
         if (response.ok) {
             /**
-             * ⭐ G4 — A SECOND, FREE CHECK ON EVERY REAL WRITE. The endpoint reports
+             * ⭐ A SECOND, FREE CHECK ON EVERY REAL WRITE. The endpoint reports
              * `bytesWritten`, so comparing it to what we sent catches an altered
              * payload without a single extra round trip — no read-back, no credit.
              *
@@ -614,7 +615,7 @@ export async function POST(
                 writeFidelity = "unfaithful";
                 console.error(
                     `[visual-edit] ${path}: sent ${sent} bytes, endpoint stored ${stored}. ` +
-                        "The write path is altering content — see totalum-backend/src/app.ts sanitizeMiddleware."
+                        "The write path is altering content — see the Totalum API backend sanitizeMiddleware."
                 );
                 writeFailures.push({ path, code: "WRITE_NOT_FAITHFUL" });
             } else {
@@ -644,7 +645,7 @@ export async function POST(
     }
 
     /**
-     * ── 4b. G5 — TEACH THIS PROJECT TO ANSWER EXACTLY, ONCE ────────────────
+     * TEACH THIS PROJECT TO ANSWER EXACTLY, ONCE ────────────────
      *
      * ⭐⭐ THE EDITOR JUST HAD TO INFER, AND IT DID NOT ALWAYS SUCCEED. Every project
      * generated from the current template stamps its elements with
@@ -720,9 +721,9 @@ export async function POST(
     }
 
     /**
-     * ⭐ G3 — THE 0.3-CREDIT CHARGE, NOW ACTUALLY WIRED.
+     * ⭐ THE 0.3-CREDIT CHARGE, NOW ACTUALLY WIRED.
      *
-     * F12 could only report `charged: false, reason: "endpoint-missing"` because
+     * an earlier version could only report `charged: false, reason: "endpoint-missing"` because
      * metering an arbitrary amount needed a Platform-Bridge endpoint it was not
      * allowed to write. `POST /platform/credits/:id/spend` is that endpoint.
      *
@@ -738,8 +739,7 @@ export async function POST(
      *     same way. There is no branch here that can fail the request.
      */
     /**
-     * ⚠️ NO METERING HERE. totalum-platform charges 0.3 credits per apply through its
-     * Platform Bridge; this app has no per-user balance to charge — the operator's own
+     * ⚠️ NO METERING HERE. totalum-platform charges 0.3 credits per apply through its own billing; this app has no per-user balance to charge — the operator's own
      * key pays for whatever upstream meters. `billing` is still reported so the response
      * shape stays identical to the platform's and the client can be a straight copy.
      */
@@ -761,7 +761,7 @@ export async function POST(
                  */
                 applied: [
                     /**
-                     * ⚠️ G5 — ONE EDIT CAN SATISFY SEVERAL CHANGES, AND ALL OF THEM MUST
+                     * ⚠️ ONE EDIT CAN SATISFY SEVERAL CHANGES, AND ALL OF THEM MUST
                      * BE REPORTED. Consecutive edits to one element's class attribute are
                      * composed into a single write (recolour then resize is two changes and
                      * one attribute); reporting only the first would leave the rest sitting
@@ -806,22 +806,22 @@ export async function POST(
                 rebuildStarted,
                 rebuildCode,
                 billing,
-                // G3/P4 — say when the file cap bit, so a `not-found` is explicable.
+                // say when the file cap bit, so a `not-found` is explicable.
                 filesTruncated,
                 unsafeWrites,
                 /**
-                 * G6 — which uploads were copied into `public/uploads/`, and which could
+                 * which uploads were copied into `public/uploads/`, and which could
                  * not be. Reported because an image that kept its signed url is the one
                  * that will break a `next/image` later, and that must be visible in
                  * support rather than discovered by the customer.
                  */
                 assetsCopied,
                 assetFailures,
-                // G5 — reported so a one-off project upgrade is visible in the logs and
+                // reported so a one-off project upgrade is visible in the logs and
                 // in support, rather than being an invisible side effect of an apply.
                 sourceTagInstall,
                 /**
-                 * ⭐ G5 — WHICH TIER PLACED WHAT. `sourceTagged: false` on a project that
+                 * ⭐ WHICH TIER PLACED WHAT. `sourceTagged: false` on a project that
                  * keeps producing unmappable changes is the signal to rebuild it with the
                  * source-tag loader, and `parsed: false` means the parser did not run at
                  * all — both are invisible without this.

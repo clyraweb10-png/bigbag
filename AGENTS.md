@@ -5,6 +5,14 @@ Next.js app, the user previews it live, edits it, and publishes it. **This repo 
 UI.** Everything heavy — the coding agent, sandboxes, hosting, database, deploys, custom
 domains, GitHub sync — is done by the **Totalum API** behind one API key.
 
+> **⚠️ NO AUTH BY DESIGN.** This project ships with no authentication — deliberately, so
+> whoever adopts it can add the auth that fits their system, or whatever they prefer.
+> Every route is public and the app acts on one API key, so anyone who can reach the URL
+> can use it and spend that key's credits. **If this is going online, an auth layer must
+> be in place first** — make the guards in `src/app/api/vcaas/_shared.ts` real and protect
+> the pages in `src/proxy.ts` (see "Boilerplate mode" below). Local or private-network use
+> without a login is fine.
+
 **Totalum API reference (read this before touching anything under `src/lib/vcaas*` or
 `src/app/api/`):** https://www.totalum.app/totalum-api.md — the whole core API in one
 Markdown file, with links to the optional areas (GitHub, Figma, database, webhooks, files,
@@ -57,7 +65,7 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 | Attachments (both composers + history) | `components/workspace/AttachmentPreview.tsx`, `lib/attachments.ts`, `lib/composer-attachments.ts` | Image thumbnail or per-kind colour plate, with size. ⌘/Ctrl+V attaches clipboard files. Previews are confirmed with `decode()`, never `onError` (React 19). The workspace composer's attachments are page state, persisted per project, so they survive a reload; the dashboard hero's are raw `File`s and deliberately are not. History attachments come from the API's own `files` field (NOT `inputFiles`), and its URLs must be entity-decoded or they answer 403 — see `decodeAttachments` in the workspace page. |
 | Attachment upload limits | `lib/upload.ts` (`MAX_UPLOAD_BYTES`), `api/vcaas/upload/[projectId]/route.ts` | **8 MB per file**, checked in the browser before anything is sent and enforced again by the API. Keep the client constant equal to, or below, the server's. Oversized files are refused instantly with `prompt.attachments.tooLarge{,Many}` plus the advice to paste a public link instead. The proxy forwards the real upstream status and message
 | Stopping a run | `ChatPanel.tsx` → `ConfirmDialog` | The stop button confirms first (`workspace.chat.stopConfirm*`). The run is paid for and cannot be resumed, and the button sits where Send sits. |
-| Preview address bar (route explorer) | `components/workspace/PathPicker.tsx`, `lib/project-routes.ts`, `lib/source-archive-cache.ts` (local shim) | Lists the project's own pages with type-ahead; picking one navigates the preview. Routes come from `GET …/files/tree` (**free**, Feature F11 — never the charged source download); `routesFromPaths` turns route files into paths and drops API handlers. `peekArchive` is a shim that always misses here, which is correct: it is only an optimisation in the platform, and the picker falls through to the tree. |
+| Preview address bar (route explorer) | `components/workspace/PathPicker.tsx`, `lib/project-routes.ts`, `lib/source-archive-cache.ts` (local shim) | Lists the project's own pages with type-ahead; picking one navigates the preview. Routes come from `GET …/files/tree` (**free**, never the charged source download); `routesFromPaths` turns route files into paths and drops API handlers. `peekArchive` is a shim that always misses here, which is correct: it is only an optimisation in the platform, and the picker falls through to the tree. |
 | Waking a sleeping server | `app/project/[projectId]/page.tsx` (`markWorkspaceTouched`, `autoStartedFor`) | An `Archived` sandbox is started when the user **touches** the project, not when the page loads — opening a project is too cheap to spend credits and minutes on. Clicks inside `[data-workspace-header]` do not count: the header is scaffolding, and clicking it is usually how someone leaves. Guarded on operation-in-flight, agent-running, `serverWake.waking`, `agentServerStatus === "Archived"` exactly, and at least one user message. Once per project per mount. A refused action claims the wake instead of erroring: publish, pull, restore **and the composer** (`SERVER_NOT_READY` → strip + the prompt and its attachments go back in the box, so "send again" is possible). The strip renders in the panel column on desktop and above the tab switch on mobile, where the panel is a separate view. |
 | Live preview / wake / blocked dialogs | `PreviewPanel`, `use-server-wake.ts`, `ServerWakeNotice`, `ServerBlockedDialog` | `SERVER_NOT_READY` → wait strip, never a silent failure. |
 | Code editor + rebuild | `CodePanel.tsx` | Monaco; save = `files.write`, then rebuild. |
@@ -78,6 +86,17 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 5. **New endpoint?** Add the typed function in `vcaas.ts`, the type in `vcaas-types.ts`, and let the catch-all proxy carry it. Only add a dedicated route under `src/app/api/vcaas/` when the request is not plain JSON (uploads, downloads).
 6. **New user-facing string?** Add the key to totalum-platform's `en.ts` first, then copy the file here. Do not fork the dictionary.
    **⚠️ BUT NEVER RE-COPY `en.ts` WHOLESALE TO PICK UP A FEW KEYS.** This dictionary carries deliberate local values — `workspace.serverWake.startingTitle` is "Your project **server** is still starting" here, and the credit copy names this app's own minimum — and a blind overwrite silently reverts every one of them while also importing unrelated platform copy changes. Copy the individual keys you need, or diff `git diff HEAD -- src/i18n/en.ts` afterwards and put the local values back.
+8. **The proxy holds an account-wide key and the app has no login.** Two rules follow, and both are load-bearing security, not style:
+   - **Every proxied path must stay inside `/api/v1/vcaas/`.** `vcaas-server.ts`'s `resolveVcaasUrl` resolves the final URL and refuses anything that escapes. Route params arrive decoded, so a traversal segment can otherwise survive into the joined path and `fetch` normalise it onto another part of the account API the key authorises. Never build an upstream URL any other way.
+   - **Any server route that fetches a client-supplied URL is an SSRF hole until it calls `publicUrlRejectionReason` (async, resolves DNS) from `lib/safe-url.ts`, with `redirect: "error"` and a timeout.** The sync `urlRejectionReason` is for IP literals only. Both cover IPv4-mapped IPv6 (`::ffff:169.254.169.254`) and every private range; a plain host allowlist does not, because a redirect or a rebinding DNS name walks straight past it.
+
+
+## Dependencies & security
+
+- **This UI ships no auth / payment / AI SDK.** `better-auth`, `stripe`, `bcrypt`, `jsonwebtoken`, `date-fns`, `recharts`, the AI SDK and their `@types` were listed but never imported and were removed. The builder is a thin client in front of one key; those belong in **boilerplate mode**, added by the operator. Before adding a dependency, confirm it is actually imported.
+- **Runtime deps** are UI/utility only: Next 16, React 19, Tailwind 4, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
+- **Keep `npm audit` at zero.** A `dompurify` override (`>=3.4.15`) pins the copy Monaco pulls in. Run `npm audit` after any dependency change; do not commit a new advisory.
+
 7. **Mobile and desktop layouts are both mounted** in the workspace page (hidden by CSS). Only the desktop `PreviewPanel` gets `frameRef`; only the desktop `ChatPanel` gets the visual-editor pencil. Anything the composer *holds* (the prompt, the attachments) must therefore be page state passed down, never `useState` inside `ChatPanel` — two mounted copies would drift, and sending on one would leave the other's chips behind.
 
 ## Common next steps
@@ -131,3 +150,13 @@ Keep your own price separate from Totalum's credit cost; `GET /api/v1/vcaas/cred
 ## Git
 
 Small, single-purpose commits. Run `npm run build` before opening a PR. PR description: what changed, why, and how it was verified in the browser.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

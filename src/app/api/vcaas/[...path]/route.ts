@@ -4,7 +4,7 @@
  *
  * 📖 What each forwarded path accepts and returns: https://www.totalum.app/totalum-api.md
  */
-import { vcaasRequest } from "@/lib/vcaas-server";
+import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
 import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -77,6 +77,14 @@ async function handleRequest(
       { status: 200 }
     );
   } catch (error) {
+    // ⚠️ A path that tried to leave the VCaaS API — see `resolveVcaasUrl`. A plain 400,
+    // with no hint of what the key could otherwise have reached.
+    if (error instanceof VcaasPathError) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid path", code: "VALIDATION", data: null },
+        { status: 400 }
+      );
+    }
     /**
      * ⚠️ IT USED TO SWALLOW THE REASON. Every failure in here — a body that could not be
      * read, an upstream that answered non-JSON, a thrown fetch — came out as the same

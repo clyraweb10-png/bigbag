@@ -3,15 +3,12 @@
  * 📖 The authoritative field-by-field reference: https://www.totalum.app/totalum-api.md
  */
 /**
- * VCaaS wire types — copied verbatim from `ai-app-builder-open/src/lib/vcaas-types.ts`
- * so the shapes cannot drift from the API they describe.
+ * VCaaS wire types, kept in step with the API reference so the shapes cannot drift
+ * from what the endpoints actually return.
  *
- * ⚠️ ONE COMMENT IN HERE IS WRONG FOR THIS PLATFORM and is corrected inline below:
- * the open repo is "fully open" with a single static key, so its `GET /vcaas/projects`
- * really does list every project in one shared account. Here the key is the
- * per-user SYSTEM key (CONTEXT §7.5), so the same endpoint returns only the
- * signed-in user's projects. That difference is the whole ownership model — see
- * `src/lib/vcaas.ts` and PROGRESS Phase 06 → "Ownership".
+ * ⚠️ THIS APP USES ONE OPERATOR KEY WITH NO LOGIN, so `GET /vcaas/projects` lists
+ * every project the key owns. If you put real users behind it (see AGENTS.md
+ * "Boilerplate mode"), scope that list to the signed-in user yourself.
  */
 
 export interface VcaasProject {
@@ -102,12 +99,8 @@ export interface VcaasProject {
 }
 
 // Shape returned by the "List Projects" endpoint (GET /vcaas/projects).
-//
-// ⚠️ CORRECTED FOR THIS PLATFORM. The open repo's comment here read "the platform
-// is fully open — this lists every project in the account". That is true of a
-// single shared static key. On THIS platform the request carries the signed-in
-// user's own hidden system key, so VCaaS scopes the list to that account: the
-// response contains exactly the caller's projects and nothing else.
+// With one operator key it lists every project the key owns; scope it per user if
+// you add login (AGENTS.md "Boilerplate mode").
 /**
  * ⭐ A PROJECT GROUP — an optional folder.
  *
@@ -302,7 +295,7 @@ export interface AgentStatus {
 }
 
 /**
- * ═══ THE PROJECT FILE API (Feature F11) ═════════════════════════════════════
+ * ═══ THE PROJECT FILE API (the project-files API) ═════════════════════════════════════
  *
  * `files/tree` and `files/content` (GET) are FREE on every plan; `files/content`
  * (PUT) costs a credit and is refused for a free plan upstream. The Code panel is
@@ -407,7 +400,7 @@ export interface DbProperty {
    * ⚠️ CORRECTED IN FEATURE H3. This was typed `{ tableTo, type }`, which the
    * API has never sent — so every read of it was `undefined` and the schema view
    * silently showed no link target for any relation. The real shape, confirmed
-   * against a live schema and `data-structure.interface.ts` in totalum-backend:
+   * against a live schema in the Totalum API backend:
    *
    * `objectReferenceTypeId` is the **`_id` of the target table's structure**,
    * not its `type` name.

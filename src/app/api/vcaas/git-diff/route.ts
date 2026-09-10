@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicUrlRejectionReason } from "@/lib/safe-url";
 
 // Git-diff text proxy. The `gitDiffUrl` returned by the VCaaS conversation API
 // points at an external (signed) storage host, so the browser can't fetch it
@@ -9,9 +10,16 @@ import { NextRequest, NextResponse } from "next/server";
 // an unrestricted fetch(url) here would be an SSRF hole (internal metadata
 // endpoints, localhost, private ranges...). Only hosts VCaaS actually serves
 // diffs from are allowed.
+/**
+ * ⚠️ A diff is text; nothing legitimate is anywhere near this. The cap stops a URL on an
+ * allowed host from making the server buffer an arbitrarily large body into memory.
+ */
+const MAX_DIFF_BYTES = 10 * 1024 * 1024;
+
 const ALLOWED_HOSTS = [
   "totalum.app",
   "totalum-project.com",
+  "webapp-project.com", 
   "storage.googleapis.com",
 ];
 
@@ -58,8 +66,25 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  /**
+   * ⚠️⚠️ THE HOST ALLOWLIST ALONE WAS NOT ENOUGH. `*.totalum-project.com` is where every
+   * customer app is published — it serves whatever its owner wrote, including a redirect.
+   * `fetch` followed redirects, so an allowed host could bounce this server to
+   * `http://169.254.169.254/` and the allowlist, which only ever saw the first hop, never
+   * noticed. Redirects are now refused outright (signed storage URLs never redirect), and
+   * the resolving guard also refuses an allowed-looking name that points somewhere private.
+   */
+  const rejection = await publicUrlRejectionReason(target);
+  if (rejection) {
+    return NextResponse.json({ ok: false, error: rejection }, { status: 400 });
+  }
+
   try {
-    const res = await fetch(target, { cache: "no-store" });
+    const res = await fetch(target, {
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(20_000),
+    });
 
     if (!res.ok) {
       return NextResponse.json(
@@ -68,7 +93,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const declared = Number(res.headers.get("content-length") || 0);
+    if (declared > MAX_DIFF_BYTES) {
+      return NextResponse.json({ ok: false, error: "That diff is too large to show" }, { status: 413 });
+    }
     const diff = await res.text();
+    if (diff.length > MAX_DIFF_BYTES) {
+      return NextResponse.json({ ok: false, error: "That diff is too large to show" }, { status: 413 });
+    }
     return NextResponse.json({ ok: true, data: { diff } }, { status: 200 });
   } catch (error) {
     return NextResponse.json(

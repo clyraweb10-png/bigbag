@@ -31,7 +31,7 @@ import type { SelectedElement } from "./use-visual-editor";
 import type { VisualChangeKind } from "@/lib/visual-edit";
 
 /**
- * ═══ THE INSPECTOR (Feature F12) ════════════════════════════════════════════
+ * ═══ THE INSPECTOR (the visual editor) ════════════════════════════════════════════
  *
  * What you can do to the element you picked: its text, its size, its colours, its
  * image or video, and a question about it for the agent.
@@ -56,7 +56,7 @@ export interface VisualEditorPanelProps {
     selected: SelectedElement | null;
     ready: boolean;
     locked: boolean;
-    /** G4 — the colours this project already uses, harvested from the live page. */
+    /** the colours this project already uses, harvested from the live page. */
     palette: string[];
     onChange: (kind: VisualChangeKind, before: string, after: string, options?: { uploaded?: boolean }) => void;
     onAskAi: (prompt: string) => void;
@@ -88,7 +88,7 @@ export function VisualEditorPanel({
     }, [signature?.breadcrumb, signature?.text, signature?.src]);
 
     /**
-     * ⭐ G4 — TEXT PREVIEWS LIVE, DEBOUNCED.
+     * ⭐ TEXT PREVIEWS LIVE, DEBOUNCED.
      *
      * It used to commit on blur only, so you typed a heading into a box and the page
      * behind it did not move until you clicked away — which is the opposite of what a
@@ -240,7 +240,7 @@ export function VisualEditorPanel({
                             </div>
                         ) : (
                             /*
-                              ⭐ G4 — DON'T TELL AN <img> THAT IT "WRAPS OTHER ELEMENTS".
+                              ⭐ DON'T TELL AN <img> THAT IT "WRAPS OTHER ELEMENTS".
                               This hint reads as an instruction ("pick the heading inside
                               it"), so showing it on something with nothing inside is a
                               small lie that sends the user hunting. Two cases are excluded:
@@ -257,7 +257,7 @@ export function VisualEditorPanel({
                         )}
 
                         {/*
-                          ⭐ G4 — THE DEAD-END CASE, MADE USEFUL.
+                          ⭐ THE DEAD-END CASE, MADE USEFUL.
                           An element with no own text, no media and no class attribute
                           has nothing this panel can change: the size and colour controls
                           would write a class onto an element the matcher cannot find, and
@@ -388,7 +388,7 @@ export function VisualEditorPanel({
                                         // waiting for a blur would lose it if the user
                                         // pressed Apply next.
                                         if (signature.src && signature.src !== url) {
-                                            // ⭐ G6 — `uploaded` is what tells the apply
+                                            // ⭐ `uploaded` is what tells the apply
                                             // route to copy this into `public/` instead
                                             // of writing our signed storage url into
                                             // their source. See `VisualChange.uploaded`.
@@ -606,7 +606,7 @@ function ImageDropzone({
 }
 
 /**
- * ═══ THE COLOUR CONTROL (G4) ════════════════════════════════════════════════
+ * ═══ THE COLOUR CONTROL ════════════════════════════════════════════════
  *
  * ⭐ THE PROJECT'S OWN PALETTE COMES FIRST, and that is the whole point of the
  * rewrite. It used to be a bare `<input type="color">` — a 16-million-colour wheel
@@ -746,7 +746,7 @@ export function toHex(color: string): string {
 }
 
 /**
- * ═══ THE HELP POPOVER (G4) ══════════════════════════════════════════════════
+ * ═══ THE HELP POPOVER ══════════════════════════════════════════════════
  *
  * ⭐ IT LEADS WITH THE LIMITS, NOT THE FEATURES. A visual editor that silently
  * refuses a change teaches people it is unreliable; one that says up front "I can't

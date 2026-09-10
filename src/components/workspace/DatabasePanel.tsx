@@ -110,7 +110,7 @@ import { cn } from "@/lib/utils";
  * `src/lib/totalum-query.ts`) rather than being applied to a fetched page. A
  * table with 50 000 rows must not be pulled into the browser to sort it, and a
  * client-side "sort" over one page would be misleading in exactly the way the
- * Phase 07 name-sort problem was.
+ * name-sort problem was.
  *
  * ── DELETES ARE CONFIRMED, AND NAME THE ROW ─────────────────────────────────
  *

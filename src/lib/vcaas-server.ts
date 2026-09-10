@@ -15,6 +15,57 @@
  */
 const VCAAS_BASE_URL = "https://api-accounts.totalum.app/api/v1/vcaas";
 
+/**
+ * ═══⭐⭐⭐ EVERY UPSTREAM URL MUST STAY INSIDE `/api/v1/vcaas/` ═══════════════
+ *
+ * ⚠️⚠️ THIS APP HOLDS AN ACCOUNT-WIDE KEY AND HAS NO LOGIN. The key authorises far
+ * more than the VCaaS surface — API-key management, billing, account settings — so
+ * the only thing keeping a request on the intended surface is that every proxied
+ * path lands under `/api/v1/vcaas/`.
+ *
+ * ⚠️⚠️ AND A NAIVE JOIN DOES NOT GUARANTEE IT. Paths are built from route params,
+ * which the framework hands over already decoded, so a traversal segment (dot-dot, in
+ * any of its encoded or backslash spellings) can survive into the joined string; `fetch`
+ * then normalises it and the request can land OUTSIDE `/api/v1/vcaas/`, on another part
+ * of the account API the key also authorises.
+ *
+ * ⚠️ SO THE CHECK RUNS ON THE URL `fetch` WILL ACTUALLY REQUEST, not on the string
+ * we built. Filtering dot segments out of the input is a losing game (encodings,
+ * backslashes, double-decoding); resolving the URL first and then checking where it
+ * points is the one test that cannot be talked around. Both request helpers go through
+ * here, so no route can forget it.
+ */
+const VCAAS_ORIGIN = new URL(VCAAS_BASE_URL).origin;
+const VCAAS_PATH_PREFIX = new URL(VCAAS_BASE_URL).pathname; // "/api/v1/vcaas"
+
+export class VcaasPathError extends Error {
+  constructor(path: string) {
+    super(`Refused to proxy a path outside the VCaaS API: ${JSON.stringify(path)}`);
+    this.name = "VcaasPathError";
+  }
+}
+
+/** Resolve `path` against the API base and refuse anything that escapes it. */
+export function resolveVcaasUrl(path: string): string {
+  if (typeof path !== "string" || !path.startsWith("/")) throw new VcaasPathError(String(path));
+
+  /**
+   * ⚠️ DEFENCE IN DEPTH — REFUSE AN ENCODED TRAVERSAL IN THE PATH ITSELF. The real
+   * request cannot reach here still-encoded (route params arrive decoded, so a traversal
+   * arrives as `/../…` and the origin+prefix check below stops it). But a
+   * `%2e`/`%2f`/`%5c` left in the PATH would pass that check as an opaque segment and
+   * could be decoded by the upstream server into a traversal. The QUERY STRING is left
+   * untouched — `files/content?path=src%2Fapp%2Fpage.tsx` is legitimate and common.
+   */
+  const pathOnly = path.split("?", 1)[0].toLowerCase();
+  if (/%2e|%2f|%5c/.test(pathOnly)) throw new VcaasPathError(path);
+
+  const url = new URL(`${VCAAS_BASE_URL}${path}`);
+  const inside = url.pathname === VCAAS_PATH_PREFIX || url.pathname.startsWith(`${VCAAS_PATH_PREFIX}/`);
+  if (url.origin !== VCAAS_ORIGIN || !inside) throw new VcaasPathError(path);
+  return url.toString();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  SERVER LAYER — runs only inside Route Handlers (`src/app/api/vcaas/*`)
 //  Reads the API key and is the only code that hits api-accounts.totalum.app.
@@ -67,7 +118,7 @@ export async function vcaasRequest(
     headers["Content-Type"] = "application/json";
   }
 
-  return fetch(`${VCAAS_BASE_URL}${path}`, {
+  return fetch(resolveVcaasUrl(path), {
     ...options,
     headers,
   });
@@ -88,7 +139,7 @@ export async function vcaasUploadRequest(
   path: string,
   formData: FormData
 ): Promise<Response> {
-  return fetch(`${VCAAS_BASE_URL}${path}`, {
+  return fetch(resolveVcaasUrl(path), {
     method: "POST",
     headers: { "api-key": getVcaasApiKey() },
     body: formData,

@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import type { ApplyOutcome, ApplyPhase } from "./use-visual-editor";
 
 /**
- * ═══ THE UNSAVED-CHANGES BAR (Feature F12) ══════════════════════════════════
+ * ═══ THE UNSAVED-CHANGES BAR (the visual editor) ══════════════════════════════════
  *
  * Persistent while anything is pending: a count, every change with its own undo,
  * discard-all, and Apply.
@@ -43,7 +43,7 @@ const UNMAPPED_REASON: Record<string, TranslationKey> = {
      */
     overlapping: "workspace.visualEditor.unmappedOverlapping",
     /**
-     * ⭐ G6 — "we found it, and it cannot be written here". The only refusal that is
+     * ⭐ "we found it, and it cannot be written here". The only refusal that is
      * about the SOURCE rather than about our confidence, so it is the only one where
      * telling the user to try again would be a lie. The copy points at the chat, which
      * can do what the editor cannot.
@@ -52,7 +52,7 @@ const UNMAPPED_REASON: Record<string, TranslationKey> = {
 };
 
 /**
- * ⭐ G3/M2 — EVERY FAILURE USED TO SAY THE SAME SENTENCE.
+ * ⭐ EVERY FAILURE USED TO SAY THE SAME SENTENCE.
  *
  * `use-visual-editor` has always captured the real code; the bar rendered a constant
  * over the top of it. So a free-plan refusal, a rebuild already running, an unreadable
@@ -78,7 +78,7 @@ const ERROR_MESSAGE: Record<string, TranslationKey> = {
 };
 
 /**
- * ⚠️ G4 — RETRY IS HIDDEN FOR THESE. Offering "Try again" on a failure that cannot
+ * ⚠️ RETRY IS HIDDEN FOR THESE. Offering "Try again" on a failure that cannot
  * succeed on a retry is worse than offering nothing: it costs the user another wait to
  * learn what we already know. `WRITE_NOT_FAITHFUL` means the write endpoint is not
  * returning what it is sent, and `PLAN_REQUIRED` means they are not entitled — neither
@@ -87,10 +87,10 @@ const ERROR_MESSAGE: Record<string, TranslationKey> = {
 const NO_RETRY: string[] = ["WRITE_NOT_FAITHFUL", "FREE_PLAN_NO_SOURCE_EDITING", "PLAN_REQUIRED"];
 
 /**
- * ⭐ G3/N3 — UNIT-BEARING LABELS, NOT `{count} changes`.
+ * ⭐ UNIT-BEARING LABELS, NOT `{count} changes`.
  *
  * The bar read "1 changes written to 1 files" in English and "1 cambios visuales sin
- * guardar" in Spanish. Phase 16 hit this exact trap on the credit copy and settled the
+ * guardar" in Spanish. We hit this exact trap on the credit copy and settled the
  * pattern: build the noun phrase in ONE place so both languages stay grammatical
  * without a plural key per string, and let the prose interpolate it.
  */
@@ -165,7 +165,7 @@ export function VisualChangesBar({
     const [confirmDiscard, setConfirmDiscard] = React.useState(false);
 
     /**
-     * ⭐⭐ G5 — WHICH CHANGE FAILED, NOT HOW MANY.
+     * ⭐⭐ WHICH CHANGE FAILED, NOT HOW MANY.
      *
      * ⚠️⚠️ THE REPORT USED TO BE UNACTIONABLE, AND A REAL USER SAID SO: "10 changes
      * could not be placed" followed by three reasons, over a list of twelve edits that
@@ -212,12 +212,12 @@ export function VisualChangesBar({
                     ) : (
                         <>
                             {/*
-                              ⚠️ G3/N1 — A GREEN TICK OVER "0 changes written" IS A LIE.
+                              ⚠️ A GREEN TICK OVER "0 changes written" IS A LIE.
                               The icon now follows the outcome: applied nothing ⇒ warn.
                             */}
                             {outcome!.applied.length > 0 ? (
                                 /*
-                                  ⭐ G4 — THE SUCCESS MOMENT. A rebuild is minutes of
+                                  ⭐ THE SUCCESS MOMENT. A rebuild is minutes of
                                   waiting; the payoff should register. The tick scales in
                                   once (motion-safe, so `prefers-reduced-motion` gets the
                                   same information with no movement) and sits on the
@@ -265,7 +265,7 @@ export function VisualChangesBar({
                                             )}
                                         </p>
                                         {/*
-                                          ⚠️ G3/N2 — ONE LINE PER DISTINCT REASON. It used
+                                          ⚠️ ONE LINE PER DISTINCT REASON. It used
                                           to render `unmapped[0]` for all of them, so three
                                           refusals with three different causes reported one.
                                         */}
@@ -283,7 +283,7 @@ export function VisualChangesBar({
                                         </ul>
                                     </div>
                                 )}
-                                {/* ⚠️ G3/N1 — only when something WAS written, or this
+                                {/* ⚠️ only when something WAS written, or this
                                     contradicts the line above it. */}
                                 {outcome!.rebuildStarted === false && outcome!.filesWritten > 0 && (
                                     <p className="text-warning-subtle-foreground">
@@ -339,7 +339,7 @@ export function VisualChangesBar({
                     </div>
 
                     {/*
-                      ⭐ G4 — THE THREE STEPS, NAMED. A rebuild is 1-4 minutes of
+                      ⭐ THE THREE STEPS, NAMED. A rebuild is 1-4 minutes of
                       nothing visible happening; a bare spinner for that long reads as
                       "stuck". Naming the stage the user is in — and showing the two
                       still to come — is the difference between waiting and worrying.
@@ -386,7 +386,7 @@ export function VisualChangesBar({
             {hasChanges && !busy && (
                 <>
                     {/*
-                      ⚠️ G3/N4 — THE BUTTONS GET THEIR OWN ROW BELOW `sm`.
+                      ⚠️ THE BUTTONS GET THEIR OWN ROW BELOW `sm`.
                       Measured at 375px: the label `<p min-w-0 flex-1>` was competing
                       with three buttons on one flex row and collapsed to a 16px column
                       wrapping over four lines. Stacking is the only thing that fits.
@@ -415,7 +415,7 @@ export function VisualChangesBar({
                                 {t(expanded ? "workspace.visualEditor.hideList" : "workspace.visualEditor.showList")}
                             </Button>
                             {/*
-                              ⭐ G4 — CONFIRMED, because it is the only irreversible
+                              ⭐ CONFIRMED, because it is the only irreversible
                               control here. Every other action in this bar can be undone
                               (per-change undo) or repeated (Apply); throwing away a
                               batch of edits cannot.
@@ -429,7 +429,7 @@ export function VisualChangesBar({
                                 {t("workspace.visualEditor.discardAll")}
                             </Button>
                             {/*
-                              ⚠️ G3/M3 — DISABLED WHILE A REQUEST IS IN FLIGHT. The real
+                              ⚠️ DISABLED WHILE A REQUEST IS IN FLIGHT. The real
                               guard is the ref inside `apply()`; this stops the button
                               looking clickable in the moment before React re-renders.
                             */}
@@ -451,7 +451,7 @@ export function VisualChangesBar({
                                 const aspects = aspectsOf(change);
                                 const aspect = aspects[0];
                                 /**
-                                 * ⭐ G4 — every aspect, joined. The first keeps its own
+                                 * ⭐ every aspect, joined. The first keeps its own
                                  * casing because it may open the label (EN "{role} {aspect}"
                                  * puts it last, ES "{aspect} · {role}" puts it first); the
                                  * rest are lowercased so ES reads "Tamaño y color" and not
@@ -470,7 +470,7 @@ export function VisualChangesBar({
                                               : `${joined}, ${word}`
                                     );
                                 /**
-                                 * ⭐ G4 — "Heading size", not a truncated class string.
+                                 * ⭐ "Heading size", not a truncated class string.
                                  * The list used to render the raw `className` diff, so
                                  * three different edits to one element looked identical
                                  * and the meaningful token was cut off by the ellipsis.
@@ -479,7 +479,7 @@ export function VisualChangesBar({
                                     role: t(ROLE_LABEL[roleOf(change.signature)]),
                                     aspect: aspectText,
                                 });
-                                /** G5 — the reason THIS row was refused by the last apply. */
+                                /** the reason THIS row was refused by the last apply. */
                                 const failure = failureByChange.get(change.id);
                                 return (
                                     <li key={change.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
@@ -495,7 +495,7 @@ export function VisualChangesBar({
                                             </span>
                                             {/* The literal diff stays, one step down the
                                                 hierarchy — useful when it is short (text),
-                                                noise when it is long (classes). ⚠️ G5: a
+                                                noise when it is long (classes). ⚠️ a
                                                 refused change shows WHY here instead, which
                                                 is the only place the user can act on it. */}
                                             <span

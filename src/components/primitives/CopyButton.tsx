@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 export interface CopyButtonProps {
   /** The text to copy. May be a resolver for values fetched on demand
-   *  (e.g. reveal-then-copy for API keys in Phase 17). */
+   *  (e.g. reveal-then-copy for API keys). */
   value: string | (() => string | Promise<string>);
   /** Already-translated label. When omitted the button is icon-only. */
   label?: string;

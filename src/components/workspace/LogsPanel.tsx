@@ -40,7 +40,7 @@ import type { VcaasErrorCode } from "@/lib/vcaas-errors";
 import { cn } from "@/lib/utils";
 
 /**
- * THE SERVER LOGS — DEVELOPMENT **AND** PRODUCTION (Feature F9).
+ * THE SERVER LOGS — DEVELOPMENT **AND** PRODUCTION.
  *
  * ⚠️⚠️ PHASE 09 SHIPPED ONE TAB ON A FALSE PREMISE, and this is the correction.
  * It assumed the dev server "on PORT 80 serves both the preview and the published

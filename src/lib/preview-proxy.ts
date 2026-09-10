@@ -1,7 +1,7 @@
 import { AGENT_SCRIPT_TAG } from "@/lib/visual-edit-agent";
 
 /**
- * ═══ THE PREVIEW-PROXY REWRITES (Feature F12, hardened in G3) ═══════════════
+ * ═══ THE PREVIEW-PROXY REWRITES (the visual editor) ═══════════════
  *
  * Pure string work, extracted from the route because **a Next.js route file may
  * only export HTTP methods** — exporting a helper from it fails the build with
@@ -20,7 +20,7 @@ import { AGENT_SCRIPT_TAG } from "@/lib/visual-edit-agent";
  * Next.js also embeds `/_next/...` inside its bootstrap JSON payload, so those are
  * rewritten too; that is the one string form specific enough to be safe.
  *
- * ⚠️ G3 — THIS IS ONLY HALF THE JOB, AND THAT IS WHY THE PREVIEW USED TO BE BLANK.
+ * ⚠️ THIS IS ONLY HALF THE JOB, AND THAT IS WHY THE PREVIEW USED TO BE BLANK.
  * It can only fix URLs that appear in the HTML. Next.js computes most of its chunk
  * URLs at RUNTIME from a `publicPath` inlined at build time, which no amount of HTML
  * rewriting can reach. The other half is `PREVIEW_RUNTIME_SHIM`, injected by
@@ -43,7 +43,7 @@ export function rewriteHtml(html: string, base: string): string {
 /**
  * Put the editor bundle (runtime shim + agent) at the very TOP of `<head>`.
  *
- * ⚠️⚠️ G3 — THE POSITION IS LOAD-BEARING, NOT TIDINESS. It used to be injected before
+ * ⚠️⚠️ THE POSITION IS LOAD-BEARING, NOT TIDINESS. It used to be injected before
  * `</head>`, i.e. AFTER the app's own `<script async>` tags. The runtime shim has to
  * patch `document.createElement` and `fetch` **before any application code runs**, or
  * the first chunk request escapes the proxy and 404s. First in `<head>` is the only
@@ -55,7 +55,7 @@ export function rewriteHtml(html: string, base: string): string {
 /**
  * Point root-absolute `url(...)` references in a stylesheet at the proxy.
  *
- * ⚠️ G3 — CSS IS A THIRD URL SPACE the HTML rewrite and the runtime shim both miss.
+ * ⚠️ CSS IS A THIRD URL SPACE the HTML rewrite and the runtime shim both miss.
  * Next.js emits `url(/_next/static/media/….woff2)` inside its stylesheets; those are
  * resolved by the CSS engine, not by webpack and not by any DOM API we can patch, so
  * they 404ed at the platform root. Fonts failing is only cosmetic — the page falls

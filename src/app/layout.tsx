@@ -3,7 +3,6 @@ import React from "react";
 import type { Metadata } from "next";
 import { DM_Sans, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { ScriptExecutor } from "@/components/ScriptExecutor";
 import { GlobalErrorCatcher } from "@/components/GlobalErrorCatcher";
 import { Toaster } from "@/components/ui/sonner";
 import { InsufficientCreditsModal } from "@/components/workspace/InsufficientCreditsModal";
@@ -25,7 +24,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${dmSans.variable} ${geistMono.variable} antialiased`}>
         <GlobalErrorCatcher />
-        <ScriptExecutor />
         <Toaster position="top-right" richColors />
         {/*
           ⭐ MOUNTED ONCE FOR THE WHOLE APP. Running out of credits can happen on any

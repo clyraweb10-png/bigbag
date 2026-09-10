@@ -1,5 +1,5 @@
 /**
- * ═══ THE VISUAL EDITOR: MODEL AND MATCHER (Feature F12) ═════════════════════
+ * ═══ THE VISUAL EDITOR: MODEL AND MATCHER (the visual editor) ═════════════════════
  *
  * The pure half — no React, no fetch, no DOM. It answers one hard question:
  *
@@ -40,7 +40,7 @@ export interface ElementSignature {
     /**
      * The `class` attribute **as it exists in the source**.
      *
-     * ⚠️ G3/B2 — THE EDITOR'S OWN CLASSES ARE STRIPPED BEFORE THIS IS REPORTED.
+     * ⚠️ THE EDITOR'S OWN CLASSES ARE STRIPPED BEFORE THIS IS REPORTED.
      * `select()` adds `totalum-ve-selected` to draw the outline, and this field used to
      * be read *after* that — so every style edit's `before` carried a class that exists
      * in no source file and every size/colour change resolved to `not-found`. See
@@ -57,7 +57,7 @@ export interface ElementSignature {
     /**
      * `src` for images and videos, **with the preview-proxy prefix removed**.
      *
-     * ⚠️ G3/B3 — the proxy rewrites `src="/hero.png"` to
+     * ⚠️ the proxy rewrites `src="/hero.png"` to
      * `src="/api/preview/<id>/hero.png"` before the agent ever sees the DOM, so this
      * used to report a string that appears in no source file. See `stripProxyBase`.
      */
@@ -65,7 +65,7 @@ export interface ElementSignature {
     /** A short human label for the breadcrumb, e.g. `section > h1.hero-title`. */
     breadcrumb: string;
 
-    // ── G3 additions ────────────────────────────────────────────────────────
+    // ── Additions ────────────────────────────────────────────────────────
 
     /**
      * ⭐ THE STRONGEST SIGNAL WE CAN GET WITHOUT A BUILD PLUGIN.
@@ -83,13 +83,13 @@ export interface ElementSignature {
     /**
      * ⭐ A STABLE HANDLE FOR *THIS* SELECTION, minted by the agent and bumped on every
      * `select()`. It identifies the element across re-describes, which is what lets the
-     * store collapse consecutive edits to one property (G3/M4). It is deliberately NOT
+     * store collapse consecutive edits to one property. It is deliberately NOT
      * derived from the class attribute — the old code keyed on the breadcrumb, which
      * changes the moment a size or colour edit rewrites the first class.
      */
     selectionId: string;
 
-    // ── G5 additions ────────────────────────────────────────────────────────
+    // ── More additions ────────────────────────────────────────────────────────
     //
     // ⚠️ EVERY ONE OF THESE IS OPTIONAL, AND THAT IS NOT LAZINESS. The agent is served
     // into a previewed app that may have been built weeks ago and is still running; a
@@ -133,7 +133,7 @@ export interface ElementSignature {
 
 export type VisualChangeKind = "text" | "class" | "src";
 
-// ─── Sanitisers shared by the agent and the server (G3: B2 + B3) ─────────────
+// ─── Sanitisers shared by the agent and the server (B2 + B3) ─────────────
 
 /**
  * The prefix every class the editor adds to someone else's DOM must carry.
@@ -184,7 +184,7 @@ export interface VisualChange {
     /** The value the user wants. */
     after: string;
     /**
-     * ⭐⭐ G6 — `after` IS A URL WE JUST MINTED, NOT ONE THE USER CHOSE.
+     * ⭐⭐ `after` IS A URL WE JUST MINTED, NOT ONE THE USER CHOSE.
      *
      * ⚠️⚠️ ONLY SET BY THE UPLOAD DROPZONE, AND THE DISTINCTION IS THE WHOLE POINT.
      * Dropping a file on the panel uploads it to Totalum storage and yields a **signed
@@ -277,7 +277,7 @@ export interface Candidate {
     /**
      * What to write in `match`'s place, when it is NOT simply the change's `after`.
      *
-     * ⚠️ G4 — ONLY THE TEMPLATE-LITERAL CLASS PATH SETS THIS. There, the value in the
+     * ⚠️ ONLY THE TEMPLATE-LITERAL CLASS PATH SETS THIS. There, the value in the
      * source is not the value in the DOM: the source holds static tokens plus
      * `${…}` interpolations, and the DOM holds those statics plus whatever the
      * interpolations evaluated to. Writing the DOM string back would hard-code a
@@ -309,7 +309,7 @@ export const WEIGHTS = {
     parent: 20,
     nthOfType: 15,
     /**
-     * ⭐ G3 — THE ID IS WORTH MORE THAN EVERYTHING ELSE COMBINED, on purpose.
+     * ⭐ THE ID IS WORTH MORE THAN EVERYTHING ELSE COMBINED, on purpose.
      *
      * `id="hero-heading"` appearing within 400 characters of the candidate is as close
      * to proof as this approach gets: ids are near-unique per file and, unlike text,
@@ -345,7 +345,7 @@ function scoreCandidate(
     const near = contextAround(content, index);
 
     /**
-     * ⭐ THE ID, FIRST AND HEAVIEST (G3). Matched as a literal `id="…"` attribute rather
+     * ⭐ THE ID, FIRST AND HEAVIEST. Matched as a literal `id="…"` attribute rather
      * than as a bare string, so a component whose *text* happens to contain the word
      * cannot claim it.
      */
@@ -472,7 +472,7 @@ export function findClassCandidates(
 }
 
 /**
- * ═══ CLASS NAMES WRITTEN AS TEMPLATE LITERALS (G4) ══════════════════════════
+ * ═══ CLASS NAMES WRITTEN AS TEMPLATE LITERALS ══════════════════════════
  *
  * ⚠️⚠️ THIS IS NOT AN EDGE CASE — IT IS THE HEADINGS. Verified on a brand-new project
  * generated from a prompt: `src/app/page.tsx` had 21 plain `className="…"` attributes
@@ -664,7 +664,7 @@ export function findCandidates(files: Map<string, string>, change: VisualChange)
     if (change.kind === "text") return findTextCandidates(files, change);
     if (change.kind === "class") {
         /**
-         * ⚠️ G4 — THE QUOTED FORM WINS WHENEVER IT EXISTS. It is an exact whole-value
+         * ⚠️ THE QUOTED FORM WINS WHENEVER IT EXISTS. It is an exact whole-value
          * match; the template form is a containment match and therefore weaker
          * evidence, so it is only consulted when the exact one found nothing. Merging
          * the two pools would let a containment hit sit within `AMBIGUITY_MARGIN` of an
@@ -681,7 +681,7 @@ export function findCandidates(files: Map<string, string>, change: VisualChange)
 export interface ResolvedEdit {
     changeId: string;
     /**
-     * ⭐ G5 — EVERY CHANGE THIS ONE EDIT SATISFIES.
+     * ⭐ EVERY CHANGE THIS ONE EDIT SATISFIES.
      *
      * Consecutive edits to one element's class attribute are COMPOSED into a single
      * write (recolour then resize is two changes and one attribute), so the edit that
@@ -704,7 +704,7 @@ export interface UnmappedChange {
     /**
      * Why we refused — surfaced to the user verbatim, via i18n keys.
      *
-     * ⭐ G6 — `unsupported` IS THE HONEST ONE, AND IT IS NEW. It means "we know exactly
+     * ⭐ `unsupported` IS THE HONEST ONE, AND IT IS NEW. It means "we know exactly
      * which element you clicked and we cannot express this edit in the source" — an
      * image whose url is computed, a static import, a value that only exists at
      * runtime. Before it existed, those changes were handed to the legacy text matcher
@@ -933,17 +933,17 @@ export function applyEdits(files: Map<string, string>, edits: ResolvedEdit[]): A
 }
 
 /**
- * ⭐⭐ THE SAFETY NET (G3). Does this rewrite differ from the original by EXACTLY the
+ * ⭐⭐ THE SAFETY NET. Does this rewrite differ from the original by EXACTLY the
  * edits we intended, and nothing else?
  *
  * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
  *
- * During G3's live verification a real project came back with every `className`,
+ * In a live verification a real project came back with every `className`,
  * `id` and several opening tags stripped out of `src/app/page.tsx`, and the rebuilt
  * app was published completely unstyled. `applyEdits` is provably surgical — a unit
  * test asserts identical length and identical `className` count for a one-token
  * change — so the transformation did not come from here, and the most likely
- * candidate is upstream (G2 independently recorded a rebuild taking a healthy sandbox
+ * candidate is upstream (a rebuild taking a healthy sandbox was independently recorded
  * down). **But "probably not us" is not good enough when the failure mode is
  * destroying someone's source file.**
  *
@@ -1013,7 +1013,7 @@ export const TEXT_SIZE_SCALE = [
 const SIZE_PATTERN = /^text-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl)$/;
 
 /**
- * ⭐ G3 — ARBITRARY FONT SIZES, because that is what the generator actually emits.
+ * ⭐ ARBITRARY FONT SIZES, because that is what the generator actually emits.
  *
  * The audit measured `text-[3.6rem]`, `text-[1.65rem]`, `text-[5.5rem]` on a real
  * generated page. The named scale above matches none of them, so `currentTextSize`
@@ -1030,7 +1030,7 @@ const ARBITRARY_SIZE_PATTERN = /^text-\[(\d*\.?\d+)(rem|px|em|pt)\]$/;
  * A non-colour `text-*` utility. Everything else beginning `text-` is treated as a
  * colour and replaced.
  *
- * ⚠️ G3 — WHY THIS LIST EXISTS. The old `COLOR_PATTERN` only matched
+ * ⚠️ WHY THIS LIST EXISTS. The old `COLOR_PATTERN` only matched
  * `text-<word>[-<number>]`, so the generator's own custom palette (`text-bean-ink`,
  * `text-bean-clay`) was never removed and a colour edit *appended* a second colour
  * utility next to it. Which one won then depended on the order Tailwind happened to
@@ -1200,7 +1200,7 @@ export function describeChange(change: VisualChange): { kind: VisualChangeKind; 
     return { kind: change.kind, from: shorten(change.before), to: shorten(change.after) };
 }
 
-// ─── Naming a change in words (G4) ───────────────────────────────────────────
+// ─── Naming a change in words ───────────────────────────────────────────
 
 /**
  * The kind of thing an element IS, from its tag. Used to build labels like
@@ -1231,7 +1231,7 @@ export function roleOf(signature: Pick<ElementSignature, "tag">): ElementRole {
 export type ChangeAspect = "text" | "size" | "textColor" | "bgColor" | "style" | "media";
 
 /**
- * ⭐ G4 — WHY THIS EXISTS. The unsaved list used to read
+ * ⭐ WHY THIS EXISTS. The unsaved list used to read
  *
  *     Style  font-display text-[1.65rem] text-bean-ink → font-display text-[1.65rem]…
  *
@@ -1243,7 +1243,7 @@ export type ChangeAspect = "text" | "size" | "textColor" | "bgColor" | "style" |
 /**
  * EVERY aspect the change covers, most specific first.
  *
- * ⚠️⚠️ G4 — A CHANGE CAN BE MORE THAN ONE THING, AND SAYING OTHERWISE IS A LIE ABOUT
+ * ⚠️⚠️ A CHANGE CAN BE MORE THAN ONE THING, AND SAYING OTHERWISE IS A LIE ABOUT
  * WHAT DISCARDING IT WILL DO. Consecutive class edits to one element are deliberately
  * collapsed into a single change (see `pushChange` — the second edit's `before` no
  * longer exists in the source, so it could never be resolved on its own). Make a

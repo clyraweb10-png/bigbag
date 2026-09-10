@@ -5,13 +5,13 @@
  * distinct `errorCode` strings (see `www.totalum.app/docs/api` — the published docs
  * are the only reference; this repo deliberately keeps no copy of them),
  * plus `403 VCAAS_INSUFFICIENT_CREDITS` from the credit gate in front of the whole
- * API (CONTEXT §4.7).
+ * API.
  *
  * The UI must not switch on sixty strings. This maps them onto a small, stable
  * union that later phases can exhaustively handle:
  *
- *   INSUFFICIENT_CREDITS — out of credits ⇒ Phase 16's modal (upgrade / buy)
- *   PLAN_REQUIRED        — a paid-plan feature ⇒ Phase 10's <PaidFeature> upsell
+ *   INSUFFICIENT_CREDITS — out of credits ⇒ the insufficient-credits modal (upgrade / buy)
+ *   PLAN_REQUIRED        — a paid-plan feature ⇒ the `<PaidFeature>` upsell
  *   PROJECT_LIMIT_REACHED — the account owns as many projects as its plan allows
  *   PROJECT_NOT_FOUND    — no such project FOR THIS USER (see the note below)
  *   RATE_LIMITED         — back off and retry
@@ -100,8 +100,8 @@ const INSUFFICIENT: ReadonlySet<string> = new Set([
  * A paid plan (or API access) is required.
  *
  * `PLAN_NOT_API` / `PROJECT_NOT_ALLOWED` come from VCaaS's `isApiAccessAllowed()`
- * check (CONTEXT §4.10). The `PLATFORM_FREE_PLAN_*` codes are the free-plan gates
- * Phase 20 adds in totalum-backend for source download, GitHub and custom domains.
+ * check. The `PLATFORM_FREE_PLAN_*` codes are the free-plan gates
+ * an earlier version adds in totalum-backend for source download, GitHub and custom domains.
  */
 const PLAN: ReadonlySet<string> = new Set([
     "PLAN_REQUIRED",
@@ -168,7 +168,7 @@ const VALIDATION: ReadonlySet<string> = new Set([
     "PROJECT_ALREADY_EXISTS", "WEBHOOK_EVENT_ALREADY_EXISTS",
     "PROMPT_SECURITY_VIOLATION",
     // `createProject` rejects any id containing `-dev-`; totalum-backend derives
-    // development hostnames from that fragment. Added in Phase 07 — the dashboard
+    // development hostnames from that fragment. Added — the dashboard
     // is the first surface that lets a user type a project name.
     "RESERVED_PROJECT_NAME",
 ]);

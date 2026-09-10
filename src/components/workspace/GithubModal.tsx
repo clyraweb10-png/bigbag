@@ -124,7 +124,7 @@ function GithubTokenSetup() {
      *
      * ⚠️ IT SAID "GIVE IT THE `repo` SCOPE", AND THAT WAS WRONG. `repo` is a
      * CLASSIC token scope. `validateConnection` in
-     * `totalum-backend/src/api/v1/github/github.service.ts` reads
+     * the Totalum API backend reads
      * `permissions.push`, `permissions.admin` and probes PR write — i.e. it
      * validates the three FINE-GRAINED permissions listed here. Following the old
      * copy produced a token that was refused with a permissions error this modal

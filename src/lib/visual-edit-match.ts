@@ -1,5 +1,5 @@
 /**
- * ═══ FROM A CLICKED ELEMENT TO A CHARACTER RANGE (Feature G5) ═══════════════
+ * ═══ FROM A CLICKED ELEMENT TO A CHARACTER RANGE ═══════════════
  *
  * The matcher. It is handed the parsed source of everything the current route can
  * render (`visual-edit-source.ts`) and one `VisualChange`, and it answers with the
@@ -156,7 +156,7 @@ function viewOf(signature: ElementSignature): SignatureView {
         tag: (signature.tag || "").toLowerCase(),
         id: signature.id || null,
         /**
-         * ⚠️ G6 — `normalizeLinearText`, SO A `<br/>` SURVIVES AS A NEWLINE. The source
+         * ⚠️ `normalizeLinearText`, SO A `<br/>` SURVIVES AS A NEWLINE. The source
          * side assembles `<h1>Bean<br/>There</h1>` as `"Bean\nThere"`; flattening the
          * DOM's copy to `"Bean There"` here would make the two disagree by one character
          * and eliminate the only correct candidate. Identical to `normalizeText` for the
@@ -588,7 +588,7 @@ function camel(name: string): string {
  * props the inner element's tag survives instead, which is still correct, just shared.
  */
 /**
- * ⭐⭐⭐ G6 — A BUILD TAG IS EVIDENCE, NOT AN ORACLE, AND TREATING IT AS ONE WROTE TO
+ * ⭐⭐⭐ A BUILD TAG IS EVIDENCE, NOT AN ORACLE, AND TREATING IT AS ONE WROTE TO
  * THE WRONG ELEMENT.
  *
  * ⚠️⚠️ THE STAMP DESCRIBES THE BUILD THE PREVIEW IS SERVING; WE MATCH IT AGAINST THE
@@ -925,7 +925,7 @@ function planTextEdit(
     const file = index.files.get(element.filePath);
     if (!file) return { ok: false, reason: "not-found" };
 
-    // ⚠️ G6 — LINEAR, so a `<br/>` in the user's text stays a line break rather than
+    // ⚠️ LINEAR, so a `<br/>` in the user's text stays a line break rather than
     // collapsing into a space. Identical to `normalizeText` when there is no `<br/>`.
     const before = normalizeLinearText(change.before);
     const after = change.after;
@@ -940,7 +940,7 @@ function planTextEdit(
     if (element.ownText && element.ownText === normalizeLinearText(after)) return { ok: true, edits: [] };
 
     /**
-     * ⭐⭐ G6 — A HEADING BROKEN OVER SEVERAL LINES BY `<br/>`.
+     * ⭐⭐ A HEADING BROKEN OVER SEVERAL LINES BY `<br/>`.
      *
      * ⚠️⚠️ `<h1>Bean<br/>There</h1>` COULD NOT BE EDITED AT ALL before this — the panel
      * offered no text field and the page took no caret, because `isEditableText` refused
@@ -971,7 +971,7 @@ function planTextEdit(
          * The text is `{something}` — tier 3 (the data behind a `.map()`) is what
          * handles this, and the resolver runs it next.
          *
-         * ⭐ G6 — `unsupported`, NOT `not-found`, AND THE DIFFERENCE IS WHO GETS IT NEXT.
+         * ⭐ `unsupported`, NOT `not-found`, AND THE DIFFERENCE IS WHO GETS IT NEXT.
          * We know exactly which element this is; its text is simply not written in the
          * markup. `not-found` sent it on to the legacy matcher, which searches the raw
          * file for the old string and rewrites wherever it lands — the same demotion
@@ -986,7 +986,7 @@ function planTextEdit(
     if (whole) return { ok: true, edits: [replaceTextSlot(element, whole, after)] };
 
     /**
-     * 2 · ⭐⭐ G6 — THE ELEMENT'S WHOLE TEXT IS THIS ONE RUN, SO WRITE IT, WHATEVER
+     * 2 · ⭐⭐ THE ELEMENT'S WHOLE TEXT IS THIS ONE RUN, SO WRITE IT, WHATEVER
      *     `before` CLAIMS.
      *
      * ⚠️ THE OLD GUARD WAS `only.value === before`, AND IT REFUSED CORRECT EDITS. The
@@ -1025,7 +1025,7 @@ function planTextEdit(
     }
 
     /**
-     * ⭐ G6 — WHICH REFUSAL THIS IS DEPENDS ON WHETHER THE SOURCE COULD HAVE ANSWERED.
+     * ⭐ WHICH REFUSAL THIS IS DEPENDS ON WHETHER THE SOURCE COULD HAVE ANSWERED.
      *
      * ⚠️ WHEN THE ELEMENT'S TEXT IS FULLY STATIC AND STILL DOES NOT LINE UP, A BLIND
      * TEXT SEARCH IS THE LAST THING THAT SHOULD RUN. We located the element and read
@@ -1235,7 +1235,7 @@ function planClassEdit(
 /**
  * The attributes that carry a media url, in the order we prefer to rewrite them.
  *
- * ⭐ G6 — `srcSet` IS HERE BECAUSE `<picture><source srcSet="…">` HAS NO `src` AT ALL,
+ * ⭐ `srcSet` IS HERE BECAUSE `<picture><source srcSet="…">` HAS NO `src` AT ALL,
  * and the panel offered to replace it anyway (the agent reports `<source>` as media).
  * The change was then handed to the text matcher, which is how an unrelated element got
  * rewritten. A `<source>` is one of the two ordinary ways to put a picture on a page.
@@ -1293,7 +1293,7 @@ function planSrcEdit(
     }
 
     /**
-     * ⭐⭐ G6 — THE URL IS IN THE LOOP'S DATA, AND `domOrdinal` SAYS WHICH ENTRY.
+     * ⭐⭐ THE URL IS IN THE LOOP'S DATA, AND `domOrdinal` SAYS WHICH ENTRY.
      *
      * ⚠️⚠️ THIS IS THE FIX FOR THE WORST BUG THE AUDIT FOUND. `<img src={item.src}>`
      * inside `gallery.map(item => …)` is ONE source element rendering N images. The
@@ -1303,7 +1303,7 @@ function planSrcEdit(
      *
      * There is nothing to guess here. `loop.iterable` names the array, `loop.param`
      * names the item, `item.src` says which property, and the agent already counted
-     * which of the identical images was clicked. Text has had this since G5 (tier 3);
+     * which of the identical images was clicked. Text has had this for a while (tier 3);
      * `src` never did.
      */
     const fromLoop = planLoopDataEdit(index, change, element, expression);
@@ -1312,7 +1312,7 @@ function planSrcEdit(
     /**
      * A constant, here or in a module this file imports.
      *
-     * ⚠️ G6 — THE OLD CODE REQUIRED `constant.value === change.before`, AND THAT IS A
+     * ⚠️ THE OLD CODE REQUIRED `constant.value === change.before`, AND THAT IS A
      * TEST THE TRUTH ROUTINELY FAILS. `change.before` is what the BROWSER reported: for
      * a `next/image` it is `/_next/image?url=%2Fhero.png&w=1920&q=75`, which equals no
      * constant anywhere. We already know which element this is — the value it points at
@@ -1346,7 +1346,7 @@ function planSrcEdit(
     }
 
     /**
-     * ⭐⭐ G6 — THE URL IS A PROP, SO THE EDIT BELONGS AT THE CALL SITE.
+     * ⭐⭐ THE URL IS A PROP, SO THE EDIT BELONGS AT THE CALL SITE.
      *
      * `<img src={src}>` inside `function Figure({ src, alt, caption })` owns no url at
      * all; every `<Figure src="/b.png" />` does. Walking outwards is the only edit that

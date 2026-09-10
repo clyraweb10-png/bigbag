@@ -1,5 +1,5 @@
 /**
- * ═══ THE IN-PAGE AGENT (Feature F12) ════════════════════════════════════════
+ * ═══ THE IN-PAGE AGENT (the visual editor) ════════════════════════════════════════
  *
  * The script that runs INSIDE the previewed app and does the four things the
  * workspace cannot do from outside an iframe: hit-test a click, outline what is
@@ -39,7 +39,7 @@ export const VISUAL_EDIT_MESSAGE = {
     /** agent → parent: the previewed app navigated; selection is stale. */
     navigated: "totalum:ve:navigated",
     /**
-     * parent → agent: drop the current selection and its outline (G3/P2).
+     * parent → agent: drop the current selection and its outline.
      * `setActive:true` never did this — the agent only clears on `setActive:false`,
      * which would also turn selection mode off.
      */
@@ -47,7 +47,7 @@ export const VISUAL_EDIT_MESSAGE = {
     /**
      * agent → parent: here is the project's palette again, nothing else has changed.
      *
-     * ⚠️⚠️ G4 — THIS EXISTS TO BREAK AN INFINITE LOOP, not for tidiness. The palette
+     * ⚠️⚠️ THIS EXISTS TO BREAK AN INFINITE LOOP, not for tidiness. The palette
      * refresh on activation used to reuse `ready`, and `ready` is what increments the
      * parent's `readyTick` — whose effect posts `setActive`, which made the agent post
      * `ready`, which… Measured on a live preview: 120+ round trips in two seconds, each
@@ -78,9 +78,9 @@ export const VISUAL_EDIT_MESSAGE = {
  * nothing that needs transpiling and touches no global the app might own.
  */
 /**
- * ═══ THE RUNTIME URL SHIM (Feature G3 — audit finding B1) ═══════════════════
+ * ═══ THE RUNTIME URL SHIM ═══════════════════
  *
- * ⚠️⚠️ WITHOUT THIS, THE PROXIED PREVIEW IS A BLANK PAGE. Measured in G2 against a
+ * ⚠️⚠️ WITHOUT THIS, THE PROXIED PREVIEW IS A BLANK PAGE. Measured against a
  * real generated project: `document.body` had **zero** text and 21 elements.
  *
  * `rewriteHtml()` fixes the URLs written into the HTML. It cannot fix the ones Next.js
@@ -122,9 +122,8 @@ export const VISUAL_EDIT_MESSAGE = {
  * Rewriting every root-absolute request to the proxy base closes the ordinary path:
  * the app's calls now reach the app. This is a strong mitigation, NOT a sandbox — code
  * running in the same realm can always undo a monkey-patch. The real containment is
- * that the proxy is only mounted while the editor is open, and it is documented in
- * PROGRESS as the reason a dedicated preview origin would be the better long-term
- * answer.
+ * that the proxy is only mounted while the editor is open; a dedicated preview origin
+ * would be the better long-term answer.
  */
 export const PREVIEW_RUNTIME_SHIM = (base: string) => String.raw`
 (function () {
@@ -462,7 +461,7 @@ export const AGENT_SOURCE = String.raw`
   /**
    * The proxy base this document is served under, e.g. "/api/preview/my-app".
    * Derived from our own <script src>, so the agent never has to be told.
-   * Used to undo the proxy's src rewrite before reporting a signature (G3/B3).
+   * Used to undo the proxy's src rewrite before reporting a signature.
    */
   var BASE = (function () {
     try {
@@ -495,11 +494,11 @@ export const AGENT_SOURCE = String.raw`
   /** id -> { el, prop, previous } so every preview change is individually undoable. */
   var applied = {};
   var seq = 0;
-  /** Bumped on every select(); see signatureOf() for why the store needs it (G3/M4). */
+  /** Bumped on every select(); see signatureOf() for why the store needs it. */
   var selectionId = 'sel-0';
   var selectionSeq = 0;
 
-  // ── Overlay (G4: refined, and it respects prefers-reduced-motion) ─────────
+  // ── Overlay (refined, and it respects prefers-reduced-motion) ─────────
   //
   // ⚠️ EVERY RULE IS !important AND EVERY PROPERTY IS ONE WE CAN GIVE BACK.
   // This paints into someone else's stylesheet cascade, so it only ever touches
@@ -577,7 +576,7 @@ export const AGENT_SOURCE = String.raw`
   window.addEventListener('resize', positionRing);
 
   /**
-   * ⭐ G4 — THE PROJECT'S OWN PALETTE, READ OFF THE RENDERED PAGE.
+   * ⭐ THE PROJECT'S OWN PALETTE, READ OFF THE RENDERED PAGE.
    *
    * The colour picker used to be a raw hex field, which asks the user to invent a
    * colour that has nothing to do with their design. The colours the project ALREADY
@@ -620,7 +619,7 @@ export const AGENT_SOURCE = String.raw`
   /**
    * Any CSS colour -> '#rrggbb'. null when transparent or unparseable.
    *
-   * ⚠️⚠️ G4 — DO NOT REPLACE THIS WITH AN rgb() REGEX. It was one, and on every
+   * ⚠️⚠️ DO NOT REPLACE THIS WITH AN rgb() REGEX. It was one, and on every
    * project the platform generates it threw the palette away. Tailwind 4 writes its
    * whole colour system in oklch(), and getComputedStyle hands oklch() straight back
    * — it does NOT normalise to rgb() the way it does for hsl() or named colours. So
@@ -692,7 +691,7 @@ export const AGENT_SOURCE = String.raw`
   function clean(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
 
   /**
-   * ⭐⭐ G3/B2 — STRIP THE EDITOR'S OWN CLASSES BEFORE ANYONE SEES THEM.
+   * ⭐⭐ STRIP THE EDITOR'S OWN CLASSES BEFORE ANYONE SEES THEM.
    *
    * 'totalum-ve-selected' is added to draw the outline, and the old code read the class
    * attribute AFTER adding it. That single ordering made the class attribute reported to
@@ -715,7 +714,7 @@ export const AGENT_SOURCE = String.raw`
   }
 
   /**
-   * ⭐ G3/B3 — UNDO THE PROXY'S URL REWRITE.
+   * ⭐ UNDO THE PROXY'S URL REWRITE.
    *
    * rewriteHtml() turned src="/hero.png" into src="/api/preview/<id>/hero.png" before
    * this agent ever ran, so reporting the live attribute meant reporting a string that
@@ -728,7 +727,7 @@ export const AGENT_SOURCE = String.raw`
   }
 
   /**
-   * ⭐⭐ G6 — WHAT THE SOURCE FILE WOULD CALL THIS IMAGE, not what the browser fetched.
+   * ⭐⭐ WHAT THE SOURCE FILE WOULD CALL THIS IMAGE, not what the browser fetched.
    *
    * Three things stood between those two, and each one broke image replacement in its
    * own way:
@@ -746,7 +745,7 @@ export const AGENT_SOURCE = String.raw`
    *      selected and never edited. srcset is a candidate list; the FIRST url in it is
    *      the one the source most likely wrote.
    *
-   *  3 · The proxy prefix, which 'unproxy' has always removed (G3/B3).
+   *  3 · The proxy prefix, which 'unproxy' has always removed.
    */
   function unwrapNextImage(url) {
     if (!url || url.indexOf('/_next/image') === -1) return url;
@@ -796,7 +795,7 @@ export const AGENT_SOURCE = String.raw`
   }
 
   /**
-   * ⭐⭐ G6 — A HEADING BROKEN OVER TWO LINES IS STILL A HEADING.
+   * ⭐⭐ A HEADING BROKEN OVER TWO LINES IS STILL A HEADING.
    *
    * ⚠️⚠️ '<h1>Bean<br/>There</h1>' COULD NOT BE EDITED AT ALL — no text field in the
    * panel, no caret in the page — because the old test refused ANY element with
@@ -901,7 +900,7 @@ export const AGENT_SOURCE = String.raw`
     while (node && node.nodeType === 1 && depth < 4 && node !== document.body) {
       var name = node.tagName.toLowerCase();
       // ⚠️ sourceClass, not getAttribute — otherwise the breadcrumb reads
-      // "li.totalum-ve-selected" for an element with no classes of its own (G3/B2).
+      // "li.totalum-ve-selected" for an element with no classes of its own.
       var id = node.getAttribute('id');
       var cls = (sourceClass(node) || '').split(/\s+/)[0];
       parts.unshift(id ? name + '#' + id : cls ? name + '.' + cls : name);
@@ -919,7 +918,7 @@ export const AGENT_SOURCE = String.raw`
   }
 
   /**
-   * ⭐⭐⭐ G5 — WHERE THIS ELEMENT WAS WRITTEN, IF THE BUILD BOTHERED TO SAY.
+   * ⭐⭐⭐ WHERE THIS ELEMENT WAS WRITTEN, IF THE BUILD BOTHERED TO SAY.
    *
    * The template's webpack loader stamps every JSX element with
    * 'data-tlm-loc="src/app/page.tsx:42:7"'. When it is there the server does not have to
@@ -1015,7 +1014,7 @@ export const AGENT_SOURCE = String.raw`
   /**
    * The attributes that identify an element independently of its classes.
    *
-   * ⚠️ 'href' GOES THROUGH unproxy FOR THE SAME REASON 'src' DOES (G3/B3): rewriteHtml
+   * ⚠️ 'href' GOES THROUGH unproxy FOR THE SAME REASON 'src' DOES: rewriteHtml
    * turned href="/about" into href="/api/preview/<id>/about" before this agent existed,
    * so reporting the live value would be reporting a string that is in no source file —
    * and the server would score a correct match DOWN for disagreeing with it.
@@ -1041,7 +1040,7 @@ export const AGENT_SOURCE = String.raw`
       /**
        * ⚠️ THE ROUTE IS THE APP'S, NOT THE PROXY'S. Under the proxy the pathname is
        * "/api/preview/<id>/about"; the matcher scores it against "src/app/about/page.tsx",
-       * so the base has to come off or every route signal is silently lost (G3).
+       * so the base has to come off or every route signal is silently lost.
        */
       route: (function () {
         var path = window.location.pathname || '/';
@@ -1060,13 +1059,13 @@ export const AGENT_SOURCE = String.raw`
       breadcrumb: breadcrumbOf(el),
       id: el.getAttribute('id') || null,
       ancestorId: ancestorIdOf(el),
-      // ⭐ G3/M4 — stable for as long as this element stays selected, so the store can
+      // ⭐ stable for as long as this element stays selected, so the store can
       // collapse consecutive edits to one property without keying on the class-derived
       // breadcrumb (which changes the moment a size or colour edit lands).
       selectionId: selectionId,
 
       /**
-       * ── G5: everything the server needs to stop guessing ──────────────────
+       * everything the server needs to stop guessing ──────────────────
        *
        * ⚠️ ALL OF IT IS ADDITIVE. An older workspace ignores these fields and an older
        * agent simply does not send them; the matcher treats each one as evidence when it
@@ -1343,8 +1342,8 @@ export const AGENT_SOURCE = String.raw`
       if (linearText(el) !== change.value) setLinearText(el, change.value);
     } else if (change.prop === 'class') {
       /**
-       * ⚠️ G3 — THE VALUE THE WORKSPACE SENDS IS *SOURCE* CLASSES ONLY, because the
-       * signature it derived it from is now stripped (B2). Writing it verbatim would
+       * ⚠️ THE VALUE THE WORKSPACE SENDS IS *SOURCE* CLASSES ONLY, because the
+       * signature it derived it from is now stripped. Writing it verbatim would
        * therefore delete the outline the user is looking at. The editor's own classes
        * are carried across explicitly, and 'previous' records the SOURCE value so a
        * revert restores exactly what the file has.
@@ -1359,7 +1358,7 @@ export const AGENT_SOURCE = String.raw`
       mirrorClassAsInlineStyle(el, change.value);
     } else if (change.prop === 'src') {
       /**
-       * ⚠️⚠️ G6 — 'srcset' WINS OVER 'src' IN THE BROWSER, so setting 'src' alone
+       * ⚠️⚠️ 'srcset' WINS OVER 'src' IN THE BROWSER, so setting 'src' alone
        * showed the user the OLD picture and made a perfectly good edit look broken.
        * Every 'next/image' renders a srcset, and so does every '<picture><source>'.
        * It is recorded so a revert puts the responsive set back exactly as it was.
@@ -1520,7 +1519,7 @@ export const AGENT_SOURCE = String.raw`
       active = !!data.payload;
       document.documentElement.classList.toggle('totalum-ve-active', active);
       if (!active) { setHover(null); select(null); }
-      // G4 — refresh the palette on activation: a rebuild since load may have
+      // refresh the palette on activation: a rebuild since load may have
       // changed the design, and a stale swatch row is worse than none.
       // ⚠️ M.palette, NOT M.ready — see the note on the message. Posting ready here
       // fed the parent's readyTick, whose effect posts this very message back.
@@ -1532,7 +1531,7 @@ export const AGENT_SOURCE = String.raw`
       revertChange((data.payload || {}).id);
       if (selected) post(M.selected, describe(selected));
     } else if (data.type === M.deselect) {
-      // G3/P2 — drop the outline WITHOUT turning selection mode off.
+      // drop the outline WITHOUT turning selection mode off.
       setHover(null);
       select(null);
     }
@@ -1554,11 +1553,11 @@ export const AGENT_SOURCE = String.raw`
   window.__totalumVisualEditor = true;
 
   /**
-   * ⚠️ ANNOUNCED TWICE, DELIBERATELY (G3).
+   * ⚠️ ANNOUNCED TWICE, DELIBERATELY.
    *
    * This script runs at the TOP of <head>, so 'ready' is posted before the workspace's
    * React listener can possibly have missed it — but only if the listener was already
-   * attached. G2 measured the other case: attach a listener after the document has
+   * attached. The other case was measured: attach a listener after the document has
    * loaded and 'ready' is gone forever, leaving the panel on "Connecting…" with no
    * retry. Re-announcing on 'load' costs one message and removes the race entirely.
    * The parent is idempotent about it.

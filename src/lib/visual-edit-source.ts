@@ -1,5 +1,5 @@
 /**
- * ═══ THE SOURCE MODEL: WHAT THE FILES ACTUALLY SAY (Feature G5) ═════════════
+ * ═══ THE SOURCE MODEL: WHAT THE FILES ACTUALLY SAY ═════════════
  *
  * ⚠️⚠️ THIS REPLACES REGEX MATCHING, AND THE REASON IS A MEASURED FAILURE RATE.
  * A user applied twelve visual changes to a real project: **two landed and ten came
@@ -88,7 +88,7 @@ export function normalizeText(value: string | null | undefined): string {
 }
 
 /**
- * ⭐⭐ G6 — THE SAME NORMALISATION, EXCEPT A NEWLINE SURVIVES.
+ * ⭐⭐ THE SAME NORMALISATION, EXCEPT A NEWLINE SURVIVES.
  *
  * ⚠️ A `<br/>` IS THE ONLY THING IN AN ELEMENT'S OWN TEXT THAT `normalizeText` MUST NOT
  * FLATTEN. `<h1>Bean<br/>There</h1>` is two lines to the person who wrote it and two
@@ -272,7 +272,7 @@ export interface SourceElement {
     /**
      * Normalised text of the direct text children only.
      *
-     * ⭐ G6 — `<br/>` CHILDREN COUNT AS NEWLINES HERE, and only they do. That makes this
+     * ⭐ `<br/>` CHILDREN COUNT AS NEWLINES HERE, and only they do. That makes this
      * field equal to what the agent reports for a two-line heading, which is what lets
      * one be matched and edited at all. See `brOnly` and `normalizeLinearText`.
      */
@@ -327,7 +327,7 @@ export interface SourceElement {
     inLoop: boolean;
 
     /**
-     * ⭐⭐ G6 — WHICH LOOP, AND WHAT IT CALLS EACH ITEM.
+     * ⭐⭐ WHICH LOOP, AND WHAT IT CALLS EACH ITEM.
      *
      * ⚠️ `inLoop: true` SAYS AN EDIT AFFECTS MANY NODES; IT DOES NOT SAY WHERE THE
      * VALUE LIVES, and that is the difference between refusing an image swap and
@@ -398,7 +398,7 @@ export interface ParsedFile {
     /** Top-level `const x = "…"` string constants, for `src={heroImage}`. */
     constants: Map<string, { value: string; start: number; end: number }>;
     /**
-     * ⭐⭐ G6 — TOP-LEVEL ARRAYS OF OBJECTS, ENTRY BY ENTRY, WITH SPANS.
+     * ⭐⭐ TOP-LEVEL ARRAYS OF OBJECTS, ENTRY BY ENTRY, WITH SPANS.
      *
      * `export const gallery = [{ src: "/g1.png", alt: "…" }, …]` is how every generated
      * project of any size holds the things it renders in a grid. `constants` already
@@ -531,7 +531,7 @@ function parseUncached(path: string, content: string): ParsedFile {
         parent: number | null,
         depth: number,
         inLoop: boolean,
-        /** ⭐ G6 — the innermost `.map()` we have passed through, and the component we are in. */
+        /** ⭐ the innermost `.map()` we have passed through, and the component we are in. */
         loop: SourceElement["loop"],
         owner: string | null
     ) => {
@@ -573,7 +573,7 @@ function parseUncached(path: string, content: string): ParsedFile {
     for (const element of file.elements) {
         element.hasElementChildren = element.children.length > 0;
         /**
-         * ⭐ G6 — `<br/>`-only children, and the linear text that follows from them.
+         * ⭐ `<br/>`-only children, and the linear text that follows from them.
          *
          * ⚠️ IT CANNOT BE DONE IN `buildElement`, because a parent is built BEFORE its
          * children exist — which is the same reason `hasElementChildren` is set here.
@@ -714,7 +714,7 @@ function collectImportsAndConstants(source: ts.SourceFile, file: ParsedFile): vo
                     }
                 } else if (ts.isArrayLiteralExpression(init)) {
                     /**
-                     * ⭐ G6 — `export const gallery = [{ src: "/g1.png" }, …]`, IN ORDER.
+                     * ⭐ `export const gallery = [{ src: "/g1.png" }, …]`, IN ORDER.
                      *
                      * The order is the whole value of this: the user clicked the second
                      * image, `domOrdinal` says 1, and entry 1 is the one to rewrite.

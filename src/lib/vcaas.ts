@@ -8,8 +8,8 @@
  *    GitHub, Figma, database, webhooks, files, project transfer, project groups).
  *    Read it before adding or changing a function here. Do not vendor a copy.
  *
- * Ported from `ai-app-builder-open/src/lib/vcaas.ts`, which keeps both layers in
- * one module. We split them:
+ * The client and server halves live in two files, and the split is a FILE BOUNDARY
+ * on purpose:
  *
  *   ┌─ CLIENT LAYER — THIS FILE ─────────────────────────────────────────────┐
  *   │  `vcaasApi`. UI components import this and never hardcode an            │
@@ -20,26 +20,19 @@
  *                                    ▼
  *   ┌─ SERVER LAYER — `vcaas-server.ts` ─────────────────────────────────────┐
  *   │  `vcaasRequest` / `vcaasUploadRequest`. `server-only`. The ONLY code    │
- *   │  that hits api-accounts.totalum.app. Imported exclusively by            │
- *   │  `src/app/api/vcaas/*`. Fetches the caller's key over the Platform      │
- *   │  Bridge per request and drops it.                                       │
+ *   │  that reads the API key and calls the Totalum API. Imported exclusively │
+ *   │  by `src/app/api/vcaas/*`.                                              │
  *   └─────────────────────────────────────────────────────────────────────────┘
  *
- * ⚠️ WHY THE SPLIT IS A FILE BOUNDARY AND NOT A COMMENT. Phase 06 kept both layers
- * here and imported the bridge lazily (`await import(...)`) hoping to keep it out
- * of client bundles. Webpack traces dynamic imports statically, so the moment
- * Phase 07's `ProjectsDashboard` — the first `"use client"` component to import
- * `vcaasApi` — was added, the production build failed:
- *
- *     Error: You're importing a component that needs "server-only".
- *     Import trace: account-bridge.ts → vcaas.ts → components/projects/ProjectsDashboard.tsx
- *
- * The guarantee held (it failed closed; nothing leaked), but the module was
- * unusable for its stated purpose. `vcaas-server.ts` now carries `server-only` and
- * this file imports nothing that could reach a secret. See that file's header.
+ * ⚠️ WHY A FILE BOUNDARY AND NOT A COMMENT. A single module holding both layers and
+ * importing the server half lazily (`await import(...)`) does NOT keep it out of
+ * client bundles — Webpack traces dynamic imports statically, so the first
+ * `"use client"` component to import `vcaasApi` fails the production build with
+ * "You're importing a component that needs server-only". Keeping the key-holding
+ * code in its own `server-only` module is what makes the guarantee structural.
  *
  * KEEP THIS FILE FREE OF: `process.env` reads, `crypto`, `node:*` imports, and any
- * import of `@/lib/account-bridge` or `@/lib/vcaas-server`.
+ * import of `@/lib/vcaas-server`.
  */
 
 // Type-only import: erased at compile time, so it creates NO runtime dependency on
@@ -119,7 +112,7 @@ export interface VcaasResponse<T> extends ApiResponse<T> {
  * `"use client"` module (see the header note on directives).
  */
 /**
- * ═══ THE GLOBAL INSUFFICIENT-CREDITS SIGNAL (Phase 16) ══════════════════════
+ * ═══ THE GLOBAL INSUFFICIENT-CREDITS SIGNAL ══════════════════════
  *
  * The brief asks the modal to fire "on `INSUFFICIENT_CREDITS` from ANY VCaaS call".
  * `proxyRequest` is the one chokepoint every one of the ~40 `vcaasApi` methods
@@ -476,7 +469,7 @@ export const vcaasApi = {
 
   // ──────────────────────────── GitHub ────────────────────────────
   // Final VCaaS endpoints: /vcaas/projects/{id}/github/*
-  // ⚠️ PAID-PLAN FEATURE — Phase 10 gates these behind <PaidFeature>; a free
+  // ⚠️ PAID-PLAN FEATURE — the app gates these behind <PaidFeature>; a free
   // account gets `code: "PLAN_REQUIRED"` back.
   github: {
     /** GET …/github/status — connection + token/branch info. */
@@ -644,7 +637,7 @@ export const vcaasApi = {
 
   // ──────────────────────── Custom domain ─────────────────────────
   // Final VCaaS endpoints: /vcaas/projects/{id}/domain
-  // ⚠️ PAID-PLAN FEATURE (Phase 10).
+  // ⚠️ PAID-PLAN FEATURE.
   domain: {
     /** PUT …/domain — attach a custom hostname (project must be deployed first). */
     set: (projectId: string, body: { hostname: string }): Promise<VcaasResponse<unknown>> =>
@@ -735,7 +728,7 @@ export const vcaasApi = {
       proxy.delete(`${API}/project-groups/${encodeURIComponent(groupId)}`),
   },
 
-  // ────────────────── Project files (Feature F11) ──────────────────
+  // ────────────────── Project files (the project-files API) ──────────────────
   // Final VCaaS endpoints: /vcaas/projects/{id}/files/{tree,content}
   //
   // ⚠️ THE READS ARE FREE, THE WRITE IS NOT. `tree` and `content` (GET) cost
@@ -771,7 +764,7 @@ export const vcaasApi = {
      * PUT …/files/content — full replace, or create. Up to 512 KB.
      *
      * ⚠️⚠️ THE CONTENT IS SENT AS BASE64, ALWAYS, AND THAT IS NOT AN OPTIMISATION.
-     * `totalum-backend/src/app.ts` mounts a GLOBAL `sanitize-html` middleware over
+     * the Totalum API backend mounts a GLOBAL `sanitize-html` middleware over
      * every request body, and the VCaaS file-write route sits behind it. Source
      * posted as a utf-8 string is parsed as a web page and stripped to a tag
      * allowlist — `className` is not in it, `<script>` is deleted whole — so
@@ -782,7 +775,7 @@ export const vcaasApi = {
      * sanitizer reads it as an ordinary word and passes it through untouched.
      * `encoding: "base64"` is already part of the endpoint's contract and
      * account-backend measures `bytesWritten` on the DECODED length, so nothing
-     * else has to know. Feature G4 measured all of this; see
+     * else has to know. This was all measured; see
      * `src/app/api/visual-edit/[projectId]/apply/route.ts` for the full note.
      *
      * ⚠️ DO NOT "SIMPLIFY" THIS TO A PLAIN STRING. It will appear to work — the
@@ -800,7 +793,7 @@ export const vcaasApi = {
       }),
   },
 
-  // ─────────────────────── Rebuild (Feature F11) ───────────────────
+  // ─────────────────────── Rebuild (the project-files API) ───────────────────
   // Final VCaaS endpoints: /vcaas/projects/{id}/rebuild[/status]
   //
   // ⚠️ ASYNC UPSTREAM. `POST` returns immediately and the cold build continues for
@@ -920,7 +913,7 @@ export const vcaasApi = {
    * is a binary archive the caller streams/decompresses itself. On error the route
    * responds with JSON `{ ok:false, error, code }`; check `content-type`.
    *
-   * ⭐ TWO INTENTS, ONE ENDPOINT (Feature F2):
+   * ⭐ TWO INTENTS, ONE ENDPOINT:
    *
    *   · `intent: "view"` (default) — the read that populates the Code tab.
    *     **Allowed on every plan, Free included.**

@@ -67,7 +67,7 @@ import { cn } from "@/lib/utils";
  * memory (someone opened the Code tab this session) that is an answer we have,
  * and it costs not even a request.
  *
- * ⚠️ THE LIST IS FREE. It reads `GET …/files/tree` (Feature F11), not the charged
+ * ⚠️ THE LIST IS FREE. It reads `GET …/files/tree` (the project-files API), not the charged
  * `…/source-code` archive the first version of this had to use. Do not
  * reintroduce a credit gate here.
  *

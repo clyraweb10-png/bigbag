@@ -180,12 +180,12 @@ function resolve(detail: VcaasProject | null | undefined): ProjectStatus {
  * ═══ THE PREVIEW URL — THE ONE IMPLEMENTATION ═══════════════════════════════
  *
  * ⚠️ `developmentUrlFieldToUse` IS A FIELD NAME, NOT A URL. This is the single
- * easiest thing to get wrong in the whole VCaaS surface, and Phase 07 got it
+ * easiest thing to get wrong in the whole VCaaS surface, and an earlier version got it
  * wrong here: the original version of this function had
  * `… || detail.developmentUrlFieldToUse || null` as its last fallback, which
  * would have returned the literal string `"cachedDevelopmentUrl"` and rendered it
  * as an iframe `src`. It also ignored the selection rule entirely by always
- * preferring the live URL. Fixed in Phase 08; the dashboard thumbnail and the
+ * preferring the live URL. Fixed; the dashboard thumbnail and the
  * workspace preview now share this one implementation.
  *
  * The rule, quoted from the API reference (https://www.totalum.app/totalum-api.md):

@@ -1,5 +1,5 @@
 /**
- * ═══ THE TIERED RESOLVER (Feature G5) ═══════════════════════════════════════
+ * ═══ THE TIERED RESOLVER ═══════════════════════════════════════
  *
  * ⚠️⚠️ SERVER ONLY, AND THAT IS A HARD CONSTRAINT RATHER THAN A CONVENTION. This
  * module reaches `visual-edit-source.ts`, which loads **the TypeScript compiler** to
@@ -335,7 +335,7 @@ export function resolveChangesDeep(files: Map<string, string>, changes: VisualCh
         }
 
         /**
-         * ⭐⭐⭐ G6 — WE KNOW WHICH ELEMENT THIS IS. IT NEVER GOES TO THE BLIND MATCHER.
+         * ⭐⭐⭐ WE KNOW WHICH ELEMENT THIS IS. IT NEVER GOES TO THE BLIND MATCHER.
          *
          * ⚠️⚠️ THIS IS THE FIX FOR AN EDIT THAT LANDED ON A DIFFERENT ELEMENT IN A
          * DIFFERENT SECTION OF THE PAGE, AND REPORTED ITSELF AS APPLIED.

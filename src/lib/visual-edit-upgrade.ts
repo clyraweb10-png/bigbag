@@ -1,5 +1,5 @@
 /**
- * ═══ GIVING AN EXISTING PROJECT THE EXACT TIER (Feature G5) ═════════════════
+ * ═══ GIVING AN EXISTING PROJECT THE EXACT TIER ═════════════════
  *
  * New projects are generated from a template whose webpack config stamps every JSX
  * element with `data-tlm-loc="file:line:col"`, and for those the visual editor never

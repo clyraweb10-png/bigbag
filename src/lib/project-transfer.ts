@@ -24,7 +24,7 @@ import type { TranslationKey } from "@/i18n/types";
  * Pure module: no React, no fetch. Unit-tested by `src/lib/__tests__/transfer.test.ts`.
  */
 
-/** Credit costs, from `VCAAS_CREDIT_COSTS` (CONTEXT §4.10). */
+/** Credit costs, from `VCAAS_CREDIT_COSTS`. */
 export const TRANSFER_COSTS = {
     export: 2,
     /** Creating the destination project is a real, separate charge. */

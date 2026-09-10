@@ -690,7 +690,7 @@ export const en = {
            is nothing to meter. Phrased as a connection to match the paid rows'
            verbs, and worded identically to the marketing site. */
         figma: "Connect Figma and build from your designs",
-        /* ⚠️ "Edit", never "see" — VIEWING source is free on every plan (F2);
+        /* ⚠️ "Edit", never "see" — VIEWING source is free on every plan;
            only writing is gated. One row covers the code editor and the visual
            editor: same entitlement, two ways in. */
         /* ⚠️ ON EVERY PLAN, FREE INCLUDED — the only gate on the API is a credit
@@ -1000,7 +1000,7 @@ export const en = {
       cant1: "Moving, adding, duplicating or deleting elements",
       cant2: "Text or image URLs that come from data or a variable rather than the markup",
       /**
-       * ⚠️ G4 NARROWED THIS. A template literal alone is now editable — the static
+       * ⚠️ THIS WAS NARROWED. A template literal alone is now editable — the static
        * tokens are rewritten and the `${…}` parts are left exactly as they are, which
        * is what a next/font class needs. What is still out of reach is a class list a
        * FUNCTION assembles at render time: there is no static text in the source to
@@ -1978,12 +1978,12 @@ export const en = {
   },
 
   /**
-   * FEATURE G1 — the referral programme.
+   * the referral programme.
    *
    * ⚠️ NO CREDIT AMOUNT IS EVER HARD-CODED IN THIS COPY. Every number arrives as
    * `{credits}` / `{registration}` / `{payment}` from the account-backend settings
    * document, so the panel can never promise a figure the webhook does not pay.
-   * That is the same rule Phase 16 arrived at for the cost hints, for the same
+   * That is the same rule we arrived at for the cost hints, for the same
    * reason.
    */
   referrals: {
@@ -3232,7 +3232,7 @@ export const en = {
   },
 
   /**
-   * ═══ FEATURE G5 — THE ONE POST-REGISTRATION QUESTION ═══════════════════════
+   * ═══ THE ONE POST-REGISTRATION QUESTION ═══════════════════════
    *
    * Copy rules for this screen: it is the last step of a signup, so it promises a
    * destination rather than describing a setting. Both options are phrased as
@@ -3339,7 +3339,7 @@ export const en = {
       actionChange: "Change password",
       sending: "Sending…",
       sent: "Check your inbox — we sent you a link to {email}.",
-      // F5 — the flow is a code now, not a link.
+      // the flow is a code now, not a link.
       codeSent: "We sent an 8-digit code to {email}. Enter it to choose your password.",
       doneWithCode: "Your password is set. You can now sign in with Google or with your email.",
       failed: "We couldn't send that email. Try again in a moment.",
@@ -3640,7 +3640,7 @@ export const en = {
     retry: "Retry",
   },
 
-  // ── Phase 08: the project workspace ──────────────────────────────────────
+  // ── The project workspace ──────────────────────────────────────
   workspace: {
     tabsLabel: "Workspace panels",
 
@@ -4317,9 +4317,9 @@ export const en = {
       showingPage: "Page {page}",
     },
 
-    // Feature F12 — the visual editor.
+    // The visual editor.
     visualEditor: {
-    // ── G4: naming a change in words ────────────────────────────────────────
+    // naming a change in words ────────────────────────────────────────
     changeLabel: "{role} {aspect}",
     changeOn: "on {element}",
     undoOneNamed: "Undo: {change}",
@@ -4342,29 +4342,29 @@ export const en = {
     /** Joins the aspects of one collapsed change: "Heading size and colour". */
     aspectJoin: " and ",
 
-    // ── G4: colour picker ───────────────────────────────────────────────────
+    // colour picker ───────────────────────────────────────────────────
     colorFromProject: "Your project's colours",
     colorCustom: "Custom…",
     colorHideCustom: "Hide",
     colorApply: "Use",
 
-    // ── G4: apply progress ──────────────────────────────────────────────────
+    // apply progress ──────────────────────────────────────────────────
     stepWrite: "Writing the changes into your code",
     stepBuild: "Rebuilding your app",
     stepReload: "Reloading the preview",
     rebuildLeaveHint: "You can keep using the rest of the workspace — we'll reload the preview when it's ready.",
     appliedTitle: "Your changes are live",
 
-    // ── G4: discard confirmation ────────────────────────────────────────────
+    // discard confirmation ────────────────────────────────────────────
     discardConfirmTitle: "Discard your visual changes?",
     discardConfirmBody: "{changes} will be thrown away and the preview goes back to how it was. This can't be undone.",
 
-    // ── G4: unsupported project ─────────────────────────────────────────────
+    // unsupported project ─────────────────────────────────────────────
     unsupportedTitle: "This page can't be edited visually",
     unsupportedBody: "We couldn't find editable markup here — the page may be built from a component library or generated at runtime. Describe the change in the chat instead and the agent will make it.",
     unsupportedAction: "Ask the agent instead",
 
-    // ── G4: the help popover ────────────────────────────────────────────────
+    // the help popover ────────────────────────────────────────────────
     helpTitle: "Editing visually",
     helpIntro: "Click anything in your preview, then change its text, size, colours or image. Nothing touches your code until you press Apply.",
     helpCanTitle: "What works well",
@@ -4466,9 +4466,9 @@ export const en = {
       rebuildingHint: "This takes 1-4 minutes. The editor is locked until it finishes.",
       applyFailed: "We couldn't apply these changes. Nothing was written — try again.",
       /**
-       * ⚠️ G4 — TWO KEYS, BECAUSE SPANISH CONJUGATES. The single key read
+       * ⚠️ TWO KEYS, BECAUSE SPANISH CONJUGATES. The single key read
        * "1 no se han podido ubicar" — plural verb, singular subject. Same trap the
-       * credit copy hit in Phase 16 and the bar's own `oneChange`/`nChanges` solved:
+       * credit copy hit and the bar's own `oneChange`/`nChanges` solved:
        * pick the sentence by count rather than interpolating into a fixed one.
        */
       unmappedSummary: "{change} couldn't be placed in your code:",
@@ -4478,7 +4478,7 @@ export const en = {
       unmappedLowConfidence: "we weren't confident enough about the match to change it.",
       unmappedOverlapping: "another change in this batch already rewrote that part of the file. Apply again to make this one.",
       /**
-       * ⭐ G6 — the only refusal that is NOT about our confidence. We know which
+       * ⭐ the only refusal that is NOT about our confidence. We know which
        * element it is; the source computes that value instead of writing it, so
        * there is nothing to edit. Retrying cannot help, and the copy must not
        * suggest it — the chat can do this, and that is where it points.

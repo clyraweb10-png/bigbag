@@ -1368,7 +1368,7 @@ export default function WorkspacePage() {
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>
-            {/* F12 — the bar owns the whole batch: count, undo, discard and apply. */}
+            {/* The unsaved-changes bar owns the whole batch: count, undo, discard and apply. */}
             <VisualChangesBar
               changes={visual.changes}
               phase={visual.phase}

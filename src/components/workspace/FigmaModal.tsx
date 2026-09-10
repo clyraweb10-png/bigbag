@@ -31,8 +31,8 @@ import { useDirtyGuard } from "./use-dirty-guard";
  * Figma's official remote MCP server needs an interactive OAuth browser sign-in
  * and explicitly refuses personal access tokens. Our agent runs on a headless
  * sandbox with no browser and nobody sitting in front of it, so that flow cannot
- * complete. The full research, with links, is in `figma.service.ts` in
- * totalum-backend and in PROGRESS.md — read it before "improving" this to OAuth.
+ * complete — so a token is the only workable path here. Do not "improve" this to an
+ * interactive OAuth flow without accounting for that.
  *
  * ── THE TOKEN IS A LIVE CREDENTIAL, AND IS TREATED LIKE ONE ─────────────────
  *

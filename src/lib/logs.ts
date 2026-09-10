@@ -1,5 +1,5 @@
 /**
- * ═══ THE TWO LOG STREAMS (Feature F9) ═══════════════════════════════════════
+ * ═══ THE TWO LOG STREAMS ═══════════════════════════════════════
  *
  * ⚠️⚠️ THEY ARE GENUINELY DIFFERENT RUNTIMES, AND PHASE 09 GOT THIS WRONG.
  * That phase shipped one tab on the assumption that "the dev server on PORT 80
@@ -46,7 +46,7 @@ export interface LogLine {
  * whatever the generated app prints, so there is no schema to rely on.
  * Over-matching would paint half the panel red and make the colour useless.
  *
- * (Unchanged from Phase 09 — moved here so both sources share one palette and so it
+ * (Moved here so both sources share one palette and so it
  * is unit-testable.)
  */
 export function classify(line: string): LogLevel {

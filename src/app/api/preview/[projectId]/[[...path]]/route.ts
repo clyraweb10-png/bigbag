@@ -16,7 +16,7 @@ import { injectAgent, rewriteCss, rewriteHtml } from "@/lib/preview-proxy";
 export const dynamic = "force-dynamic";
 
 /**
- * ═══ THE SAME-ORIGIN PREVIEW PROXY (Feature F12) ════════════════════════════
+ * ═══ THE SAME-ORIGIN PREVIEW PROXY (the visual editor) ════════════════════════════
  *
  * ⚠️⚠️ WHY THIS EXISTS — THE FINDING THAT DECIDED THE WHOLE FEATURE.
  *
@@ -181,7 +181,7 @@ async function handle(
     }
 
     /**
-     * ⚠️⚠️ THE MANAGER-SCOPE GATE, MISSING UNTIL NOW (finding #7). Control 3 in the
+     * ⚠️⚠️ THE MANAGER-SCOPE GATE, MISSING UNTIL NOW. Control 3 in the
      * header above says "ownership is upstream's answer" — true for the ACCOUNT, but
      * every member presents the OWNER's key, so upstream cannot separate members
      * from each other. Without this a manager scoped to one project could proxy, and
@@ -207,11 +207,11 @@ async function handle(
      */
     if ((path ?? []).length === 1 && path![0] === AGENT_PATH) {
         /**
-         * ⭐ G3 — THE SHIM SHIPS AHEAD OF THE AGENT, IN ONE FILE.
+         * ⭐ THE SHIM SHIPS AHEAD OF THE AGENT, IN ONE FILE.
          *
          * One file rather than two script tags because the ORDER is not negotiable:
          * the runtime URL shim must have patched `document.createElement` and `fetch`
-         * before anything else executes (audit B1). Concatenation makes that ordering
+         * before anything else executes. Concatenation makes that ordering
          * structural instead of dependent on how the browser schedules two requests.
          */
         const base = `/api/preview/${encodeURIComponent(projectId)}`;
@@ -291,7 +291,7 @@ async function handle(
         return new NextResponse(rewritten, { status: upstream.status, headers: responseHeaders });
     }
 
-    // ── CSS: rewrite root-absolute url() so webfonts resolve (G3) ───────────
+    // ── CSS: rewrite root-absolute url() so webfonts resolve ───────────
     if (contentType.includes("text/css")) {
         const css = await upstream.text();
         responseHeaders.set("content-type", contentType);

@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
  * browser cannot fetch it (CORS), and we would not want it to: an unrestricted
  * client fetch of a server-supplied URL is an open redirect waiting to happen.
  * It goes through `/api/vcaas/git-diff`, which is session-gated and keeps the
- * **SSRF allow-list** built in Phase 06. That route is unchanged here.
+ * **SSRF allow-list**. That route is unchanged here.
  *
  * ── COLOURS THAT SURVIVE DARK MODE ──────────────────────────────────────────
  *

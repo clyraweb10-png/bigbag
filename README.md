@@ -144,6 +144,17 @@ cp .env.example .env.local
 
 This is a standard Next.js app with no platform lock-in. It runs wherever Next.js runs.
 
+> ### ⚠️ Important: this project ships with NO authentication
+>
+> That is on purpose — we want you to add the auth that fits how your system works, or
+> however you prefer. Out of the box every route is public and the app acts on a single
+> API key, so **anyone who can reach the URL can use it and spend that key's credits.**
+>
+> **Before you publish this anywhere public, put an auth layer in front of it.** The
+> hooks are already there: make the two guards in `src/app/api/vcaas/_shared.ts` real and
+> protect the pages in `src/proxy.ts`. See [Use it as a boilerplate](#use-it-as-a-boilerplate-login--payments) for the step-by-step. Running it locally or on a private
+> network with no login is fine.
+
 ### Vercel, one click
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/totalumlabs/ai-app-builder-open&env=TOTALUM_VCAAS_API_KEY)
@@ -181,20 +192,35 @@ This is not only a standalone tool. It is a drop-in AI app-builder layer for a S
 
 ### Use it as a boilerplate: login + payments
 
-Want to ship this as your own product? Add **Supabase** for login (a `profiles` and a `projects` table, make the two guards in `_shared.ts` real, protect the pages in `src/proxy.ts`) and **Stripe** for payments (checkout for credit packs or a plan, a webhook that tops up `profiles.credits`, a 402 on spend-shaped calls when the balance is empty, which the UI already turns into a "buy credits" dialog). The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe).
+Want to ship this as your own product? Add an auth provider such as **Supabase** for login (a `profiles` and a `projects` table, make the two guards in `_shared.ts` real, protect the pages in `src/proxy.ts`) and **Stripe** for payments (checkout for credit packs or a plan, a webhook that tops up `profiles.credits`, a 402 on spend-shaped calls when the balance is empty, which the UI already turns into a "buy credits" dialog). The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe).
 
 ---
 
 ## 🔐 Auth, database and third-party providers
 
-Generated apps come with a managed database and everything they need to run. You can still add any provider you like:
+Two different things live here, and it is worth keeping them apart:
 
-- **Auth**: [Better Auth](https://better-auth.com) is already a dependency. Supabase Auth, Clerk, Auth0 or your own also work.
-- **Database**: use the built-in one, or connect Supabase, Postgres, PlanetScale, MongoDB and so on.
-- **Payments**: [Stripe](https://stripe.com) is included for billing and subscriptions.
-- **AI**: the [Vercel AI SDK](https://sdk.vercel.ai) is included. Bring any model or provider.
+- **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the Totalum API. Nothing to install.
+- **This builder UI itself** is deliberately lean. It ships no auth, payment or AI SDK, because it needs none: it is a thin client in front of one API key. When you turn it into your own product you add exactly the providers you want — the step-by-step is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe):
+
+  - **Auth**: Supabase Auth, Better Auth, Clerk, Auth0 or your own.
+  - **Payments**: Stripe, or any provider — for credit packs or plans.
+  - **Database (for your own users/billing)**: Supabase, Postgres, PlanetScale, MongoDB, anything.
 
 Add a provider by installing its SDK and setting its key in the **Secrets** panel.
+
+### What this repo actually depends on
+
+The builder runs on **Next.js 16 / React 19 / TypeScript / Tailwind 4**. The only other runtime dependencies are UI and utility libraries:
+
+| Area | Packages |
+|---|---|
+| UI primitives | Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, `class-variance-authority`, `clsx`, `tailwind-merge` |
+| Code editor | `@monaco-editor/react` |
+| Forms | `react-hook-form` |
+| Dates / archives | `react-day-picker`, `fflate` |
+
+
 
 ---
 

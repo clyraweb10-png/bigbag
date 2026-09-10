@@ -69,7 +69,7 @@ export const SERVER_WAKE_BLOCKED_EVENT = "totalum:server-wake-blocked";
 const POLL_MS = 5_000;
 /**
  * ⚠️ GENEROUS ON PURPOSE. Upstream quotes 2-4 minutes, but that figure is for a server
- * that is merely stopped. An ARCHIVED sandbox has to be unarchived at Clouding (polled
+ * that is merely stopped. An ARCHIVED sandbox has to be unarchived by the host (polled
  * at 15 s intervals for up to 5 minutes), pass two SSH readiness gates, re-download its
  * source from GCS, `npm install` and run a full build. Ten minutes is the point past
  * which something has genuinely gone wrong, not the point at which it is slow.

@@ -6,7 +6,7 @@ import { VISUAL_EDIT_MESSAGE } from "@/lib/visual-edit-agent";
 import type { ElementSignature, VisualChange, VisualChangeKind } from "@/lib/visual-edit";
 
 /**
- * ═══ THE VISUAL EDITOR STORE (Feature F12) ══════════════════════════════════
+ * ═══ THE VISUAL EDITOR STORE (the visual editor) ══════════════════════════════════
  *
  * Owns the conversation with the in-page agent and the list of unsaved changes.
  *
@@ -36,7 +36,7 @@ export interface ApplyOutcome {
     rebuildCode?: string | null;
     billing?: { charged: boolean; amount: number; reason: string };
     /**
-     * G5 — which tier placed each change: `exact` (the build's own source tags),
+     * which tier placed each change: `exact` (the build's own source tags),
      * `structural`, `data`, `legacy`. Diagnostic only; the bar does not render it, but
      * it is the difference between "the editor is guessing" and "the editor was told".
      */
@@ -94,7 +94,7 @@ export function useVisualEditor({
     const ready = readyTick > 0;
     const [selected, setSelected] = React.useState<SelectedElement | null>(null);
     /**
-     * G4 — the colours the previewed project ACTUALLY uses, harvested from the
+     * the colours the previewed project ACTUALLY uses, harvested from the
      * rendered page by the agent and ordered by how often each appears. The picker
      * offers these before it offers a hex field, because a colour the design already
      * uses is nearly always the one the user wants.
@@ -104,7 +104,7 @@ export function useVisualEditor({
     const [phase, setPhase] = React.useState<ApplyPhase>("idle");
     const [outcome, setOutcome] = React.useState<ApplyOutcome | null>(null);
     const [error, setError] = React.useState<string | null>(null);
-    /** Synchronous double-apply guard — see `apply()` (G3/M3). */
+    /** Synchronous double-apply guard — see `apply()`. */
     const inFlight = React.useRef(false);
 
     /**
@@ -138,11 +138,11 @@ export function useVisualEditor({
         function onMessage(event: MessageEvent) {
             if (event.origin !== window.location.origin) return;
             /**
-             * ⚠️ G3/N7 — THE SOURCE, NOT ONLY THE ORIGIN. Same-origin is already fully
+             * ⚠️ THE SOURCE, NOT ONLY THE ORIGIN. Same-origin is already fully
              * trusted, so this is hardening rather than a fix for a live hole: it pins
              * the conversation to the preview frame so no other window on this origin
-             * (another iframe, an opener, a stray widget) can drive the editor. G2
-             * drove the entire store by posting from the top window; it cannot now.
+             * (another iframe, an opener, a stray widget) can drive the editor. A top-window
+             * script could once drive the entire store by posting messages; it cannot now.
              */
             if (iframeRef.current && event.source !== iframeRef.current.contentWindow) return;
             const data = event.data as { type?: string; payload?: unknown };
@@ -151,7 +151,7 @@ export function useVisualEditor({
             switch (data.type) {
                 case VISUAL_EDIT_MESSAGE.ready:
                     /**
-                     * ⚠️ G3/M5 — A COUNTER, NOT A BOOLEAN, AND THAT IS THE WHOLE FIX.
+                     * ⚠️ A COUNTER, NOT A BOOLEAN, AND THAT IS THE WHOLE FIX.
                      *
                      * The agent re-announces after every preview reload — including the
                      * one this editor triggers itself once a rebuild finishes. With a
@@ -165,7 +165,7 @@ export function useVisualEditor({
                     setPalette(readPalette(data.payload));
                     break;
                 /**
-                 * ⭐ G4 — THE PALETTE ALONE, WITHOUT BUMPING `readyTick`. The agent
+                 * ⭐ THE PALETTE ALONE, WITHOUT BUMPING `readyTick`. The agent
                  * re-harvests on activation; routing that through `ready` made the
                  * effect below post `setActive` again, which made the agent re-harvest
                  * again, 120+ times in two seconds. See the message's own note.
@@ -223,7 +223,7 @@ export function useVisualEditor({
     /**
      * Turn selection mode on and off with the panel.
      *
-     * ⭐ G4 — `done` AND `error` COUNT AS IDLE, and leaving them out made the editor
+     * ⭐ `done` AND `error` COUNT AS IDLE, and leaving them out made the editor
      * look broken. The outcome strip stays on screen until it is dismissed, and while it
      * did, this posted `setActive(false)`: clicking anything in the preview did nothing.
      * Measured — an apply that could not place its change left the editor dead, and the
@@ -246,7 +246,7 @@ export function useVisualEditor({
             before: string,
             after: string,
             signature: ElementSignature,
-            /** ⭐ G6 — set only by the upload dropzone; see `VisualChange.uploaded`. */
+            /** ⭐ set only by the upload dropzone; see `VisualChange.uploaded`. */
             options?: { uploaded?: boolean }
         ) => {
             if (before === after) return;
@@ -264,11 +264,11 @@ export function useVisualEditor({
                  * the source, so it could never be resolved.
                  */
                 /**
-                 * ⚠️ G3/M4 — KEYED ON `selectionId`, NOT ON THE BREADCRUMB.
+                 * ⚠️ KEYED ON `selectionId`, NOT ON THE BREADCRUMB.
                  *
                  * The breadcrumb is built from the element's FIRST CLASS, and a size or
                  * colour edit rewrites exactly that — so `h1.text-4xl` became
-                 * `h1.text-5xl` and the collapse never fired. Measured in G2: three A+
+                 * `h1.text-5xl` and the collapse never fired. Measured: three A+
                  * presses produced three separate changes, two of which had a `before`
                  * that no longer existed in the source and were reported unmappable.
                  * `selectionId` is minted by the agent per selection and survives every
@@ -329,7 +329,7 @@ export function useVisualEditor({
     const discardAll = React.useCallback(() => {
         for (const change of changes) post(VISUAL_EDIT_MESSAGE.revert, { id: change.id });
         setChanges([]);
-        // G3/P2 — tell the agent to drop its outline too. Clearing React state alone
+        // tell the agent to drop its outline too. Clearing React state alone
         // left the blue ring sitting on an element the panel no longer described.
         post(VISUAL_EDIT_MESSAGE.deselect);
         setSelected(null);
@@ -339,10 +339,10 @@ export function useVisualEditor({
     const apply = React.useCallback(async () => {
         if (changes.length === 0) return;
         /**
-         * ⚠️⚠️ G3/M3 — A REF, NOT THE PHASE, IS WHAT MAKES THIS SAFE.
+         * ⚠️⚠️ A REF, NOT THE PHASE, IS WHAT MAKES THIS SAFE.
          *
          * `setPhase("applying")` is asynchronous, so two clicks in the same tick both
-         * pass a phase check and both POST. G2 measured exactly that: two requests,
+         * pass a phase check and both POST. Measurement exactly that: two requests,
          * three changes each — two file writes and two rebuilds, the second refused
          * with REBUILD_RUNNING and surfaced as a generic failure over a successful
          * apply. A ref flips synchronously, which is the only thing that can win a
@@ -384,7 +384,7 @@ export function useVisualEditor({
             setPhase(payload.data.rebuildStarted ? "rebuilding" : "done");
         } catch {
             /**
-             * ⚠️ G3/M2 — "NETWORK" IS NOT "NOTHING WAS WRITTEN". The request may well
+             * ⚠️ "NETWORK" IS NOT "NOTHING WAS WRITTEN". The request may well
              * have written files and started a rebuild before the connection dropped,
              * so this maps to its own honest message rather than the reassuring one.
              */
@@ -396,10 +396,10 @@ export function useVisualEditor({
     }, [changes, projectId]);
 
     /**
-     * G3/P1 — this used to send `setActive: true`, which clears nothing (the agent only
+     * this used to send `setActive: true`, which clears nothing (the agent only
      * clears on `setActive: false`). It sends the dedicated `deselect` message.
      *
-     * ⚠️ `useCallback`, because G4's Escape ladder depends on it: an inline arrow here
+     * ⚠️ `useCallback`, because the Escape ladder depends on it: an inline arrow here
      * is a new function on every render, which would tear down and re-attach the
      * keydown listener continuously.
      */
@@ -410,7 +410,7 @@ export function useVisualEditor({
 
     const finishRebuild = React.useCallback(() => setPhase("done"), []);
     /**
-     * G3/B5 — the rebuild ended badly. Releases the lock (which the old code did) AND
+     * the rebuild ended badly. Releases the lock (which the old code did) AND
      * says so (which it did not: `error` was treated exactly like `success`, so a
      * failed rebuild silently reloaded the frame into a broken app).
      */

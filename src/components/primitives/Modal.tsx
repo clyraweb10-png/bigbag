@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * Built on the shadcn Dialog (Radix) so focus trapping, focus restore, ESC,
  * scroll locking and `aria-modal` come for free. What we add:
  *   · centred dialog on >= sm, BOTTOM SHEET on mobile (thumb-reachable, with a
- *     grab handle) — CONTEXT §7.11 requires the mobile bottom-sheet behaviour
+ *     grab handle) — the design calls for the mobile bottom-sheet behaviour
  *   · a scrollable body with sticky header/footer so long content never pushes
  *     the primary action off screen
  *   · one place to make every modal in phases 10–19 look identical
