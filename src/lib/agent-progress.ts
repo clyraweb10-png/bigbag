@@ -246,6 +246,58 @@ export function runProgress(elapsedMs: number, estimateMs?: number): RunProgress
     };
 }
 
+/**
+ * ═══⭐ A CHAT RUN THE ENGINE HAS SIZED (`agent/status.expectedMinutes`) ═══════
+ *
+ * The engine estimates each prompt, so the bar fills against THAT estimate instead of
+ * the generic ten minutes, reaching `EXPECTED_HANDOFF_RATIO` exactly at the expected
+ * time. A run that outlives it is handed to the SAME ladder as every other chat run:
+ * the estimate keeps climbing rung by rung, the bar keeps creeping towards
+ * `PROGRESS_CEILING` without ever moving backwards, and "Longer than usual" still
+ * fires only when the ladder runs out.
+ *
+ * ⚠️ The estimate is floored at two minutes so the range copy never reads "0 to 1".
+ */
+export const EXPECTED_HANDOFF_RATIO = 0.9;
+
+export function expectedRunProgress(elapsedMs: number, expectedMs: number): RunProgress {
+    const elapsed = Math.max(0, elapsedMs);
+    const expected = Math.max(2 * MINUTE, expectedMs);
+
+    if (elapsed < expected) {
+        const ratio = EXPECTED_HANDOFF_RATIO * (elapsed / expected);
+        return {
+            ratio,
+            percent: Math.round(ratio * 100),
+            overrun: false,
+            estimateMs: expected,
+            // Same shape of range as the default "4 to 10 minutes".
+            previousEstimateMs: expected * (RUN_ESTIMATE_MIN_MS / RUN_ESTIMATE_MS),
+        };
+    }
+
+    // Past the estimate: the existing ladder decides the label and the overrun.
+    const ladder = runEstimateAt(elapsed);
+    const ladderEndMs = RUN_ESTIMATE_LADDER[RUN_ESTIMATE_LADDER.length - 1].estimateMs;
+    const overrun = elapsed >= ladder.estimateMs;
+    const ratio =
+        overrun || ladderEndMs <= expected
+            ? PROGRESS_CEILING
+            : EXPECTED_HANDOFF_RATIO +
+              ((PROGRESS_CEILING - EXPECTED_HANDOFF_RATIO) * (elapsed - expected)) / (ladderEndMs - expected);
+
+    return {
+        ratio,
+        percent: Math.round(ratio * 100),
+        overrun,
+        estimateMs: Math.max(expected, ladder.estimateMs),
+        // ⚠️ Before the first rung the ladder's "previous" is its own 4-min floor — the
+        // estimate this run actually replaced is the engine's: "2 to 10", not "4 to 10".
+        previousEstimateMs:
+            elapsed < RUN_ESTIMATE_LADDER[0].atMs ? expected : Math.max(expected, ladder.previousMs),
+    };
+}
+
 export interface StuckInput {
     elapsedMs: number;
     /** `building` messages in the run so far. */

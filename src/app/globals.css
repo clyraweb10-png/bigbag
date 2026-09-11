@@ -37,6 +37,15 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Tokens the copied platform components use (RunProgress, ServerWakeNotice, the
+     visual editor) — values copied from totalum-platform's globals.css. */
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-subtle-foreground: var(--warning-subtle-foreground);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-2xs--letter-spacing: 0.01em;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -76,6 +85,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.64 0.15 259.5);
+  --warning: oklch(0.762 0.152 76);
+  --warning-foreground: oklch(0.142 0.012 262);
+  --warning-subtle: oklch(0.972 0.038 88);
+  --warning-subtle-foreground: oklch(0.562 0.138 58);
+  --ease-in-out-soft: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dark {
@@ -110,11 +124,19 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.7 0.15 259.5);
+  --warning: oklch(0.742 0.15 76);
+  --warning-foreground: oklch(0.16 0.02 76);
+  --warning-subtle: oklch(0.288 0.062 76);
+  --warning-subtle-foreground: oklch(0.878 0.098 84);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /* Numeric figures never jitter — copied from totalum-platform. */
+  [data-tabular] {
+    font-variant-numeric: tabular-nums;
   }
   body {
     @apply bg-background text-foreground;
@@ -138,4 +160,38 @@ button {
 .dark {
   --user-bubble: #333;
   --textarea-bg: #2a2a2a;
+}
+
+/* The breathing head of the chat's run progress bar (`RunProgress`) — copied from
+   totalum-platform's globals.css. Reduced motion keeps the bar, minus the shimmer. */
+.tp-run-shine {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tp-run-shine::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, white 55%, transparent) 50%,
+      transparent 100%
+    );
+    width: 34%;
+    animation: tp-run-shine 2.4s var(--ease-in-out-soft) infinite;
+  }
+
+  @keyframes tp-run-shine {
+    from {
+      transform: translateX(-120%);
+    }
+    to {
+      transform: translateX(400%);
+    }
+  }
 }

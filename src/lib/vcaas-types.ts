@@ -292,6 +292,10 @@ export interface AgentStatus {
   startedAt: string | null;
   realtimeConversation: ConversationMessage[];
   creditsSpent?: number;
+  /** The engine's estimate for the current run, whole minutes — an approximation, never a deadline. `null` when none. */
+  expectedMinutes?: number | null;
+  /** ISO date = `startedAt` + `expectedMinutes`; `null` when there is no estimate. */
+  expectedFinishAt?: string | null;
 }
 
 /**

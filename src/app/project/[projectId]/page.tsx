@@ -339,6 +339,28 @@ export default function WorkspacePage() {
   const [darkMode, setDarkMode] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [diffSource, setDiffSource] = useState<DiffSource | null>(null);
+  /**
+   * ⭐ THE RUN PROGRESS BAR'S INPUTS, from `agent/status` — see `RunProgress`.
+   * `expectedMinutes` is persisted per project so a reload resumes the bar on the
+   * engine's estimate at once, instead of the generic ten minutes until the first poll.
+   * (The start time needs no copy here: `useRunClock` keeps its own stamp.)
+   */
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [expectedMinutes, setExpectedMinutesState] = useState<number | null>(null);
+  const expectedMinutesKey = `totalum:run-expected:${projectId}`;
+  const setExpectedMinutes = useCallback((value: number | null) => {
+    setExpectedMinutesState(value);
+    try {
+      if (value) localStorage.setItem(expectedMinutesKey, String(value));
+      else localStorage.removeItem(expectedMinutesKey);
+    } catch { /* storage unavailable — the next poll brings it back */ }
+  }, [expectedMinutesKey]);
+  useEffect(() => {
+    try {
+      const stored = Number(localStorage.getItem(expectedMinutesKey));
+      if (stored > 0) setExpectedMinutesState(stored);
+    } catch { /* storage unavailable */ }
+  }, [expectedMinutesKey]);
 
   const mountedRef = useRef(true);
   const sendingRef = useRef(false);
@@ -451,7 +473,14 @@ export default function WorkspacePage() {
         });
       }
       // Once we actually observe the run running, clear the "just started" guard.
-      if (res.data.status === "init") { pendingRunRef.current = false; runWaitPollsRef.current = 0; }
+      if (res.data.status === "init") {
+        pendingRunRef.current = false; runWaitPollsRef.current = 0;
+        // The progress bar's inputs — only from a RUNNING status, never the previous run's.
+        const started = res.data.startedAt ? Date.parse(res.data.startedAt) : NaN;
+        setRunStartedAt(Number.isNaN(started) ? null : started);
+        const expected = res.data.expectedMinutes;
+        setExpectedMinutes(typeof expected === "number" && expected > 0 ? expected : null);
+      }
       const terminal = res.data.status === "done" || res.data.status === "idle";
       // A run we just started may still show the previous run's terminal status.
       // Keep polling (fast) until we see "init", so we don't prematurely conclude
@@ -462,6 +491,7 @@ export default function WorkspacePage() {
         pendingRunRef.current = false; // extremely fast/edge run — stop waiting and conclude
       }
       if (terminal) {
+        setRunStartedAt(null); setExpectedMinutes(null);
         const proj = await fetchProject(); await fetchConversation();
         if (proj && mountedRef.current) setPreviewKey((k) => k + 1); return;
       }
@@ -581,6 +611,8 @@ export default function WorkspacePage() {
     if (res.ok) {
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
       pendingRunRef.current = true; runWaitPollsRef.current = 0;
+      // A new run: the previous run's estimate must not show while the first poll is out.
+      setRunStartedAt(null); setExpectedMinutes(null);
       startAgentPolling();
     } else {
       /**
@@ -1346,6 +1378,7 @@ export default function WorkspacePage() {
           <div className={`flex flex-col shrink-0 transition-all ${chatCollapsed ? "w-0 overflow-hidden" : ""}`} style={chatCollapsed ? {} : { width: chatWidth, background: cardBg }}>
             <ChatPanel
               messages={messages} isBuilding={isBuilding} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets}
+              runStartedAt={runStartedAt} expectedMinutes={expectedMinutes}
               {...composerProps}
               visualEditAvailable
               visualEditActive={visualEditorOpen}
@@ -1471,7 +1504,7 @@ export default function WorkspacePage() {
           {mobileTab === "chat" ? (
             <div className="flex flex-col h-full">
               {/* ⚠️ No pencil here: the visual editor is a desktop surface (see the frame-ref note). */}
-              <ChatPanel messages={messages} isBuilding={isBuilding} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} {...composerProps} />
+              <ChatPanel messages={messages} isBuilding={isBuilding} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} />
             </div>
           ) : (
             <div className="h-full overflow-hidden">

@@ -19,6 +19,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ConfirmDialog } from "@/components/primitives";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { RunProgress } from "@/components/workspace/RunProgress";
+import { useRunClock } from "@/components/workspace/use-run-clock";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { toast } from "sonner";
 import type { ConversationMessage, VcaasSecret, AgentInputFile, AgentRunOptions } from "@/lib/vcaas-types";
@@ -38,6 +40,10 @@ interface ChatPanelProps {
   sending: boolean;
   projectId: string;
   projectSecrets?: VcaasSecret[];
+  /** When the in-flight run started, per `agent/status.startedAt` — the reload-proof run clock. */
+  runStartedAt?: number | null;
+  /** The engine's estimate for the in-flight run (`agent/status.expectedMinutes`); the bar fills against it. */
+  expectedMinutes?: number | null;
 
   /**
    * ⭐ THE ATTACHMENTS ARE THE PAGE'S, NOT THIS PANEL'S. Both composers (mobile and
@@ -545,12 +551,18 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
 
 export function ChatPanel({
   messages, isBuilding, prompt, setPrompt, onSend, onStop, sending, projectId, projectSecrets,
+  runStartedAt = null, expectedMinutes = null,
   attachedFiles, setAttachedFiles,
   onOpenFigma, figmaConnected = false, onDisconnectFigma,
   onOpenGithub, onGithubStatusChange, onGithubPull, githubPulling = false,
   visualEditAvailable = false, visualEditActive = false, visualEditBusy = false, onToggleVisualEdit,
 }: ChatPanelProps) {
   const t = useT();
+  /**
+   * The platform's run clock, copied: prefers the server's `startedAt`, keeps a local
+   * stamp per project, so the bar resumes at the right time after a reload.
+   */
+  const { elapsedMs } = useRunClock({ projectId, isRunning: isBuilding, startedAtFromStream: runStartedAt });
   /** Per-project, per-tab memory of the picker — the platform's hook, copied. */
   const [runOptions, setRunOptions] = useRunOptions(projectId);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -707,13 +719,17 @@ export function ChatPanel({
         })}
 
         {isBuilding && (
-          <div className="flex items-center gap-2 py-2">
-            <div className="flex gap-1">
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          <div className="py-2">
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+              </div>
+              <span className="text-sm text-gray-400">{"Building..."}</span>
             </div>
-            <span className="text-sm text-gray-400">{"Building..."}</span>
+            {/* The platform's run progress bar, copied verbatim — see `RunProgress`. */}
+            <RunProgress elapsedMs={elapsedMs} expectedMinutes={expectedMinutes} />
           </div>
         )}
       </div>
