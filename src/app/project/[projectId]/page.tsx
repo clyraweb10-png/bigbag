@@ -59,6 +59,23 @@ function isCachedPreview(proj: VcaasProject): boolean {
 }
 
 /**
+ * ⭐ A PROJECT READ OLDER THAN THIS IS RE-CHECKED WHEN THE USER COMES BACK — see the
+ * "stale tab" effect. The hourly archive job puts an idle sandbox to sleep while the tab
+ * stays open, so the preview kept a dead live url (Cloudflare's "not available" page).
+ */
+const STALE_PROJECT_MS = 5 * 60_000;
+
+/**
+ * No live server behind this project: `Archived`, or no status at all while upstream
+ * recommends the archive snapshot. ⚠️ Production sends NO `agentServerStatus` for a
+ * sleeping project (checked 2026-09-14), so `=== "Archived"` alone never matched.
+ */
+function hasNoLiveServer(proj: VcaasProject | null): boolean {
+  if (!proj) return false;
+  return proj.agentServerStatus === "Archived" || (!proj.agentServerStatus && isCachedPreview(proj));
+}
+
+/**
  * ═══⭐⭐ THE MODALS — YOU CONSULT THEM AND COME BACK ═══════════════════════════
  *
  * Versions, secrets, the custom domain, GitHub and Figma used to be TABS in the panel
@@ -363,6 +380,8 @@ export default function WorkspacePage() {
   }, [expectedMinutesKey]);
 
   const mountedRef = useRef(true);
+  /** When the project was last read successfully — the "stale tab" effect's clock. */
+  const lastProjectReadAt = useRef(Date.now());
   const sendingRef = useRef(false);
   const autoSentRef = useRef(false);
   // Guards the poll loop right after a new run is started: the server may still
@@ -420,7 +439,7 @@ export default function WorkspacePage() {
 
   async function fetchProject(): Promise<VcaasProject | null> {
     const res = await vcaasApi.projects.get(projectId);
-    if (res.ok && res.data && mountedRef.current) { setProject(res.data); setPreviewUrl(getPreviewUrlFromProject(res.data)); setPreviewCached(isCachedPreview(res.data)); return res.data; } return null;
+    if (res.ok && res.data && mountedRef.current) { lastProjectReadAt.current = Date.now(); setProject(res.data); setPreviewUrl(getPreviewUrlFromProject(res.data)); setPreviewCached(isCachedPreview(res.data)); return res.data; } return null;
   }
   async function fetchConversation(): Promise<void> {
     const res = await vcaasApi.agent.fullConversation(projectId);
@@ -698,10 +717,7 @@ export default function WorkspacePage() {
      * counts only when upstream ALSO recommends the archive snapshot — its own statement
      * that no live server exists — so a partial read still starts nothing.
      */
-    const noLiveServer =
-      project.agentServerStatus === "Archived" ||
-      (!project.agentServerStatus && isCachedPreview(project));
-    if (!noLiveServer) return;
+    if (!hasNoLiveServer(project)) return;
 
     // ⚠️ PROOF THE PROJECT HAS EVER BEEN BUILT. A conversation with no user message has
     // never had a prompt run against it, so there is nothing archived worth restoring.
@@ -739,6 +755,58 @@ export default function WorkspacePage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, project, projectId, touchedProject, operation.kind, messages, serverWake]);
+
+  /**
+   * ═══⭐⭐ THE STALE TAB — RE-READ THE PROJECT WHEN THE USER COMES BACK ═══════════════
+   *
+   * A tab left open for hours outlives its server: the hourly archive job puts it to sleep
+   * and nothing re-reads the project, so the preview kept its dead live url and showed
+   * Cloudflare's "not available" page until a manual refresh. When the user returns (tab
+   * visible, window focus, a click — `blur` catches a click INTO the preview frame) and the
+   * last read is older than `STALE_PROJECT_MS`, re-read it: `fetchProject` recomputes the
+   * preview url, so a snapshot recommendation swaps the frame by itself.
+   *
+   * ⚠️ WHEN THE SERVER TURNS OUT TO BE GONE, the touch latch and `autoStartedFor` are
+   * re-armed: only a click on the project (not the header) may start the server — tabbing
+   * back must not spend credits — and a wake earlier in this load must not block the next.
+   */
+  useEffect(() => {
+    if (loading) return;
+    let inFlight = false;
+
+    const recheck = async (event?: Event) => {
+      if (inFlight || document.hidden) return;
+      if (Date.now() - lastProjectReadAt.current < STALE_PROJECT_MS) return;
+      if (operation.kind || project?.agentProcessStatus === "init") return;
+
+      inFlight = true;
+      const hadLiveServer = !!project && !hasNoLiveServer(project);
+      const detail = await fetchProject();
+      inFlight = false;
+      if (!mountedRef.current || !detail) return;
+      if (!hadLiveServer || !hasNoLiveServer(detail)) return;
+
+      const target = event?.type === "pointerdown" ? (event.target as HTMLElement | null) : null;
+      const touched = !!target && !target.closest?.("[data-workspace-header]");
+      workspaceTouched.current = touched;
+      setTouchedProject(touched);
+      autoStartedFor.current = null;
+    };
+
+    const onVisibility = () => void recheck();
+    const onWindowEvent = (event: Event) => void recheck(event);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onWindowEvent);
+    window.addEventListener("blur", onWindowEvent);
+    window.addEventListener("pointerdown", onWindowEvent, true);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onWindowEvent);
+      window.removeEventListener("blur", onWindowEvent);
+      window.removeEventListener("pointerdown", onWindowEvent, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, project, operation.kind]);
 
   /**
    * ⭐ ATTACHMENTS SURVIVE A RELOAD. Read on arrival, written on every change. Both
