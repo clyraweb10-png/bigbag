@@ -691,7 +691,17 @@ export default function WorkspacePage() {
     // A wake is already in flight; a second start would cost a credit for nothing.
     if (serverWake.waking) return;
 
-    if (project.agentServerStatus !== "Archived") return;
+    /**
+     * ⚠️⚠️ `Archived` OR NO SERVER AT ALL. Production answers a sleeping project with NO
+     * `agentServerStatus` (checked 2026-09-14), so requiring exactly `Archived` meant a
+     * click never started anything and the wake strip never appeared. A missing status
+     * counts only when upstream ALSO recommends the archive snapshot — its own statement
+     * that no live server exists — so a partial read still starts nothing.
+     */
+    const noLiveServer =
+      project.agentServerStatus === "Archived" ||
+      (!project.agentServerStatus && isCachedPreview(project));
+    if (!noLiveServer) return;
 
     // ⚠️ PROOF THE PROJECT HAS EVER BEEN BUILT. A conversation with no user message has
     // never had a prompt run against it, so there is nothing archived worth restoring.
