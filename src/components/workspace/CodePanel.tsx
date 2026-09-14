@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { unzipSync, gunzipSync } from "fflate";
 import { vcaasApi } from "@/lib/vcaas";
+import { silenceMonacoDiagnostics } from "@/lib/monaco-diagnostics";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
@@ -1051,6 +1052,11 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
                           return { ...prev, [selected]: next };
                         });
                       }}
+                      /* ⭐ NO ERROR SQUIGGLES — the platform's helper, copied verbatim. Every
+                         marker here is a false positive (one file, no tsconfig, no
+                         node_modules). `beforeMount`, not `onMount`: the model is created
+                         between the two. See `silenceMonacoDiagnostics`. */
+                      beforeMount={silenceMonacoDiagnostics}
                       onMount={(editor, monaco) => {
                         /* ⌘S / Ctrl+S. Monaco owns the keystroke while focused, so the
                            command has to be registered on the editor itself — a window
