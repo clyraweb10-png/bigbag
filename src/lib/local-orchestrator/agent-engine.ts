@@ -6,6 +6,7 @@ import { multiModelRouter } from "./multi-model-router";
 import { autoInstallDependencies } from "./dependency-scanner";
 import { isCompleteHtmlDocument, purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "@/lib/vcaas-types";
+import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
 
 const SYSTEM_PROMPT = `You are an expert full-stack web developer AI. Build complete web apps using Next.js (App Router), React 19, TypeScript, and Tailwind CSS 4.
 
@@ -485,6 +486,11 @@ export const localAgentEngine = {
           const truncatedCode = pageCode.length > 2000 ? pageCode.substring(0, 2000) + "\n... (truncated)" : pageCode;
           userPromptContent = `Current code (truncated): \n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nUser Request: ${prompt}\n\nPlease update or enhance the application to fulfill this request.`;
         }
+
+        // MotionSites-style prompts carry precise layout, motion and art direction.
+        // Keep them intact and apply our quality constraints at the model boundary,
+        // not to the conversation stored and shown to the user.
+        userPromptContent = withDesignSystemPrompt(userPromptContent);
 
         const messages = [
           { role: "system", content: SYSTEM_PROMPT },
