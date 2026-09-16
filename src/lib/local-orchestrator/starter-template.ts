@@ -9,7 +9,6 @@ import path from "path";
 export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   react: "^19.0.0",
   "react-dom": "^19.0.0",
-  next: "^16.0.0",
   "lucide-react": "^0.536.0",
   clsx: "^2.1.1",
   "tailwind-merge": "^3.3.1",
@@ -31,6 +30,8 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
+  vite: "^5.4.21",
+  "@vitejs/plugin-react": "^4.7.0",
   typescript: "^5.8.0",
   "@types/node": "^22.0.0",
   "@types/react": "^19.0.0",
@@ -51,10 +52,176 @@ function write(dir: string, relative: string, content: string) {
   fs.writeFileSync(full, content, "utf-8");
 }
 
-/** Seed a Lovable-style Next.js + Tailwind + shadcn-lite app. Idempotent. */
+function writeIfMissing(dir: string, relative: string, content: string): void {
+  const full = path.join(dir, relative);
+  if (!fs.existsSync(full)) write(dir, relative, content);
+}
+
+function readLayoutMetadata(
+  dir: string,
+  projectId: string
+): { title: string; description: string } {
+  const defaults = {
+    title: projectId,
+    description: "Built with AI App Builder",
+  };
+  try {
+    const layout = fs.readFileSync(path.join(dir, "src/app/layout.tsx"), "utf-8");
+    return {
+      title: layout.match(/\btitle\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] || defaults.title,
+      description:
+        layout.match(/\bdescription\s*:\s*["'`]([^"'`]+)["'`]/)?.[1] ||
+        defaults.description,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+/**
+ * Keep older generated Next workspaces previewable without rewriting the user's
+ * page. Vite mounts the existing `src/app/page.tsx` directly and uses a fraction
+ * of the memory required by `next dev` in the small E2B VM.
+ */
+function ensureViteRuntime(dir: string, projectId: string): void {
+  const pkgPath = path.join(dir, "package.json");
+  let pkg: Record<string, unknown> = {};
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+  } catch {
+    // A malformed package file is repaired below while preserving source files.
+  }
+
+  const scripts = (pkg.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {}) as Record<string, string>;
+  const dependencies = (pkg.dependencies && typeof pkg.dependencies === "object" ? pkg.dependencies : {}) as Record<string, string>;
+  const devDependencies = (pkg.devDependencies && typeof pkg.devDependencies === "object" ? pkg.devDependencies : {}) as Record<string, string>;
+
+  pkg = {
+    ...pkg,
+    name: typeof pkg.name === "string" ? pkg.name : projectId,
+    version: typeof pkg.version === "string" ? pkg.version : "0.1.0",
+    private: true,
+    scripts: {
+      ...scripts,
+      dev: "vite --host 0.0.0.0",
+      build: "vite build",
+      preview: "vite preview --host 0.0.0.0",
+    },
+    dependencies: {
+      ...PREINSTALLED_DEPENDENCIES,
+      ...dependencies,
+    },
+    devDependencies: {
+      ...PREINSTALLED_DEV_DEPENDENCIES,
+      ...devDependencies,
+    },
+  };
+  write(dir, "package.json", JSON.stringify(pkg, null, 2));
+
+  const postcssConfig = `import tailwindcss from "@tailwindcss/postcss";
+
+export default {
+  plugins: [tailwindcss()],
+};
+`;
+  const postcssPath = path.join(dir, "postcss.config.mjs");
+  if (!fs.existsSync(postcssPath)) {
+    write(dir, "postcss.config.mjs", postcssConfig);
+  } else {
+    const currentPostcss = fs.readFileSync(postcssPath, "utf-8");
+    // Tailwind 4 rejects the legacy direct `tailwindcss` PostCSS plugin. Repair
+    // only that known-incompatible migration case; preserve every other custom
+    // or generated configuration.
+    if (
+      /(?:from\s+["']tailwindcss["']|\btailwindcss\s*:)/.test(currentPostcss) &&
+      !currentPostcss.includes("@tailwindcss/postcss")
+    ) {
+      write(dir, "postcss.config.mjs", postcssConfig);
+    }
+  }
+
+  writeIfMissing(dir, "src/app/globals.css", `@import "tailwindcss";\n`);
+
+  writeIfMissing(
+    dir,
+    "index.html",
+    `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#09090b" />
+    <title>${projectId}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+`
+  );
+
+  writeIfMissing(
+    dir,
+    "vite.config.ts",
+    `import path from "node:path";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { allowedHosts: [".e2b.app"] },
+  resolve: {
+    alias: { "@": path.resolve(__dirname, "./src") },
+  },
+});
+`
+  );
+
+  const metadata = readLayoutMetadata(dir, projectId);
+  writeIfMissing(
+    dir,
+    "src/main.tsx",
+    `import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./app/page";
+import "./app/globals.css";
+
+document.title = ${JSON.stringify(metadata.title)};
+let descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+if (!descriptionMeta) {
+  descriptionMeta = document.createElement("meta");
+  descriptionMeta.name = "description";
+  document.head.appendChild(descriptionMeta);
+}
+descriptionMeta.content = ${JSON.stringify(metadata.description)};
+
+const fallbackImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23dedbd4'/%3E%3Cstop offset='1' stop-color='%238b877f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='1000' fill='url(%23g)'/%3E%3Cpath d='M0 760L430 390l230 205 220-175 720 580H0Z' fill='%23181715' opacity='.28'/%3E%3C/svg%3E";
+
+document.addEventListener("error", (event) => {
+  const image = event.target;
+  if (image instanceof HTMLImageElement && image.dataset.fallbackApplied !== "true") {
+    image.dataset.fallbackApplied = "true";
+    image.src = fallbackImage;
+  }
+}, true);
+
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
+`
+  );
+}
+
+/** Seed a Lovable-style Vite + React + Tailwind app. Idempotent. */
 export function writeStarterTemplate(dir: string, projectId: string): void {
   const pkgPath = path.join(dir, "package.json");
-  if (fs.existsSync(pkgPath)) return;
+  if (fs.existsSync(pkgPath)) {
+    ensureViteRuntime(dir, projectId);
+    return;
+  }
 
   write(
     dir,
@@ -65,9 +232,9 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
         version: "0.1.0",
         private: true,
         scripts: {
-          dev: "next dev",
-          build: "next build",
-          start: "next start",
+          dev: "vite --host 0.0.0.0",
+          build: "vite build",
+          preview: "vite preview --host 0.0.0.0",
         },
         dependencies: PREINSTALLED_DEPENDENCIES,
         devDependencies: PREINSTALLED_DEV_DEPENDENCIES,
@@ -75,27 +242,6 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
       null,
       2
     )
-  );
-
-  write(
-    dir,
-    "next.config.mjs",
-    `/** @type {import('next').NextConfig} */
-const nextConfig = {
-  allowedDevOrigins: ['127.0.0.1', 'localhost'],
-};
-export default nextConfig;
-`
-  );
-
-  write(
-    dir,
-    "postcss.config.mjs",
-    `const config = {
-  plugins: ['@tailwindcss/postcss'],
-};
-export default config;
-`
   );
 
   write(
@@ -115,25 +261,15 @@ export default config;
           moduleResolution: "bundler",
           resolveJsonModule: true,
           isolatedModules: true,
-          jsx: "preserve",
-          incremental: true,
-          plugins: [{ name: "next" }],
+          jsx: "react-jsx",
           paths: { "@/*": ["./src/*"] },
         },
-        include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+        include: ["src", "vite.config.ts"],
         exclude: ["node_modules"],
       },
       null,
       2
     )
-  );
-
-  write(
-    dir,
-    "next-env.d.ts",
-    `/// <reference types="next" />
-/// <reference types="next/image-types/global" />
-`
   );
 
   write(
@@ -325,6 +461,8 @@ export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDiv
 }
 `
   );
+
+  ensureViteRuntime(dir, projectId);
 }
 
 /** True when a file is a JSX/TSX snippet, not a real HTML document. */

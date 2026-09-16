@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import fs from "fs";
-import path from "path";
 import net from "net";
 import http from "http";
 
@@ -202,18 +200,37 @@ async function resolvePreviewOrigin(
 
         console.log(`[preview] Resolving preview for ${projectId}, server status: ${rec.serverStatus}`);
 
-        const dir = localProjectStore.getWorkspaceDir(projectId);
-        const hasNextApp = fs.existsSync(path.join(dir, "src", "app", "page.tsx"));
-
-        const e2bPreviewUrl = hasNextApp ? null : e2bSandboxManager.getPreviewUrl(projectId);
+        const e2bPreviewUrl = e2bSandboxManager.getPreviewUrl(projectId);
         if (e2bPreviewUrl) {
             try {
                 const url = new URL(e2bPreviewUrl);
                 console.log(`[preview] Using E2B preview URL: ${url.origin}`);
                 return { origin: url.origin };
             } catch (err) {
-                console.warn(`[preview] Invalid E2B URL: ${e2bPreviewUrl}, falling back to local`, err);
+                console.warn(`[preview] Invalid E2B URL: ${e2bPreviewUrl}`, err);
             }
+        }
+
+        if (e2bSandboxManager.isE2BEnabled()) {
+            console.log(`[preview] Starting E2B sandbox for ${projectId}`);
+            const start = e2bSandboxManager.startDevServer(projectId).then((previewUrl) => {
+                const origin = new URL(previewUrl).origin;
+                console.log(`[preview] E2B sandbox ready at ${origin}`);
+                return origin;
+            });
+
+            start.catch((err) => console.error(`[preview] E2B start failed for ${projectId}:`, err));
+            if (opts.isDocument) return { error: previewBootPage() };
+
+            // A stale document may request assets while the sandbox is waking.
+            // Do not hold that server request through a multi-minute install;
+            // the boot document refreshes and retries the complete page.
+            return {
+                error: NextResponse.json(
+                    { ok: false, error: "Preview is starting", code: "PREVIEW_STARTING" },
+                    { status: 503, headers: { "Retry-After": "2", "Cache-Control": "no-store" } }
+                ),
+            };
         }
 
         const localCacheKey = `local:${projectId}`;

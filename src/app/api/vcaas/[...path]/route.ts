@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { localFileManager } from "@/lib/local-orchestrator/file-manager";
-import { localSandboxManager } from "@/lib/local-orchestrator/sandbox-manager";
 import { e2bSandboxManager } from "@/lib/local-orchestrator/e2b-sandbox-manager";
 import { localAgentEngine } from "@/lib/local-orchestrator/agent-engine";
 import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
@@ -75,9 +74,6 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
         if (!proj) {
           return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
         }
-        e2bSandboxManager.startDevServer(projectId).catch((err) => {
-          console.warn(`[vcaas] background sandbox start failed for ${projectId}:`, err);
-        });
         return NextResponse.json({ ok: true, data: proj }, { status: 200 });
       }
       if (method === "PATCH") {
@@ -197,7 +193,7 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
     if (subRoute === "rebuild" && method === "POST") {
       const startedAt = new Date().toISOString();
       try {
-        await localSandboxManager.startDevServer(projectId);
+        await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
         return NextResponse.json(
           { ok: true, data: { status: "success", startedAt } },
           { status: 200 }

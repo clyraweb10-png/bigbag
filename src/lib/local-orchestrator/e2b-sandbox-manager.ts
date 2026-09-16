@@ -5,15 +5,87 @@ import { localProjectStore } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
 
+const PREVIEW_PORT = 3000;
+const SANDBOX_TIMEOUT_MS = 3_600_000;
+const INSTALL_TIMEOUT_MS = 180_000;
+const BUILD_TIMEOUT_MS = 120_000;
+const IGNORED_DIRECTORIES = new Set([
+  "node_modules",
+  ".next",
+  ".git",
+  ".turbo",
+  "dist",
+  "build",
+]);
+const STATIC_SERVER_SCRIPT = `
+const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
+const root = path.resolve("dist");
+const mime = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".woff2": "font/woff2" };
+http.createServer((request, response) => {
+  let pathname = "/";
+  try { pathname = decodeURIComponent(new URL(request.url, "http://preview").pathname); } catch {}
+  const requested = path.resolve(root, "." + pathname);
+  const safe = requested === root || requested.startsWith(root + path.sep);
+  const file = safe && fs.existsSync(requested) && fs.statSync(requested).isFile()
+    ? requested
+    : path.join(root, "index.html");
+  if (!safe || !fs.existsSync(file)) { response.writeHead(404); response.end("Not found"); return; }
+  response.writeHead(200, { "content-type": mime[path.extname(file).toLowerCase()] || "application/octet-stream", "cache-control": "no-store" });
+  fs.createReadStream(file).pipe(response);
+}).listen(3000, "0.0.0.0");
+`;
+
+type StartOptions = {
+  /** Re-sync, compile, and restart even when the current preview is healthy. */
+  rebuild?: boolean;
+};
+
+type SharedE2BState = {
+  activeSandboxes: Map<string, Sandbox>;
+  activeUrls: Map<string, string>;
+  initializing: Map<string, { promise: Promise<string>; rebuild: boolean }>;
+};
+
+const stateKey = Symbol.for("bigbag.local-orchestrator.e2b-state");
+const globalState = globalThis as typeof globalThis & { [stateKey]?: SharedE2BState };
+const sharedState = globalState[stateKey] || {
+  activeSandboxes: new Map<string, Sandbox>(),
+  activeUrls: new Map<string, string>(),
+  initializing: new Map<string, { promise: Promise<string>; rebuild: boolean }>(),
+};
+globalState[stateKey] = sharedState;
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function boundedLog(value: string, max = 4_000): string {
+  const normalized = value.trim();
+  return normalized.length > max ? normalized.slice(-max) : normalized;
+}
+
+function commandFailure(label: string, error: unknown): Error {
+  const result = (error as {
+    result?: { stdout?: string; stderr?: string; error?: string };
+  })?.result;
+  const logs = boundedLog([result?.stdout, result?.stderr, result?.error]
+    .filter(Boolean)
+    .join("\n"));
+  return new Error(`${label}${logs ? `:\n${logs}` : `: ${errorText(error)}`}`);
+}
+
 class E2BSandboxManager {
-  private activeSandboxes: Map<string, Sandbox> = new Map();
-  private activeUrls: Map<string, string> = new Map();
-  private initializing: Map<string, Promise<string>> = new Map();
+  private activeSandboxes = sharedState.activeSandboxes;
+  private activeUrls = sharedState.activeUrls;
+  private initializing = sharedState.initializing;
 
   public isE2BEnabled(): boolean {
-    const provider = process.env.SANDBOX_PROVIDER || "local";
-    const apiKey = process.env.E2B_API_KEY || "";
-    return provider === "e2b" && Boolean(apiKey);
+    return (
+      (process.env.SANDBOX_PROVIDER || "local").toLowerCase() === "e2b" &&
+      Boolean(process.env.E2B_API_KEY)
+    );
   }
 
   public getPreviewUrl(projectId: string): string | null {
@@ -24,376 +96,227 @@ class E2BSandboxManager {
     const sandbox = this.activeSandboxes.get(projectId);
     if (!sandbox) return;
 
+    const normalizedPath = relativePath.replace(/\\/g, "/");
     try {
-      const normalizedPath = relativePath.replace(/\\/g, "/");
       await sandbox.files.write(normalizedPath, content);
-      console.log(`[E2B] Synced ${normalizedPath} to sandbox ${sandbox.sandboxId}`);
-
-      // If syncing public/index.html or index.html, mirror to both root and public/
-      if (normalizedPath === "public/index.html") {
-        await sandbox.files.write("index.html", content).catch(() => {});
-        console.log(`[E2B] Mirrored public/index.html → root index.html in sandbox`);
-      } else if (normalizedPath === "index.html") {
-        await sandbox.files.write("public/index.html", content).catch(() => {});
-        console.log(`[E2B] Mirrored index.html → public/index.html in sandbox`);
-      }
-    } catch (err: any) {
-      console.warn(`[E2B] Failed to sync ${relativePath}:`, err.message || err);
+    } catch (error) {
+      console.warn(`[E2B] Failed to sync ${normalizedPath}: ${errorText(error)}`);
     }
   }
 
-  private async syncAllWorkspaceFiles(projectId: string, sandbox: Sandbox): Promise<void> {
-    const dir = localProjectStore.getWorkspaceDir(projectId);
-    if (!fs.existsSync(dir)) return;
+  private collectWorkspaceFiles(projectId: string): Array<{ path: string; content: ArrayBuffer }> {
+    const root = localProjectStore.getWorkspaceDir(projectId);
+    const files: Array<{ path: string; content: ArrayBuffer }> = [];
 
-    const filesToSync: Array<{ relPath: string; fullPath: string }> = [];
-
-    function walk(current: string) {
-      const entries = fs.readdirSync(current, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === "node_modules" || entry.name === ".next" || entry.name === ".git" || entry.name === "dist") {
-          continue;
-        }
-        const full = path.join(current, entry.name);
+    const walk = (current: string): void => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        if (IGNORED_DIRECTORIES.has(entry.name) || entry.isSymbolicLink()) continue;
+        const fullPath = path.join(current, entry.name);
         if (entry.isDirectory()) {
-          walk(full);
+          walk(fullPath);
         } else if (entry.isFile()) {
-          filesToSync.push({
-            relPath: path.relative(dir, full).replace(/\\/g, "/"),
-            fullPath: full,
+          const data = fs.readFileSync(fullPath);
+          files.push({
+            path: path.relative(root, fullPath).replace(/\\/g, "/"),
+            content: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
           });
         }
       }
-    }
+    };
 
-    walk(dir);
-
-    console.log(`[E2B] Syncing ${filesToSync.length} files to sandbox...`);
-    let syncedCount = 0;
-    for (const f of filesToSync) {
-      try {
-        const content = fs.readFileSync(f.fullPath, "utf-8");
-        await sandbox.files.write(f.relPath, content);
-        syncedCount++;
-        if (syncedCount % 10 === 0) {
-          console.log(`[E2B] Synced ${syncedCount}/${filesToSync.length} files...`);
-        }
-      } catch (e: any) {
-        console.warn(`[E2B] File sync error for ${f.relPath}:`, e.message);
-      }
-    }
-    // If public/index.html was synced, also mirror to root index.html
-    const pubIndex = filesToSync.find(f => f.relPath === "public/index.html");
-    if (pubIndex) {
-      try {
-        const content = fs.readFileSync(pubIndex.fullPath, "utf-8");
-        await sandbox.files.write("index.html", content);
-        console.log(`[E2B] Mirrored public/index.html → root index.html`);
-      } catch {}
-    }
-    console.log(`[E2B] Successfully synced ${syncedCount}/${filesToSync.length} workspace files to sandbox ${sandbox.sandboxId}`);
+    walk(root);
+    return files;
   }
 
-  public async startDevServer(projectId: string): Promise<string> {
-    localSandboxManager.ensureProjectTemplate(projectId);
-    const dir = localProjectStore.getWorkspaceDir(projectId);
-    purgeInvalidStaticHtml(dir);
+  private async syncAllWorkspaceFiles(projectId: string, sandbox: Sandbox): Promise<void> {
+    const files = this.collectWorkspaceFiles(projectId);
+    if (files.length === 0) throw new Error("Generated workspace contains no files");
 
-    const hasNextApp = fs.existsSync(path.join(dir, "src", "app", "page.tsx"));
+    for (const file of files) {
+      await sandbox.files.write(file.path, file.content);
+    }
+    console.log(`[E2B] Synced ${files.length} source files for ${projectId}`);
+  }
 
-    /**
-     * Next.js apps must be compiled. E2B's default VM is too small for Turbopack,
-     * and a static file server would print JSX like `{children}` as plain text.
-     * Lovable-style live preview = local `next dev` with preinstalled packages.
-     */
-    if (hasNextApp || !this.isE2BEnabled()) {
-      if (hasNextApp && this.isE2BEnabled()) {
-        console.log(`[E2B] Next.js project ${projectId} — using local compiled preview`);
+  private async previewIsReady(previewUrl: string): Promise<boolean> {
+    try {
+      const response = await fetch(previewUrl, {
+        signal: AbortSignal.timeout(4_000),
+        cache: "no-store",
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  private async connectOrCreate(projectId: string, apiKey: string): Promise<Sandbox> {
+    const active = this.activeSandboxes.get(projectId);
+    if (active && (await active.isRunning().catch(() => false))) return active;
+
+    this.activeSandboxes.delete(projectId);
+    this.activeUrls.delete(projectId);
+
+    const savedId = localProjectStore.getRecord(projectId)?.sandboxId;
+    if (savedId) {
+      try {
+        const resumed = await Sandbox.connect(savedId, { apiKey, timeoutMs: SANDBOX_TIMEOUT_MS });
+        // Restricted preview traffic from older sandboxes cannot be reached by
+        // the current same-origin proxy, so replace those instances once.
+        if (resumed.trafficAccessToken) {
+          await resumed.kill().catch(() => undefined);
+        } else {
+          await resumed.setTimeout(SANDBOX_TIMEOUT_MS);
+          this.activeSandboxes.set(projectId, resumed);
+          return resumed;
+        }
+      } catch (error) {
+        console.warn(`[E2B] Could not resume ${savedId}: ${errorText(error)}`);
       }
+      localProjectStore.update(projectId, { sandboxId: undefined, previewUrl: undefined });
+    }
+
+    const sandbox = await Sandbox.create({
+      apiKey,
+      timeoutMs: SANDBOX_TIMEOUT_MS,
+      // Keep E2B's control-plane/envd API token-protected. Application preview
+      // ports remain reachable through our authenticated same-origin proxy;
+      // verified against this SDK because `secure` governs envd, not app ports.
+      secure: true,
+      metadata: { projectId },
+    });
+    this.activeSandboxes.set(projectId, sandbox);
+    return sandbox;
+  }
+
+  private async compileAndStart(projectId: string, sandbox: Sandbox): Promise<string> {
+    await this.syncAllWorkspaceFiles(projectId, sandbox);
+
+    try {
+      await sandbox.commands.run(
+        "npm install --legacy-peer-deps --no-audit --no-fund",
+        { timeoutMs: INSTALL_TIMEOUT_MS }
+      );
+    } catch (error) {
+      throw commandFailure("Dependency installation failed", error);
+    }
+
+    // A successful HTML response from Vite does not prove imported TSX compiles.
+    // Build first so broken generations never get labelled as successful.
+    try {
+      await sandbox.commands.run("npm run build", { timeoutMs: BUILD_TIMEOUT_MS });
+    } catch (error) {
+      throw commandFailure("Generated app failed to compile", error);
+    }
+
+    await sandbox.commands.run(
+      "pkill -f '[v]ite.*--port 3000' || true; pkill -f '[p]ython3 -m http.server 3000' || true; pkill -f '[n]ode _bigbag-preview.cjs' || true",
+      { timeoutMs: 10_000 }
+    );
+    await sandbox.files.write("_bigbag-preview.cjs", STATIC_SERVER_SCRIPT);
+    await sandbox.commands.run(
+      "node _bigbag-preview.cjs > /tmp/bigbag-preview.log 2>&1",
+      { background: true, timeoutMs: 0 }
+    );
+
+    const previewUrl = `https://${sandbox.getHost(PREVIEW_PORT)}`;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (await this.previewIsReady(previewUrl)) return previewUrl;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+
+    const logs = await sandbox.commands
+      .run("tail -n 120 /tmp/bigbag-preview.log 2>/dev/null || true", { timeoutMs: 10_000 })
+      .then((result) => boundedLog(result.stdout || result.stderr))
+      .catch(() => "No preview logs were available");
+    throw new Error(`Preview server did not become ready:\n${logs}`);
+  }
+
+  public async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
+    purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
+    localSandboxManager.ensureProjectTemplate(projectId);
+
+    if (!this.isE2BEnabled()) {
       return localSandboxManager.startDevServer(projectId);
     }
 
-    // Check if currently initializing
     const ongoing = this.initializing.get(projectId);
     if (ongoing) {
-      console.log(`[E2B] Sandbox initialization already in progress for ${projectId}`);
-      return ongoing;
+      if (!options.rebuild || ongoing.rebuild) return ongoing.promise;
+
+      // A rebuild must include the latest workspace state. Wait for a weaker
+      // health-check/start operation, then enqueue one real rebuild. Concurrent
+      // rebuild callers will all converge on the same replacement promise.
+      const rebuildAfterOngoing = () => {
+        if (this.initializing.get(projectId)?.promise === ongoing.promise) {
+          this.initializing.delete(projectId);
+        }
+        return this.startDevServer(projectId, { rebuild: true });
+      };
+      return ongoing.promise.then(rebuildAfterOngoing, rebuildAfterOngoing);
     }
 
-    // Check if already active
-    const existing = this.activeSandboxes.get(projectId);
-    const existingUrl = this.activeUrls.get(projectId);
-    if (existing && existingUrl) {
-      console.log(`[E2B] Sandbox already active for ${projectId}, URL: ${existingUrl}`);
-      return existingUrl;
-    }
-
-    const initPromise = (async () => {
+    // Defer the body to the next microtask so the shared promise is registered
+    // before even the first readiness probe can yield to another request.
+    const initialization = Promise.resolve().then(async () => {
       try {
-        console.log(`[E2B] Booting cloud micro-VM sandbox for project ${projectId}...`);
+        const existingUrl = this.activeUrls.get(projectId);
+        if (!options.rebuild && existingUrl && (await this.previewIsReady(existingUrl))) {
+          return existingUrl;
+        }
+
         const apiKey = process.env.E2B_API_KEY;
+        if (!apiKey) throw new Error("E2B_API_KEY is not configured");
 
-        if (!apiKey) {
-          throw new Error("E2B_API_KEY not set");
-        }
-
-        const sandbox = await Sandbox.create({
-          apiKey,
-          timeoutMs: 3600_000, // 1 hour session
-        });
-
-        this.activeSandboxes.set(projectId, sandbox);
-        console.log(`[E2B] Sandbox created: ${sandbox.sandboxId}`);
-
-        // Sync all workspace files into sandbox
-        await this.syncAllWorkspaceFiles(projectId, sandbox);
-
-        const dir = localProjectStore.getWorkspaceDir(projectId);
-        const hasPublicIndex = fs.existsSync(path.join(dir, "public", "index.html"));
-        const hasRootIndex = fs.existsSync(path.join(dir, "index.html"));
-        const hasPackageJson = fs.existsSync(path.join(dir, "package.json"));
-
-        if (hasPublicIndex) {
-          console.log(`[E2B] Starting static HTTP server for public/index.html on 0.0.0.0:3000...`);
-          try {
-            const proc = await sandbox.commands.run("python3 -m http.server 3000 --directory public --bind 0.0.0.0", { background: true });
-            console.log(`[E2B] Static server process ID: ${proc.pid}`);
-          } catch (serverErr) {
-            console.error(`[E2B] Failed to start server:`, serverErr);
-            // Try without directory flag
-            const altProc = await sandbox.commands.run("python3 -m http.server 3000 --bind 0.0.0.0", { background: true });
-            console.log(`[E2B] Alternative server process ID: ${altProc.pid}`);
-          }
-          
-          // Wait and verify binding
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          try {
-            const portCheck = await sandbox.commands.run("ss -lntp 2>/dev/null | grep 3000 || true");
-            console.log(`[E2B] Port 3000 status:\n${portCheck.stdout}`);
-            
-            // If nothing is listening, try using nohup
-            if (!portCheck.stdout.includes("3000")) {
-              console.error(`[E2B] No process listening on 3000, trying with nohup...`);
-              await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-              await new Promise(resolve => setTimeout(resolve, 3000));
-            }
-          } catch (checkErr) {
-            console.warn(`[E2B] Could not verify port binding:`, checkErr);
-          }
-        } else if (hasRootIndex) {
-          console.log(`[E2B] Starting static HTTP server for root index.html on 0.0.0.0:3000...`);
-          try {
-            const proc = await sandbox.commands.run("python3 -m http.server 3000 --bind 0.0.0.0", { background: true });
-            console.log(`[E2B] Static server process ID: ${proc.pid}`);
-          } catch (serverErr) {
-            console.error(`[E2B] Failed to start server:`, serverErr);
-            // Try with nohup
-            await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-          }
-          
-          // Wait and verify binding
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          try {
-            const portCheck = await sandbox.commands.run("ss -lntp 2>/dev/null | grep 3000 || true");
-            console.log(`[E2B] Port 3000 status:\n${portCheck.stdout}`);
-            
-            // If nothing is listening, try nohup
-            if (!portCheck.stdout.includes("3000")) {
-              console.error(`[E2B] No process listening on 3000, trying with nohup...`);
-              await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-              await new Promise(resolve => setTimeout(resolve, 3000));
-            }
-          } catch (checkErr) {
-            console.warn(`[E2B] Could not verify port binding:`, checkErr);
-          }
-        } else if (hasPackageJson) {
-          // E2B free VMs have limited RAM (~512MB) — Next.js Turbopack will OOM.
-          // Instead, serve files with a lightweight Node.js static server.
-          console.log(`[E2B] Starting lightweight static server (Next.js too heavy for E2B VM)...`);
-
-          // Write a minimal static server script
-          const serverScript = `
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-
-const MIME = {
-  '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
-  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
-  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
-  '.tsx': 'text/plain', '.ts': 'text/plain', '.jsx': 'text/plain',
-};
-
-const server = http.createServer((req, res) => {
-  let url = req.url.split('?')[0];
-  if (url === '/') url = '/index.html';
-
-  // Try public/ first, then root
-  const candidates = [
-    path.join(__dirname, 'public', url),
-    path.join(__dirname, url),
-    path.join(__dirname, 'public', 'index.html'),
-    path.join(__dirname, 'index.html'),
-  ];
-
-  for (const filePath of candidates) {
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath);
-      res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain', 'Access-Control-Allow-Origin': '*' });
-      fs.createReadStream(filePath).pipe(res);
-      return;
-    }
-  }
-
-  // Fallback: serve index.html for SPA routing
-  const fallback = path.join(__dirname, 'public', 'index.html');
-  if (fs.existsSync(fallback)) {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    fs.createReadStream(fallback).pipe(res);
-  } else {
-    res.writeHead(404);
-    res.end('Not Found');
-  }
-});
-
-server.listen(3000, '0.0.0.0', () => console.log('Static server on 0.0.0.0:3000'));
-`;
-          try {
-            await sandbox.files.write("_serve.cjs", serverScript);
-            await sandbox.commands.run("node _serve.cjs &", { background: true });
-            console.log(`[E2B] Lightweight static server started on port 3000`);
-          } catch (serverErr) {
-            console.error(`[E2B] Static server failed, trying Python fallback...`, serverErr);
-            await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-          }
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } else {
-          console.log(`[E2B] Starting fallback static server on 0.0.0.0:3000...`);
-          try {
-            const proc = await sandbox.commands.run("python3 -m http.server 3000 --bind 0.0.0.0", { background: true });
-            console.log(`[E2B] Fallback server process ID: ${proc.pid}`);
-          } catch (serverErr) {
-            console.error(`[E2B] Failed to start fallback server, trying nohup...`);
-            await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-          }
-          
-          // Wait and verify binding
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          try {
-            const portCheck = await sandbox.commands.run("ss -lntp 2>/dev/null | grep 3000 || true");
-            console.log(`[E2B] Port 3000 status:\n${portCheck.stdout}`);
-            
-            if (!portCheck.stdout.includes("3000")) {
-              console.error(`[E2B] No process listening on 3000, trying nohup...`);
-              await sandbox.commands.run("nohup python3 -m http.server 3000 --bind 0.0.0.0 > /tmp/server.log 2>&1 &");
-              await new Promise(resolve => setTimeout(resolve, 3000));
-            }
-          } catch (checkErr) {
-            console.warn(`[E2B] Could not verify port binding:`, checkErr);
-          }
-        }
-
-        const host = sandbox.getHost(3000);
-        const previewUrl = `https://${host}`;
+        localProjectStore.update(projectId, { serverStatus: "Starting" });
+        const sandbox = await this.connectOrCreate(projectId, apiKey);
+        const previewUrl = await this.compileAndStart(projectId, sandbox);
         this.activeUrls.set(projectId, previewUrl);
-
         localProjectStore.update(projectId, {
-          serverStatus: "Starting",
+          serverStatus: "Active",
           previewUrl,
           sandboxId: sandbox.sandboxId,
         });
-
-        console.log(`[E2B] Project ${projectId} live preview URL: ${previewUrl}, waiting for server to be ready...`);
-        
-        // Wait for server to be ready by checking if we can fetch from it
-        let serverReady = false;
-        for (let i = 0; i < 60; i++) { // Increased to 60 seconds
-          try {
-            console.log(`[E2B] Checking server readiness attempt ${i + 1}/60...`);
-            const testResponse = await fetch(previewUrl, { 
-              method: 'GET',
-              signal: AbortSignal.timeout(5000)
-            });
-            console.log(`[E2B] Server check response: ${testResponse.status}`);
-            if (testResponse.ok || testResponse.status === 404) {
-              serverReady = true;
-              console.log(`[E2B] Server is ready for ${projectId}`);
-              break;
-            }
-          } catch (fetchErr) {
-            console.log(`[E2B] Server not ready yet, attempt ${i + 1}:`, fetchErr);
-          }
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        
-        if (!serverReady) {
-          console.error(`[E2B] Server did not become ready for ${projectId} after 60 seconds`);
-          // Try to get sandbox logs and debug info
-          try {
-            // Check what's actually listening on which interface
-            const portCheck = await sandbox.commands.run("ss -lntp || netstat -tlnp");
-            console.log(`[E2B] All listening ports:\n${portCheck.stdout}`);
-            
-            // Check for any processes
-            const allProcs = await sandbox.commands.run("ps aux");
-            console.log(`[E2B] All processes:\n${allProcs.stdout}`);
-            
-            // Check specifically for Python HTTP server
-            const pythonProcs = await sandbox.commands.run("ps aux | grep python");
-            console.log(`[E2B] Python processes:\n${pythonProcs.stdout}`);
-            
-            // Check server log if exists
-            const serverLog = await sandbox.commands.run("cat /tmp/server.log 2>/dev/null || echo 'No server log'");
-            console.log(`[E2B] Server log:\n${serverLog.stdout}`);
-          } catch (logErr) {
-            console.log(`[E2B] Could not fetch sandbox debug info:`, logErr);
-          }
-        }
-        
-        localProjectStore.update(projectId, {
-          serverStatus: serverReady ? "Active" : "Error",
-        });
-        
+        console.log(`[E2B] Preview ready for ${projectId}`);
         return previewUrl;
-      } catch (err: any) {
-        console.error(`[E2B] Failed to start E2B sandbox for ${projectId}:`, err.message || err);
-        console.log(`[E2B] Full error details:`, err);
-        console.log(`[E2B] Falling back to local dev server...`);
-        
-        // Clean up any partial state
+      } catch (error) {
+        const sandbox = this.activeSandboxes.get(projectId);
+        if (sandbox) await sandbox.kill().catch(() => undefined);
         this.activeSandboxes.delete(projectId);
         this.activeUrls.delete(projectId);
-        
-        // Update project status to reflect fallback
         localProjectStore.update(projectId, {
-          serverStatus: "Starting",
+          serverStatus: "Error",
           previewUrl: undefined,
           sandboxId: undefined,
         });
-        
-        // Fall back to local sandbox
-        return localSandboxManager.startDevServer(projectId);
-      } finally {
+        throw error;
+      }
+    });
+
+    this.initializing.set(projectId, {
+      promise: initialization,
+      rebuild: Boolean(options.rebuild),
+    });
+    const clearInitialization = () => {
+      if (this.initializing.get(projectId)?.promise === initialization) {
         this.initializing.delete(projectId);
       }
-    })();
-
-    this.initializing.set(projectId, initPromise);
-    return initPromise;
+    };
+    void initialization.then(clearInitialization, clearInitialization);
+    return initialization;
   }
 
   public async stopDevServer(projectId: string): Promise<void> {
     const sandbox = this.activeSandboxes.get(projectId);
-    if (sandbox) {
-      try {
-        await sandbox.kill();
-        console.log(`[E2B] Killed sandbox for ${projectId}`);
-      } catch {}
-      this.activeSandboxes.delete(projectId);
-      this.activeUrls.delete(projectId);
-    }
+    if (sandbox) await sandbox.kill().catch(() => undefined);
+    this.activeSandboxes.delete(projectId);
+    this.activeUrls.delete(projectId);
     localSandboxManager.stopDevServer(projectId);
-    localProjectStore.update(projectId, { serverStatus: "Stopped" });
+    localProjectStore.update(projectId, {
+      serverStatus: "Stopped",
+      previewUrl: undefined,
+      sandboxId: undefined,
+    });
   }
 }
 

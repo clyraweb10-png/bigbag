@@ -247,7 +247,7 @@ export async function POST(
      */
     if (IS_LOCAL_MODE) {
         const { localFileManager } = await import("@/lib/local-orchestrator/file-manager");
-        const { localSandboxManager } = await import("@/lib/local-orchestrator/sandbox-manager");
+        const { e2bSandboxManager } = await import("@/lib/local-orchestrator/e2b-sandbox-manager");
 
         let body: { changes?: VisualChange[] };
         try {
@@ -397,11 +397,9 @@ export async function POST(
         }
 
         // 6. Restart sandbox for HMR to pick up changes
-        try {
-            await localSandboxManager.startDevServer(projectId);
-        } catch (e) {
-            console.warn("[visual-edit] sandbox restart failed:", e);
-        }
+        void e2bSandboxManager
+            .startDevServer(projectId, { rebuild: true })
+            .catch((e) => console.warn("[visual-edit] sandbox restart failed:", e));
 
         return NextResponse.json({
             ok: true,

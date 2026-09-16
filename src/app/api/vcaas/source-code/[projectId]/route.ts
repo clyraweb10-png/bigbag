@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
+import { zip } from "fflate";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
 
@@ -12,55 +13,48 @@ const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist",
 /**
  * ═══ LOCAL SOURCE ARCHIVE ════════════════════════════════════════════════════
  *
- * Builds a ZIP archive of the workspace directory using PowerShell on Windows
- * or the system `zip` command on Linux/macOS, with no extra npm dependencies.
+ * Builds the source archive in-process. Render images do not guarantee that the
+ * system `zip` utility is installed, and silently returning an empty archive
+ * makes the editor claim that a successful generation produced zero files.
  */
-async function buildLocalZip(projectId: string, workspaceDir: string): Promise<Buffer> {
-  const { exec } = await import("child_process");
-  const { promisify } = await import("util");
-  const os = await import("os");
-  const execAsync = promisify(exec);
+async function buildLocalZip(
+  workspaceDir: string
+): Promise<{ buffer: Buffer; filesCount: number }> {
+  const entries: Record<string, Uint8Array> = {};
 
-  const tmpOut = path.join(os.tmpdir(), `${projectId}-${Date.now()}.zip`);
-
-  try {
-    if (process.platform === "win32") {
-      const safeWorkspaceDir = workspaceDir.replace(/'/g, "''");
-      const safeTmpOut = tmpOut.replace(/'/g, "''");
-      await execAsync(
-        `powershell -NoProfile -Command "Get-ChildItem -Path '${safeWorkspaceDir}' -Exclude 'node_modules','.next','.git','.turbo' | Compress-Archive -DestinationPath '${safeTmpOut}' -Force"`,
-        { timeout: 60000 }
-      );
-    } else {
-      await execAsync(
-        `cd "${workspaceDir}" && zip -r "${tmpOut}" . -x "node_modules/*" -x ".next/*" -x ".git/*" -x ".turbo/*"`,
-        { timeout: 60000 }
-      );
-    }
-
-    if (fs.existsSync(tmpOut)) {
-      const buffer = fs.readFileSync(tmpOut);
-      fs.unlinkSync(tmpOut);
-      return buffer;
-    }
-  } catch (e) {
-    console.error("[source-code] ZIP build failed:", e);
-    if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+  async function walk(currentDir: string): Promise<void> {
+    const directoryEntries = await fs.promises.readdir(currentDir, {
+      withFileTypes: true,
+    });
+    await Promise.all(directoryEntries.map(async (entry) => {
+      if (IGNORED_DIRS.has(entry.name) || entry.isSymbolicLink()) return;
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile()) {
+        const relativePath = path.relative(workspaceDir, fullPath).replace(/\\/g, "/");
+        entries[relativePath] = await fs.promises.readFile(fullPath);
+      }
+    }));
   }
 
-  // Return a minimal valid empty ZIP as last resort
-  return Buffer.from("PK\x05\x06" + "\x00".repeat(18));
-}
-
-function countFiles(dir: string): number {
-  if (!fs.existsSync(dir)) return 0;
-  let count = 0;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (IGNORED_DIRS.has(entry.name)) continue;
-    if (entry.isDirectory()) count += countFiles(path.join(dir, entry.name));
-    else count++;
+  await walk(workspaceDir);
+  const filesCount = Object.keys(entries).length;
+  if (filesCount === 0) {
+    throw new Error("The generated workspace does not contain any source files yet");
   }
-  return count;
+
+  const archive = await new Promise<Uint8Array>((resolve, reject) => {
+    zip(entries, { level: 6 }, (error, data) => {
+      if (error) reject(error);
+      else resolve(data);
+    });
+  });
+
+  return {
+    buffer: Buffer.from(archive),
+    filesCount,
+  };
 }
 
 export async function GET(
@@ -83,9 +77,7 @@ export async function GET(
         );
       }
 
-      const buffer = await buildLocalZip(projectId, workspaceDir);
-
-      const filesCount = countFiles(workspaceDir);
+      const { buffer, filesCount } = await buildLocalZip(workspaceDir);
 
       return new NextResponse(buffer, {
         status: 200,

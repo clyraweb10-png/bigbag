@@ -1,45 +1,43 @@
+import fs from "fs";
+import path from "path";
 import { localProjectStore } from "./project-store";
 import { localFileManager } from "./file-manager";
 import { localSandboxManager } from "./sandbox-manager";
 import { e2bSandboxManager } from "./e2b-sandbox-manager";
 import { multiModelRouter } from "./multi-model-router";
-import { autoInstallDependencies } from "./dependency-scanner";
-import { isCompleteHtmlDocument, purgeInvalidStaticHtml } from "./starter-template";
+import { ensureWorkspaceDependencies } from "./dependency-scanner";
+import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "@/lib/vcaas-types";
 import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
 
-const SYSTEM_PROMPT = `You are an expert full-stack web developer AI. Build complete web apps using Next.js (App Router), React 19, TypeScript, and Tailwind CSS 4.
+const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer. Build complete web apps using Vite, React 19, TypeScript, and Tailwind CSS 4.
 
 ## CRITICAL RULES
 
 **OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
 
-1. "use client" — Add as FIRST LINE for any .tsx/.jsx using React hooks (useState, useEffect, etc.) or browser APIs. src/app/ files are Server Components by default. layout.tsx is ALWAYS a Server Component — NO hooks.
+1. Runtime — This is a browser-only Vite React app. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or backend-only code.
 
 2. Output Format — Each file with markdown heading + code block:
 ### File: src/app/page.tsx
 \`\`\`tsx
-'use client';
 import { useState } from 'react';
 // code
 \`\`\`
 
-3. Dependencies — Preinstalled and ready: react, react-dom (v19), next, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (built-in database client) — they already exist.
+The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Put optional components after those required entry files so a token limit can never leave the app disconnected.
 
-4. Styling — Tailwind utility classes ONLY. NO styled-jsx, CSS modules, or inline styles. Use @import "tailwindcss" in globals.css (NOT @tailwind directives). All CSS properties MUST be inside a selector — never place bare properties at the top level.
+3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, and @/lib/utils (cn) — they already exist.
 
-5. Structure — src/app/page.tsx (main), src/app/layout.tsx (root layout), src/app/globals.css, src/components/*.tsx, and src/app/api/.../route.ts for API endpoints. Add 'use client' to components using hooks.
+4. Styling — Use Tailwind utilities and src/app/globals.css for tokens, keyframes, and special effects. NO styled-jsx, CSS modules, or @apply rules. Keep @import "tailwindcss" as the first non-comment rule in globals.css. All CSS properties MUST be inside a selector.
 
-6. Quality — Complete working code. No placeholders. TypeScript. Export default functions. Responsive, polished UI. Semantic HTML.
+5. Structure — src/app/page.tsx is the main app, src/app/globals.css contains global styles, and reusable sections belong in src/components/*.tsx. The runtime entrypoint already exists; do not output src/main.tsx.
 
-7. DON'T — NO react-dom/client imports. NO require(). NO external images/fonts (use gradients or lucide-react icons). NO package.json/next.config/tsconfig/postcss output. NO layout.tsx unless requested. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx as a React component. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, or TODOs. Use semantic HTML, accessible labels, keyboard focus states, and responsive layouts at mobile/tablet/desktop sizes.
 
-8. Database & Persistence — When the app requires data storage (todos, users, notes, CRM records, products, bookings, logs, etc.), use the preconfigured database at @/lib/db:
-   - In Next.js Server Components, Server Actions ('use server'), or API Route Handlers (src/app/api/.../route.ts), import db from '@/lib/db'.
-   - Initialize tables with: \`await db.execute("CREATE TABLE IF NOT EXISTS ...")\`.
-   - Query data with \`await db.execute({ sql: "SELECT ...", args: [...] })\` or \`await db.execute({ sql: "INSERT ...", args: [...] })\`.
-   - Access rows via result: \`const { rows } = await db.execute("SELECT * FROM ...")\`.
-   - Client components ('use client') interact with data by fetching API routes (e.g. \`fetch('/api/...')\`) or invoking Server Actions.
+7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids. Honor every concrete detail in the user's prompt.
+
+8. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO external images/fonts (use gradients or lucide-react icons). NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
@@ -49,7 +47,68 @@ const RETRY_PROMPT = `Your previous response did not contain valid code files. Y
 // complete code here
 \`\`\`
 
-Start your response with the first ### File: heading immediately. Generate the complete application now.`;
+Start your response with a COMPLETE src/app/page.tsx file, then src/app/globals.css, then any supporting files. The page must import and render its supporting components. Generate the complete application now.`;
+
+const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
+
+type SharedAgentRunState = {
+  runs: Map<string, Promise<void>>;
+};
+
+const agentRunStateKey = Symbol.for("bigbag.local-orchestrator.agent-runs");
+const agentGlobalState = globalThis as typeof globalThis & {
+  [agentRunStateKey]?: SharedAgentRunState;
+};
+const sharedAgentRunState = agentGlobalState[agentRunStateKey] || {
+  runs: new Map<string, Promise<void>>(),
+};
+agentGlobalState[agentRunStateKey] = sharedAgentRunState;
+
+function snapshotWorkspace(projectId: string): Map<string, Buffer> {
+  const root = localProjectStore.getWorkspaceDir(projectId);
+  const snapshot = new Map<string, Buffer>();
+  const walk = (current: string): void => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (SNAPSHOT_IGNORED.has(entry.name) || entry.isSymbolicLink()) continue;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(fullPath);
+      else if (entry.isFile()) snapshot.set(path.relative(root, fullPath), fs.readFileSync(fullPath));
+    }
+  };
+  walk(root);
+  return snapshot;
+}
+
+function restoreWorkspace(projectId: string, snapshot: Map<string, Buffer>): void {
+  const root = localProjectStore.getWorkspaceDir(projectId);
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (SNAPSHOT_IGNORED.has(entry.name) || entry.isSymbolicLink()) continue;
+    fs.rmSync(path.join(root, entry.name), { recursive: true, force: true });
+  }
+  for (const [relativePath, content] of snapshot) {
+    const fullPath = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content);
+  }
+}
+
+function workspaceRepairContext(projectId: string): string {
+  const sourceExtensions = /\.(?:tsx?|jsx?|css)$/;
+  const entries = localFileManager
+    .getTree(projectId)
+    .entries.filter((entry) => entry.type === "file" && sourceExtensions.test(entry.path));
+  let remaining = 40_000;
+  const chunks: string[] = [];
+  for (const entry of entries) {
+    if (remaining <= 0) break;
+    const file = localFileManager.getContent(projectId, entry.path);
+    if (!file || file.encoding !== "utf8") continue;
+    const content = file.content.slice(0, remaining);
+    remaining -= content.length;
+    chunks.push(`### File: ${entry.path}\n\`\`\`\n${content}\n\`\`\``);
+  }
+  return chunks.join("\n\n");
+}
 
 
 function extractFilesFromMarkdown(text: string): Array<{ path: string; content: string }> {
@@ -121,61 +180,9 @@ function extractFilesFromMarkdown(text: string): Array<{ path: string; content: 
     }
   }
 
-  // Pattern 4: Standalone HTML document ONLY — never JSX from layout.tsx
-  const hasHtmlTag = text.includes("<!DOCTYPE html") || /<html[\s>]/i.test(text);
-  const hasPublicIndex = files.some((f) => f.path.includes("index.html"));
-  const alreadyHasReactApp = files.some(
-    (f) => f.path.includes("page.tsx") || f.path.includes("layout.tsx")
-  );
-
-  if (!hasPublicIndex && hasHtmlTag && !alreadyHasReactApp) {
-    let htmlStart = text.indexOf("<!DOCTYPE html");
-    if (htmlStart === -1) htmlStart = text.search(/<html[\s>]/i);
-
-    let htmlEnd = text.lastIndexOf("</html>");
-    let htmlContent = "";
-    if (htmlEnd !== -1 && htmlEnd > htmlStart) {
-      htmlContent = text.slice(htmlStart, htmlEnd + 7).trim();
-    } else {
-      let raw = text.slice(htmlStart);
-      const fenceEnd = raw.indexOf("```");
-      if (fenceEnd !== -1) raw = raw.slice(0, fenceEnd);
-      raw = raw.trim();
-      if (!raw.includes("</body>")) raw += "\n</body>";
-      if (!raw.includes("</html>")) raw += "\n</html>";
-      htmlContent = raw;
-    }
-
-    if (isCompleteHtmlDocument(htmlContent)) {
-      files.push({
-        path: "public/index.html",
-        content: htmlContent,
-      });
-    }
-  }
-
-  // If public/index.html exists but no src/app/page.tsx, automatically generate the preview iframe
-  const hasPageTsx = files.some((f) => f.path.includes("page.tsx") || f.path.includes("page.jsx"));
-  const hasHtmlFile = files.some((f) => f.path.endsWith(".html"));
-  if (hasHtmlFile && !hasPageTsx) {
-    files.push({
-      path: "src/app/page.tsx",
-      content: `'use client';
-
-export default function Home() {
-  return (
-    <iframe
-      src="/index.html"
-      className="fixed inset-0 w-screen h-screen border-none m-0 p-0"
-      style={{ width: '100vw', height: '100vh', border: 'none', overflow: 'auto' }}
-    />
-  );
-}
-`,
-    });
-  }
-
-  // Pattern 5: Single raw TSX/JSX code fence without file annotations
+  // Pattern 4: Single raw TSX/JSX code fence without file annotations.
+  // Raw HTML is intentionally rejected: the generated app always enters through
+  // src/app/page.tsx and the runtime owns the root index.html document.
   if (files.length === 0) {
     const rawFence = /```(?:tsx|ts|jsx|js|javascript|typescript)?\s*[\r\n]([\s\S]*?)(?:```|$)/i.exec(text);
     const candidateCode = rawFence ? rawFence[1].trim() : text.trim();
@@ -199,6 +206,42 @@ export default function Home() {
   }
 
   return files;
+}
+
+function hasRequiredEntrypoint(files: Array<{ path: string; content: string }>): boolean {
+  return files.some((file) => file.path.replace(/^\.\//, "") === "src/app/page.tsx");
+}
+
+function hasGenerationPlaceholder(files: Array<{ path: string; content: string }>): boolean {
+  return files.some(
+    (file) =>
+      file.content.includes("Generation Issue") &&
+      file.content.includes("Awaiting Retry")
+  );
+}
+
+function assertUsableGeneratedFiles(
+  files: Array<{ path: string; content: string }>,
+  phase: "generation" | "repair"
+): void {
+  if (files.length === 0) {
+    throw new Error(`The AI ${phase} returned no valid source files`);
+  }
+  if (!hasRequiredEntrypoint(files)) {
+    throw new Error(`The AI ${phase} omitted the required src/app/page.tsx entrypoint`);
+  }
+  if (hasGenerationPlaceholder(files)) {
+    throw new Error(`The AI ${phase} still contained placeholder source files`);
+  }
+}
+
+function mergeGeneratedFiles(
+  original: Array<{ path: string; content: string }>,
+  retry: Array<{ path: string; content: string }>
+): Array<{ path: string; content: string }> {
+  const merged = new Map(original.map((file) => [file.path.replace(/^\.\//, ""), file]));
+  for (const file of retry) merged.set(file.path.replace(/^\.\//, ""), file);
+  return [...merged.values()];
 }
 
 function fixCssImportOrder(css: string): string {
@@ -280,20 +323,13 @@ function sanitizeOrphanedCssProperties(css: string): string {
  * sometimes ignores instructions.
  */
 function postProcessGeneratedFiles(files: Array<{ path: string; content: string }>): void {
-  // Drop JSX fragments that were mis-labelled as HTML
+  // Generated output must never replace the Vite runtime document. This also
+  // drops JSX fragments that a model incorrectly labels as HTML.
   for (let i = files.length - 1; i >= 0; i--) {
     const file = files[i];
-    if (file.path.endsWith(".html") && !isCompleteHtmlDocument(file.content)) {
-      console.log(`[localAgentEngine] Dropped invalid HTML dump: ${file.path}`);
+    if (file.path.endsWith(".html")) {
+      console.log(`[localAgentEngine] Dropped generated HTML file: ${file.path}`);
       files.splice(i, 1);
-    }
-  }
-
-  // Remap root-level HTML files to public/ so Next.js static serving works
-  for (const file of files) {
-    if (file.path === "index.html" || file.path === "./index.html") {
-      file.path = "public/index.html";
-      console.log(`[localAgentEngine] Remapped index.html → public/index.html for Next.js static serving`);
     }
   }
 
@@ -456,25 +492,43 @@ export const localAgentEngine = {
       conversation,
     });
 
-    // Ensure template exists
-    localSandboxManager.ensureProjectTemplate(projectId);
-    localSandboxManager.startDevServer(projectId).catch(console.error);
+    // Serialize detached generations per project. Each queued run snapshots the
+    // workspace only when it actually starts, so a failed older request can
+    // never restore stale files over a newer request.
+    const previousRun = sharedAgentRunState.runs.get(projectId) || Promise.resolve();
+    const run = previousRun.catch(() => undefined).then(async () => {
+      let previousWorkspace: Map<string, Buffer> | null = null;
 
-    // Run async in background
-    (async () => {
       try {
+        // Keep template and snapshot I/O inside the guarded path so a filesystem
+        // failure is reported instead of leaving the project stuck in `init`.
+        // The preview starts only after generated code passes a real compile.
+        localSandboxManager.ensureProjectTemplate(projectId);
+        previousWorkspace = snapshotWorkspace(projectId);
+
         const providers = multiModelRouter.getProviders();
         if (providers.length === 0) {
+          let starterPreview: string | undefined;
+          try {
+            starterPreview = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          } catch (error) {
+            console.error("[localAgentEngine] Starter preview failed:", error);
+          }
           const warnMsg: ConversationMessage = {
             author: "agent",
-            message:
-              "⚠️ No AI API keys found in `.env.local`.\n\nPlease add your API keys to `.env.local` to enable full autonomous code generation. In the meantime, the starter template has been loaded and is running live in the preview sandbox!",
-            messageType: "finished",
+            message: starterPreview
+              ? "⚠️ No AI API keys found in `.env.local`.\n\nPlease add your API keys to `.env.local` to enable full autonomous code generation. In the meantime, the starter template is running in the live preview."
+              : "No AI API keys are configured, and the starter preview could not be started. Add an AI provider key to `.env.local`, verify the sandbox configuration, and retry.",
+            messageType: starterPreview ? "finished" : "error",
             createdAt: new Date().toISOString(),
           };
+          const currentConversation =
+            localProjectStore.getRecord(projectId)?.conversation || conversation;
           localProjectStore.update(projectId, {
             status: "done",
-            conversation: [...conversation, warnMsg],
+            conversation: [...currentConversation, warnMsg],
+            previewUrl: starterPreview,
+            serverStatus: starterPreview ? "Active" : "Error",
           });
           return;
         }
@@ -482,6 +536,7 @@ export const localAgentEngine = {
         // Include existing code context if iterating on an existing project
         let userPromptContent = prompt;
         const existingPage = localFileManager.getContent(projectId, "src/app/page.tsx");
+        const existingStyles = localFileManager.getContent(projectId, "src/app/globals.css");
         const pageCode = existingPage?.content || "";
         if (
           pageCode &&
@@ -489,9 +544,11 @@ export const localAgentEngine = {
           !pageCode.includes("Ready for Prompt") &&
           !pageCode.includes("Generation Issue")
         ) {
-          // Limit context to first 2000 characters to reduce token usage and speed up generation
-          const truncatedCode = pageCode.length > 2000 ? pageCode.substring(0, 2000) + "\n... (truncated)" : pageCode;
-          userPromptContent = `Current code (truncated): \n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nUser Request: ${prompt}\n\nPlease update or enhance the application to fulfill this request.`;
+          const truncatedCode = pageCode.length > 10_000 ? pageCode.substring(0, 10_000) + "\n... (truncated)" : pageCode;
+          const styles = existingStyles?.content
+            ? existingStyles.content.slice(0, 5_000)
+            : "";
+          userPromptContent = `Current page:\n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nCurrent global styles:\n\`\`\`css\n${styles}\n\`\`\`\n\nUser Request: ${prompt}\n\nUpdate the application completely enough to fulfill this request while preserving working features.`;
         }
 
         // MotionSites-style prompts carry precise layout, motion and art direction.
@@ -525,13 +582,11 @@ export const localAgentEngine = {
         postProcessGeneratedFiles(files);
 
         // Check if any file is a placeholder (non-code detected)
-        const hasPlaceholder = files.some(f =>
-          f.content.includes("Generation Issue") && f.content.includes("Awaiting Retry")
-        );
+        const hasPlaceholder = hasGenerationPlaceholder(files);
 
         // Auto-retry if no files extracted or all files are placeholders
-        if (files.length === 0 || (files.length === 1 && hasPlaceholder)) {
-          console.log(`[localAgentEngine] No valid code generated, auto-retrying...`);
+        if (files.length === 0 || hasPlaceholder || !hasRequiredEntrypoint(files)) {
+          console.log(`[localAgentEngine] Generation was incomplete, auto-retrying...`);
 
           const retryStatusMsg: ConversationMessage = {
             author: "agent",
@@ -556,12 +611,11 @@ export const localAgentEngine = {
             const retryFiles = extractFilesFromMarkdown(retryResult.text);
             postProcessGeneratedFiles(retryFiles);
 
-            const retryHasPlaceholder = retryFiles.some(f =>
-              f.content.includes("Generation Issue") && f.content.includes("Awaiting Retry")
-            );
+            const retryHasPlaceholder = hasGenerationPlaceholder(retryFiles);
 
             if (retryFiles.length > 0 && !retryHasPlaceholder) {
-              files = retryFiles;
+              files = mergeGeneratedFiles(files, retryFiles);
+              postProcessGeneratedFiles(files);
               console.log(`[localAgentEngine] Retry succeeded: ${retryFiles.length} files extracted`);
             } else {
               console.warn(`[localAgentEngine] Retry also failed, using placeholder`);
@@ -571,66 +625,31 @@ export const localAgentEngine = {
           }
         }
 
+        assertUsableGeneratedFiles(files, "generation");
+
         const currentRec = localProjectStore.getRecord(projectId);
         const newMessages: ConversationMessage[] = [...(currentRec?.conversation || [])];
 
-        if (files.length > 0) {
-          for (const file of files) {
-            let fileContent = file.content;
+        for (const file of files) {
+          let fileContent = file.content;
 
-            if (file.path.endsWith(".css")) {
-              fileContent = sanitizeOrphanedCssProperties(fileContent);
-            }
-
-            if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
-              fileContent = fixCssImportOrder(fileContent);
-            }
-
-            localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
-            console.log(`[localAgentEngine] Wrote ${file.path} (${fileContent.length} bytes)`);
-
-            // Sync file to E2B cloud sandbox if active
-            e2bSandboxManager.syncFile(projectId, file.path, fileContent).catch(() => {});
-
-            newMessages.push({
-              author: "agent",
-              message: `Created file \`${file.path}\``,
-              messageType: "building",
-              createdAt: new Date().toISOString(),
-            });
+          if (file.path.endsWith(".css")) {
+            fileContent = sanitizeOrphanedCssProperties(fileContent);
           }
-        } else {
-          // Fallback: if no structured files extracted, detect whether content is HTML or React
-          if (content.includes("<!DOCTYPE html") || content.includes("<html")) {
-            let html = content;
-            const fenceMatch = /```(?:html)?\s*[\r\n]([\s\S]*?)(?:```|$)/i.exec(content);
-            if (fenceMatch) html = fenceMatch[1];
-            if (!html.includes("</body>")) html += "\n</body>";
-            if (!html.includes("</html>")) html += "\n</html>";
-            if (isCompleteHtmlDocument(html.trim())) {
-              localFileManager.writeContent(projectId, "public/index.html", html.trim(), "utf8");
-              const iframePage = `'use client';\n\nexport default function Home() {\n  return (\n    <iframe\n      src="/index.html"\n      className="fixed inset-0 w-screen h-screen border-none m-0 p-0"\n      style={{ width: '100vw', height: '100vh', border: 'none', overflow: 'auto' }}\n    />\n  );\n}\n`;
-              localFileManager.writeContent(projectId, "src/app/page.tsx", iframePage, "utf8");
-              e2bSandboxManager.syncFile(projectId, "public/index.html", html.trim()).catch(() => {});
-              e2bSandboxManager.syncFile(projectId, "src/app/page.tsx", iframePage).catch(() => {});
-              newMessages.push({
-                author: "agent",
-                message: "Generated `public/index.html` and live preview frame",
-                messageType: "building",
-                createdAt: new Date().toISOString(),
-              });
-            }
-          } else if (content.includes("export default") || content.includes("return (") || content.includes("function")) {
-            const cleanCode = content.replace(/^```[a-z]*\s*[\r\n]/i, "").replace(/```\s*$/i, "").trim();
-            localFileManager.writeContent(projectId, "src/app/page.tsx", cleanCode, "utf8");
-            e2bSandboxManager.syncFile(projectId, "src/app/page.tsx", cleanCode).catch(() => {});
-            newMessages.push({
-              author: "agent",
-              message: "Updated `src/app/page.tsx`",
-              messageType: "building",
-              createdAt: new Date().toISOString(),
-            });
+
+          if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
+            fileContent = fixCssImportOrder(fileContent);
           }
+
+          localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
+          console.log(`[localAgentEngine] Wrote ${file.path} (${fileContent.length} bytes)`);
+
+          newMessages.push({
+            author: "agent",
+            message: `Created file \`${file.path}\``,
+            messageType: "building",
+            createdAt: new Date().toISOString(),
+          });
         }
 
         // Auto-heal any components imported in page.tsx that were omitted by the AI
@@ -638,7 +657,8 @@ export const localAgentEngine = {
 
         purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
 
-        // Auto-detect and install any third-party npm packages used by the AI
+        // Add detected dependencies to this generated app. Installation happens
+        // inside its sandbox, never in the platform's own production process.
         const allFiles = files.length > 0 ? files : [];
         const existingPageForDeps = localFileManager.getContent(projectId, "src/app/page.tsx");
         if (existingPageForDeps?.content && !allFiles.some(f => f.path.includes("page.tsx"))) {
@@ -646,19 +666,14 @@ export const localAgentEngine = {
         }
         if (allFiles.length > 0) {
           try {
-            const depResult = autoInstallDependencies(allFiles, process.cwd());
-            if (depResult.installed.length > 0) {
+            const depResult = ensureWorkspaceDependencies(
+              allFiles,
+              localProjectStore.getWorkspaceDir(projectId)
+            );
+            if (depResult.added.length > 0) {
               newMessages.push({
                 author: "agent",
-                message: `Auto-installed dependencies: ${depResult.installed.join(", ")}`,
-                messageType: "building",
-                createdAt: new Date().toISOString(),
-              });
-            }
-            if (depResult.failed.length > 0) {
-              newMessages.push({
-                author: "agent",
-                message: `⚠️ Could not install: ${depResult.failed.join(", ")}`,
+                message: `Added dependencies: ${depResult.added.join(", ")}`,
                 messageType: "building",
                 createdAt: new Date().toISOString(),
               });
@@ -668,48 +683,118 @@ export const localAgentEngine = {
           }
         }
 
-        const finishMsg: ConversationMessage = {
+        newMessages.push({
           author: "agent",
-          message:
-            files.length > 0
-              ? `Application generated successfully! Generated ${files.length} files. Live preview is updated.`
-              : "Application updated. Live preview is updated.",
-          messageType: "finished",
+          message: "Validating the generated app and preparing its live preview...",
+          messageType: "building",
           createdAt: new Date().toISOString(),
-        };
-
-        newMessages.push(finishMsg);
-
-        localProjectStore.update(projectId, {
-          status: "done",
-          conversation: newMessages,
         });
 
-        // Ensure dev server is up and update preview URL
+        // Compile before success is shown. This is the reliability boundary that
+        // prevents a model response from becoming a broken user-facing preview.
         try {
-          const previewUrl = await e2bSandboxManager.startDevServer(projectId);
+          const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
           console.log(`[localAgentEngine] Sandbox confirmed ready for ${projectId}, preview: ${previewUrl}`);
-          
-          // Update project record with current preview URL
+
+          newMessages.push({
+            author: "agent",
+            message: `Application generated successfully with ${usedModel}! Generated ${files.length || 1} files and verified the live preview.`,
+            messageType: "finished",
+            createdAt: new Date().toISOString(),
+          });
           localProjectStore.update(projectId, {
+            status: "done",
+            conversation: newMessages,
             previewUrl: previewUrl.includes("http") ? previewUrl : `/api/preview/${projectId}`,
-            serverStatus: "Active"
+            serverStatus: "Active",
           });
         } catch (sandboxErr) {
           console.error(`[localAgentEngine] Sandbox startup failed:`, sandboxErr);
-          // Try local fallback
+          const buildError = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
+          newMessages.push({
+            author: "agent",
+            message: "Preview validation found a build issue. Repairing the generated code automatically...",
+            messageType: "building",
+            createdAt: new Date().toISOString(),
+          });
+          localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
+
           try {
-            await localSandboxManager.startDevServer(projectId);
-            localProjectStore.update(projectId, {
-              previewUrl: `/api/preview/${projectId}`,
-              serverStatus: "Active"
+            const repairResult = await multiModelRouter.complete(
+              [
+                { role: "system", content: SYSTEM_PROMPT },
+                {
+                  role: "user",
+                  content: `The generated app for this request failed its production build. Fix the implementation without weakening the requested design or removing working features. Return ONLY complete corrected file blocks. Never use @apply in CSS.\n\nOriginal request:\n${prompt}\n\nBuild error:\n${buildError}\n\nCurrent source:\n${workspaceRepairContext(projectId)}`,
+                },
+              ],
+              () => undefined
+            );
+            const repairFiles = extractFilesFromMarkdown(repairResult.text);
+            postProcessGeneratedFiles(repairFiles);
+            assertUsableGeneratedFiles(repairFiles, "repair");
+
+            for (const file of repairFiles) {
+              let fileContent = file.content;
+              if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(fileContent);
+              if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
+                fileContent = fixCssImportOrder(fileContent);
+              }
+              localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
+            }
+            autoHealMissingImports(projectId, newMessages);
+            purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
+            ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));
+
+            const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+            newMessages.push({
+              author: "agent",
+              message: `Application generated, automatically repaired, and verified in the live preview using ${repairResult.usedModel}.`,
+              messageType: "finished",
+              createdAt: new Date().toISOString(),
             });
-          } catch (localErr) {
-            console.error(`[localAgentEngine] Local sandbox also failed:`, localErr);
+            localProjectStore.update(projectId, {
+              status: "done",
+              conversation: newMessages,
+              previewUrl,
+              serverStatus: "Active",
+            });
+          } catch (repairError) {
+            console.error(`[localAgentEngine] Automatic repair failed:`, repairError);
+            if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
+
+            let restoredPreviewUrl: string | undefined;
+            try {
+              restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+            } catch (restoreError) {
+              console.error(`[localAgentEngine] Previous preview restore failed:`, restoreError);
+            }
+
+            newMessages.push({
+              author: "agent",
+              message: restoredPreviewUrl
+                ? "The requested change could not be compiled safely, so the previous working version was restored. Please retry or adjust the prompt."
+                : `Generation failed validation and the preview could not be restored: ${repairError instanceof Error ? repairError.message : String(repairError)}`,
+              messageType: "error",
+              createdAt: new Date().toISOString(),
+            });
+            localProjectStore.update(projectId, {
+              status: "done",
+              conversation: newMessages,
+              previewUrl: restoredPreviewUrl,
+              serverStatus: restoredPreviewUrl ? "Active" : "Error",
+            });
           }
         }
       } catch (err: any) {
         console.error("[localAgentEngine error]", err);
+        if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
+        let restoredPreviewUrl: string | undefined;
+        try {
+          restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+        } catch (restoreError) {
+          console.error("[localAgentEngine] Could not restore previous preview:", restoreError);
+        }
         const current = localProjectStore.getRecord(projectId);
         const errorMsg: ConversationMessage = {
           author: "agent",
@@ -720,8 +805,18 @@ export const localAgentEngine = {
         localProjectStore.update(projectId, {
           status: "done",
           conversation: [...(current?.conversation || []), errorMsg],
+          previewUrl: restoredPreviewUrl,
+          serverStatus: restoredPreviewUrl ? "Active" : "Error",
         });
       }
-    })();
+    });
+
+    sharedAgentRunState.runs.set(projectId, run);
+    const clearRun = () => {
+      if (sharedAgentRunState.runs.get(projectId) === run) {
+        sharedAgentRunState.runs.delete(projectId);
+      }
+    };
+    void run.then(clearRun, clearRun);
   },
 };

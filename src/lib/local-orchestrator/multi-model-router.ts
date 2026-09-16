@@ -36,7 +36,22 @@ class MultiModelRouter {
   public getProviders(): ModelProviderConfig[] {
     const providers: ModelProviderConfig[] = [];
 
-    // 1. Zhipu Account 1 (GLM-4.5-Flash: Rock solid, high stability)
+    // Prefer the newer account/model. In real generation tests it completed a
+    // complex design prompt while the older flash endpoint timed out.
+    const zhipuKey2 = process.env.GLM_API_KEY_2 || "";
+    if (zhipuKey2) {
+      providers.push({
+        id: "zhipu-acc-2",
+        name: "Zhipu AI (GLM-4.7-Flash / Acc 2)",
+        baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
+        apiKey: zhipuKey2,
+        model: process.env.GLM_MODEL_2 || "glm-4.7-flash",
+        maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
+        isZhipu: true,
+      });
+    }
+
+    // Fallback Zhipu account/model.
     const zhipuKey1 = process.env.GLM_API_KEY || "";
     if (zhipuKey1) {
       providers.push({
@@ -45,20 +60,6 @@ class MultiModelRouter {
         baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
         apiKey: zhipuKey1,
         model: process.env.GLM_MODEL || "glm-4.5-flash",
-        maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
-        isZhipu: true,
-      });
-    }
-
-    // 2. Zhipu Account 2 (GLM-4.7-Flash: Fast reasoning tier)
-    const zhipuKey2 = process.env.GLM_API_KEY_2 || "";
-    if (zhipuKey2) {
-      providers.push({
-        id: "zhipu-acc-2",
-        name: "Zhipu AI (GLM-4.7-Flash / Acc 2)",
-        baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-        apiKey: zhipuKey2,
-        model: "glm-4.7-flash",
         maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
         isZhipu: true,
       });
@@ -140,6 +141,7 @@ class MultiModelRouter {
             method: "POST",
             headers,
             body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(120_000),
           })
         );
 

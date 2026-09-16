@@ -4,8 +4,7 @@ import net from "net";
 import http from "http";
 import { spawn, ChildProcess } from "child_process";
 import { localProjectStore } from "./project-store";
-import { extractMissingModuleFromError, installPackages } from "./dependency-scanner";
-import { writeStarterTemplate } from "./starter-template";
+import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
@@ -21,7 +20,7 @@ function killProcessTree(proc: ChildProcess): void {
 }
 
 /**
- * Wait until Next actually serves HTTP — a TCP accept is not enough (compile still in flight).
+ * Wait until the workspace runtime actually serves HTTP.
  */
 async function waitForServerReady(port: number, timeoutMs = 45000): Promise<void> {
   const startTime = Date.now();
@@ -118,7 +117,7 @@ export const localSandboxManager = {
     linkSharedNodeModules(dir, projectId);
   },
 
-  /** Live origin if a Next process is already bound — does not wait or start. */
+  /** Live origin if a workspace process is already bound — does not wait or start. */
   getRunningOrigin(projectId: string): string | null {
     const proc = activeProcesses.get(projectId);
     const rec = localProjectStore.getRecord(projectId);
@@ -141,6 +140,7 @@ export const localSandboxManager = {
     const record = localProjectStore.getRecord(projectId);
     if (!record) throw new Error(`Project ${projectId} not found`);
 
+    purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
     this.ensureProjectTemplate(projectId);
     const dir = localProjectStore.getWorkspaceDir(projectId);
 
@@ -170,19 +170,19 @@ export const localSandboxManager = {
       record.port = freePort;
     }
 
-    // Build path to Next.js CLI binary — array join defeats Turbopack static analysis
-    // so it won't try to bundle the entire Next.js CLI chain into our server routes.
-    const nextBinSegments = ["node_modules", "next", "dist", "bin", "next"];
-    const workspaceNext = path.join(dir, ...nextBinSegments);
-    const rootNext = path.join(/* turbopackIgnore: true */ process.cwd(), ...nextBinSegments);
-    const nextBin = fs.existsSync(workspaceNext) ? workspaceNext : rootNext;
-    if (!fs.existsSync(nextBin)) {
-      throw new Error(`Next.js CLI not found at ${workspaceNext} or ${rootNext}`);
+    // Use the same lightweight Vite runtime as E2B. Workspaces normally share
+    // the platform's node_modules, but a standalone workspace install also works.
+    const viteBinSegments = ["node_modules", "vite", "bin", "vite.js"];
+    const workspaceVite = path.join(dir, ...viteBinSegments);
+    const rootVite = path.join(/* turbopackIgnore: true */ process.cwd(), ...viteBinSegments);
+    const viteBin = fs.existsSync(workspaceVite) ? workspaceVite : rootVite;
+    if (!fs.existsSync(viteBin)) {
+      throw new Error(`Vite CLI not found at ${workspaceVite} or ${rootVite}`);
     }
-    console.log(`[local-sandbox] Starting Next.js dev server for ${projectId} on port ${record.port}...`);
+    console.log(`[local-sandbox] Starting Vite dev server for ${projectId} on port ${record.port}...`);
 
     try {
-      const devProc = spawn(process.execPath, [nextBin, "dev", "-p", String(record.port), "-H", "127.0.0.1"], {
+      const devProc = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(record.port)], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -194,32 +194,12 @@ export const localSandboxManager = {
         },
       });
 
-      const healedPackages = new Set<string>();
-
       devProc.stdout?.on("data", (data) => {
         console.log(`[${projectId}:${record.port}]`, data.toString().trim());
       });
 
       devProc.stderr?.on("data", (data) => {
-        const text = data.toString();
-        console.error(`[${projectId}:${record.port} err]`, text.trim());
-
-        const missingPkg = extractMissingModuleFromError(text);
-        if (missingPkg && !healedPackages.has(missingPkg)) {
-          healedPackages.add(missingPkg);
-          console.log(`[local-sandbox] Self-healing: detected missing package "${missingPkg}", installing...`);
-          try {
-            const rootDir = process.cwd();
-            const result = installPackages(rootDir, [missingPkg]);
-            if (result.installed.length > 0) {
-              console.log(`[local-sandbox] Self-healing: installed "${missingPkg}" — HMR should reload automatically`);
-            } else {
-              console.error(`[local-sandbox] Self-healing: failed to install "${missingPkg}"`);
-            }
-          } catch (healErr: any) {
-            console.error(`[local-sandbox] Self-healing install error:`, healErr.message || healErr);
-          }
-        }
+        console.error(`[${projectId}:${record.port} err]`, data.toString().trim());
       });
 
       devProc.on("close", (code) => {
