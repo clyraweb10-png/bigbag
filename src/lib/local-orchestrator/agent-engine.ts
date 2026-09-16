@@ -24,7 +24,7 @@ import { useState } from 'react';
 // code
 \`\`\`
 
-3. Dependencies — Preinstalled and ready: react, react-dom (v19), next, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, better-sqlite3. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (built-in SQLite database) — they already exist.
+3. Dependencies — Preinstalled and ready: react, react-dom (v19), next, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (built-in database client) — they already exist.
 
 4. Styling — Tailwind utility classes ONLY. NO styled-jsx, CSS modules, or inline styles. Use @import "tailwindcss" in globals.css (NOT @tailwind directives). All CSS properties MUST be inside a selector — never place bare properties at the top level.
 

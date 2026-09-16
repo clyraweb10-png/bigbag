@@ -27,7 +27,6 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
-  "better-sqlite3": "^11.8.1",
   "@libsql/client": "^0.14.0",
 };
 
@@ -36,7 +35,6 @@ export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
   "@types/node": "^22.0.0",
   "@types/react": "^19.0.0",
   "@types/react-dom": "^19.0.0",
-  "@types/better-sqlite3": "^7.6.12",
   tailwindcss: "^4.1.1",
   "@tailwindcss/postcss": "^4.1.4",
   postcss: "^8.5.6",
