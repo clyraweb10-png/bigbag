@@ -42,6 +42,7 @@ DESIGN PROCESS:
 5. Components — derive from content needs, not a starter set. Cards are a container of last resort. One primary button style, one secondary, one tertiary. Full states: default, hover, focus-visible, active, disabled.
 6. Content — write real, finished copy. Headlines combine claim + specificity + audience relevance. Show mechanism over promising outcomes.
 7. Responsiveness — design three genuine compositions (compact, medium, expansive), not one that collapses. Recompose, don't just stack.
+8. Database & Persistence — If the application involves records, items, CRM, notes, tasks, or persistent state, use the built-in SQLite database via @/lib/db in Next.js Server Actions or Route Handlers.
 
 SWAP TEST: If the page would remain plausible after replacing the brand name, subject, and industry with another, it is generic. Redesign the concept.
 

@@ -26,6 +26,7 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
+  "@libsql/client": "^0.14.0",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
@@ -363,6 +364,31 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+`
+  );
+
+  write(
+    dir,
+    "src/lib/db.ts",
+    `import { createClient } from "@libsql/client";
+import path from "path";
+import fs from "fs";
+
+const dataDir = path.join(process.cwd(), "data");
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const localDbPath = path.join(dataDir, "app.db").replace(/\\\\/g, "/");
+const url = process.env.TURSO_DATABASE_URL || \`file:\${localDbPath}\`;
+const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
+
+export const db = createClient({
+  url,
+  authToken,
+});
+
+export default db;
 `
   );
 

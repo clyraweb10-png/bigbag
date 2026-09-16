@@ -37,7 +37,7 @@ The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css w
 
 7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids. Honor every concrete detail in the user's prompt.
 
-8. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+8. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO external images/fonts (use gradients or lucide-react icons). NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
