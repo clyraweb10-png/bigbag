@@ -24,15 +24,21 @@ import { useState } from 'react';
 // code
 \`\`\`
 
-3. Dependencies — Preinstalled and ready: react, react-dom (v19), next, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, and @/lib/utils (cn) — they already exist.
+3. Dependencies — Preinstalled and ready: react, react-dom (v19), next, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, better-sqlite3. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (built-in SQLite database) — they already exist.
 
 4. Styling — Tailwind utility classes ONLY. NO styled-jsx, CSS modules, or inline styles. Use @import "tailwindcss" in globals.css (NOT @tailwind directives). All CSS properties MUST be inside a selector — never place bare properties at the top level.
 
-5. Structure — src/app/page.tsx (main), src/app/layout.tsx (root layout), src/app/globals.css, src/components/*.tsx. Add 'use client' to components using hooks.
+5. Structure — src/app/page.tsx (main), src/app/layout.tsx (root layout), src/app/globals.css, src/components/*.tsx, and src/app/api/.../route.ts for API endpoints. Add 'use client' to components using hooks.
 
 6. Quality — Complete working code. No placeholders. TypeScript. Export default functions. Responsive, polished UI. Semantic HTML.
 
 7. DON'T — NO react-dom/client imports. NO require(). NO external images/fonts (use gradients or lucide-react icons). NO package.json/next.config/tsconfig/postcss output. NO layout.tsx unless requested. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx as a React component. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+
+8. Database & Persistence — When the app requires data storage (todos, users, notes, CRM records, products, bookings, logs, etc.), use the preconfigured SQLite database at @/lib/db:
+   - In Next.js Server Components, Server Actions ('use server'), or API Route Handlers (src/app/api/.../route.ts), import db from '@/lib/db'.
+   - Initialize tables with: \`db.exec("CREATE TABLE IF NOT EXISTS ...")\`.
+   - Query data with \`db.prepare("SELECT ...").all(...)\` or \`db.prepare("INSERT ...").run(...)\`.
+   - Client components ('use client') interact with data by fetching API routes (e.g. \`fetch('/api/...')\`) or invoking Server Actions.
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:

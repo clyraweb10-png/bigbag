@@ -27,6 +27,7 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
+  "better-sqlite3": "^11.8.1",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
@@ -34,6 +35,7 @@ export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
   "@types/node": "^22.0.0",
   "@types/react": "^19.0.0",
   "@types/react-dom": "^19.0.0",
+  "@types/better-sqlite3": "^7.6.12",
   tailwindcss: "^4.1.1",
   "@tailwindcss/postcss": "^4.1.4",
   postcss: "^8.5.6",
@@ -227,6 +229,25 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+`
+  );
+
+  write(
+    dir,
+    "src/lib/db.ts",
+    `import Database from "better-sqlite3";
+import path from "path";
+import fs from "fs";
+
+const dataDir = path.join(process.cwd(), "data");
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const db = new Database(path.join(dataDir, "app.db"));
+db.pragma("journal_mode = WAL");
+
+export default db;
 `
   );
 
