@@ -34,10 +34,11 @@ import { useState } from 'react';
 
 7. DON'T — NO react-dom/client imports. NO require(). NO external images/fonts (use gradients or lucide-react icons). NO package.json/next.config/tsconfig/postcss output. NO layout.tsx unless requested. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx as a React component. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 
-8. Database & Persistence — When the app requires data storage (todos, users, notes, CRM records, products, bookings, logs, etc.), use the preconfigured SQLite database at @/lib/db:
+8. Database & Persistence — When the app requires data storage (todos, users, notes, CRM records, products, bookings, logs, etc.), use the preconfigured database at @/lib/db:
    - In Next.js Server Components, Server Actions ('use server'), or API Route Handlers (src/app/api/.../route.ts), import db from '@/lib/db'.
-   - Initialize tables with: \`db.exec("CREATE TABLE IF NOT EXISTS ...")\`.
-   - Query data with \`db.prepare("SELECT ...").all(...)\` or \`db.prepare("INSERT ...").run(...)\`.
+   - Initialize tables with: \`await db.execute("CREATE TABLE IF NOT EXISTS ...")\`.
+   - Query data with \`await db.execute({ sql: "SELECT ...", args: [...] })\` or \`await db.execute({ sql: "INSERT ...", args: [...] })\`.
+   - Access rows via result: \`const { rows } = await db.execute("SELECT * FROM ...")\`.
    - Client components ('use client') interact with data by fetching API routes (e.g. \`fetch('/api/...')\`) or invoking Server Actions.
 `;
 

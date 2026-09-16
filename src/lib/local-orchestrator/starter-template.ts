@@ -28,6 +28,7 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
   "better-sqlite3": "^11.8.1",
+  "@libsql/client": "^0.14.0",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
@@ -235,7 +236,7 @@ export function cn(...inputs: ClassValue[]) {
   write(
     dir,
     "src/lib/db.ts",
-    `import Database from "better-sqlite3";
+    `import { createClient } from "@libsql/client";
 import path from "path";
 import fs from "fs";
 
@@ -244,8 +245,14 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const db = new Database(path.join(dataDir, "app.db"));
-db.pragma("journal_mode = WAL");
+const localDbPath = path.join(dataDir, "app.db").replace(/\\\\/g, "/");
+const url = process.env.TURSO_DATABASE_URL || \`file:\${localDbPath}\`;
+const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
+
+export const db = createClient({
+  url,
+  authToken,
+});
 
 export default db;
 `
