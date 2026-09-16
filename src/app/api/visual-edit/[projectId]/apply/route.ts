@@ -11,13 +11,9 @@ import { applyEdits, verifyEdits, type VisualChange } from "@/lib/visual-edit";
 import { resolveChangesDeep } from "@/lib/visual-edit-resolve";
 import { installSourceTags } from "@/lib/visual-edit-upgrade";
 import { publicUrlRejectionReason } from "@/lib/safe-url";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 
-const IS_LOCAL_MODE =
-    process.env.ORCHESTRATOR_MODE === "local" ||
-    !process.env.TOTALUM_VCAAS_API_KEY ||
-    process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
-    process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
-    process.env.USE_LOCAL_ORCHESTRATOR === "true";
+const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
 export const dynamic = "force-dynamic";
 

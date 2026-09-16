@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
+import { isRoutableProjectSlug } from "@/lib/project-slug";
 
-const IS_LOCAL_MODE =
-  process.env.ORCHESTRATOR_MODE === "local" ||
-  !process.env.TOTALUM_VCAAS_API_KEY ||
-  process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
-  process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
-  process.env.USE_LOCAL_ORCHESTRATOR === "true";
+const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
 const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
 const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
@@ -71,6 +68,10 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+
+  if (!isRoutableProjectSlug(projectId)) {
+    return NextResponse.json({ ok: false, error: "Invalid project id" }, { status: 400 });
+  }
 
   if (IS_LOCAL_MODE) {
     try {
@@ -162,4 +163,3 @@ export async function GET(
     );
   }
 }
-

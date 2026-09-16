@@ -2,9 +2,9 @@
  * Design system prompt prepended to every agent prompt to produce
  * higher-quality, non-generic website designs.
  *
- * This is injected server-side in the catch-all proxy route so the
- * user's chat UI stays clean — they see their own words, but the
- * agent receives design guidance alongside the request.
+ * This is injected at the server-side agent boundary so the user's chat UI stays
+ * clean — they see their own words, but both local and remote agents receive the
+ * same design guidance alongside the request.
  */
 
 export const DESIGN_SYSTEM_PROMPT = `
@@ -88,4 +88,8 @@ export function injectDesignPrompt(bodyText: string): string {
     // If JSON parsing fails, return original
   }
   return bodyText;
+}
+
+export function withDesignSystemPrompt(prompt: string): string {
+  return `${DESIGN_SYSTEM_PROMPT}\n${prompt}`;
 }

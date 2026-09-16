@@ -16,6 +16,7 @@ import { getPreviewUrl } from "@/lib/project-status";
 import type { VcaasProject } from "@/lib/vcaas-types";
 import { AGENT_PATH, AGENT_SOURCE, PREVIEW_RUNTIME_SHIM } from "@/lib/visual-edit-agent";
 import { injectAgent, rewriteCss, rewriteHtml } from "@/lib/preview-proxy";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -188,7 +189,7 @@ async function resolvePreviewOrigin(
     ctx: Parameters<typeof vcaasRequest>[2],
     opts: { isDocument: boolean }
 ): Promise<{ origin: string } | { error: NextResponse }> {
-    if (process.env.ORCHESTRATOR_MODE === "local" || process.env.USE_LOCAL_ORCHESTRATOR === "true") {
+    if (isLocalOrchestratorEnabled()) {
         const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
         const { localSandboxManager } = await import("@/lib/local-orchestrator/sandbox-manager");
         const { e2bSandboxManager } = await import("@/lib/local-orchestrator/e2b-sandbox-manager");
@@ -314,13 +315,7 @@ async function handle(
         return NextResponse.redirect(url, 308);
     }
 
-    const IS_LOCAL = process.env.ORCHESTRATOR_MODE === "local" ||
-        !process.env.TOTALUM_VCAAS_API_KEY ||
-        process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
-        process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
-        process.env.USE_LOCAL_ORCHESTRATOR === "true" ||
-        process.env.E2B_API_KEY ||
-        process.env.SANDBOX_PROVIDER === "e2b";
+    const IS_LOCAL = isLocalOrchestratorEnabled();
 
     let auth: any;
     if (!IS_LOCAL) {

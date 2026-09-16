@@ -324,10 +324,10 @@ export function isCompleteHtmlDocument(content: string): boolean {
 /** Remove JSX dumps that were wrongly saved as public/index.html. */
 export function purgeInvalidStaticHtml(dir: string): void {
   for (const rel of ["public/index.html", "index.html"]) {
-    const full = path.join(dir, rel);
-    if (!fs.existsSync(full)) continue;
+    const full = path.join(/* turbopackIgnore: true */ dir, rel);
+    if (!fs.existsSync(/* turbopackIgnore: true */ full)) continue;
     try {
-      const content = fs.readFileSync(full, "utf-8");
+      const content = fs.readFileSync(/* turbopackIgnore: true */ full, "utf-8");
       if (!isCompleteHtmlDocument(content)) {
         fs.unlinkSync(full);
         console.log(`[starter-template] Removed invalid static HTML: ${rel}`);

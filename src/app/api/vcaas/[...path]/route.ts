@@ -7,12 +7,10 @@ import { localAgentEngine } from "@/lib/local-orchestrator/agent-engine";
 import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
 import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { isPromptEndpoint, injectDesignPrompt } from "@/lib/design-system-prompt";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
+import { isRoutableProjectSlug } from "@/lib/project-slug";
 
-const IS_LOCAL_MODE =
-  process.env.ORCHESTRATOR_MODE === "local" ||
-  !process.env.TOTALUM_VCAAS_API_KEY ||
-  process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
-  process.env.USE_LOCAL_ORCHESTRATOR === "true";
+const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
 async function handleLocalRequest(req: NextRequest, path: string[]) {
   const method = req.method.toUpperCase();
@@ -41,7 +39,9 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
     });
 
     // Start background agent run & dev sandbox
-    localAgentEngine.runPrompt(proj.projectId, body.prompt || body.description || "");
+    void localAgentEngine
+      .runPrompt(proj.projectId, body.prompt || body.description || "")
+      .catch((error) => console.error(`[vcaas] Failed to launch agent for ${proj.projectId}:`, error));
 
     return NextResponse.json(
       {
@@ -60,6 +60,12 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
   // 3. Single project: /projects/:id/...
   if (path[0] === "projects" && path[1]) {
     const projectId = path[1];
+    if (!isRoutableProjectSlug(projectId)) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid project id", code: "VALIDATION" },
+        { status: 400 }
+      );
+    }
     const subRoute = path.slice(2).join("/");
 
     // /projects/:id
@@ -128,7 +134,12 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
     // /projects/:id/agent/start
     if (subRoute === "agent/start" && method === "POST") {
       const body = await req.json().catch(() => ({}));
-      localAgentEngine.runPrompt(projectId, body.prompt || "");
+      if (!localProjectStore.getRecord(projectId)) {
+        return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+      }
+      void localAgentEngine
+        .runPrompt(projectId, body.prompt || "")
+        .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
       return NextResponse.json({ ok: true, data: { started: true } }, { status: 200 });
     }
 
@@ -182,9 +193,30 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
       return NextResponse.json({ ok: true, data: { connected: false, repository: null } }, { status: 200 });
     }
 
-    // /projects/:id/rebuild/status
-    if (subRoute === "rebuild/status") {
-      return NextResponse.json({ ok: true, data: { status: "idle" } }, { status: 200 });
+    // /projects/:id/rebuild and /projects/:id/rebuild/status
+    if (subRoute === "rebuild" && method === "POST") {
+      const startedAt = new Date().toISOString();
+      try {
+        await localSandboxManager.startDevServer(projectId);
+        return NextResponse.json(
+          { ok: true, data: { status: "success", startedAt } },
+          { status: 200 }
+        );
+      } catch (error) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: error instanceof Error ? error.message : "Preview rebuild failed",
+            code: "REBUILD_FAILED",
+          },
+          { status: 500 }
+        );
+      }
+    }
+    if (subRoute === "rebuild/status" && method === "GET") {
+      const rec = localProjectStore.getRecord(projectId);
+      const status = rec?.serverStatus === "Error" ? "error" : rec?.serverStatus === "Starting" ? "rebuilding" : "success";
+      return NextResponse.json({ ok: true, data: { status } }, { status: 200 });
     }
 
     // /projects/:id/figma/status

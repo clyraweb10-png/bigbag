@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import { ALWAYS_AVAILABLE_PACKAGES } from "./starter-template";
 
 /**
@@ -20,6 +20,8 @@ const NODE_BUILTINS = new Set([
  * template or are peer-provided by Next.js / React.
  */
 const ALWAYS_AVAILABLE = ALWAYS_AVAILABLE_PACKAGES;
+
+const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
 
 /**
  * Scan a list of generated file contents for third-party npm package imports.
@@ -56,6 +58,7 @@ export function detectThirdPartyImports(
         if (NODE_BUILTINS.has(specifier)) continue;
         if (ALWAYS_AVAILABLE.has(specifier)) continue;
         if (specifier.startsWith("@/")) continue;
+        if (!PACKAGE_NAME.test(specifier)) continue;
 
         found.add(specifier);
       }
@@ -95,16 +98,25 @@ export function installPackages(
     `[dep-scanner] Installing ${packages.length} missing packages: ${packages.join(", ")}`
   );
 
-  try {
-    execSync(
-      `npm install ${packages.join(" ")} --legacy-peer-deps --no-audit --no-fund`,
+  const runInstall = (requested: string[], timeout: number) =>
+    spawnSync(
+      "npm",
+      ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", "--", ...requested],
       {
         cwd: targetDir,
-        timeout: 120_000,
+        timeout,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, NODE_ENV: "development" },
+        encoding: "utf8",
       }
     );
+
+  try {
+    const batch = runInstall(packages, 120_000);
+    if (batch.error) throw batch.error;
+    if (batch.status !== 0) {
+      throw new Error(batch.stderr || `npm exited with status ${batch.status}`);
+    }
     installed.push(...packages);
     console.log(`[dep-scanner] Successfully installed: ${packages.join(", ")}`);
   } catch (err: any) {
@@ -112,15 +124,11 @@ export function installPackages(
 
     for (const pkg of packages) {
       try {
-        execSync(
-          `npm install ${pkg} --legacy-peer-deps --no-audit --no-fund`,
-          {
-            cwd: targetDir,
-            timeout: 60_000,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, NODE_ENV: "development" },
-          }
-        );
+        const single = runInstall([pkg], 60_000);
+        if (single.error) throw single.error;
+        if (single.status !== 0) {
+          throw new Error(single.stderr || `npm exited with status ${single.status}`);
+        }
         installed.push(pkg);
         console.log(`[dep-scanner] Installed: ${pkg}`);
       } catch (pkgErr: any) {

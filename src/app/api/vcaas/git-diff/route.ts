@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicUrlRejectionReason } from "@/lib/safe-url";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 
 // Git-diff text proxy. The `gitDiffUrl` returned by the VCaaS conversation API
 // points at an external (signed) storage host, so the browser can't fetch it
@@ -16,10 +17,7 @@ import { publicUrlRejectionReason } from "@/lib/safe-url";
  */
 const MAX_DIFF_BYTES = 10 * 1024 * 1024;
 
-const IS_LOCAL_MODE =
-  process.env.ORCHESTRATOR_MODE === "local" ||
-  !process.env.TOTALUM_VCAAS_API_KEY ||
-  process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active";
+const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
 const ALLOWED_HOSTS = [
   "storage.googleapis.com",

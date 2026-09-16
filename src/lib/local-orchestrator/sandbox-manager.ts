@@ -31,8 +31,9 @@ async function waitForServerReady(port: number, timeoutMs = 45000): Promise<void
       const req = http.get(
         { hostname: "127.0.0.1", port, path: "/", timeout: 2000 },
         (res) => {
+          const healthy = (res.statusCode ?? 500) < 500;
           res.resume();
-          resolve(true);
+          resolve(healthy);
         }
       );
       req.on("error", () => resolve(false));
@@ -148,8 +149,9 @@ export const localSandboxManager = {
       console.log(`[local-sandbox] Dev server already running for ${projectId}`);
       const pending = serverReadyPromises.get(projectId);
       if (pending) {
-        await pending.catch(() => {});
+        await pending;
       }
+      await waitForServerReady(record.port);
       return `/api/preview/${projectId}`;
     }
     if (existing) {
@@ -172,7 +174,7 @@ export const localSandboxManager = {
     // so it won't try to bundle the entire Next.js CLI chain into our server routes.
     const nextBinSegments = ["node_modules", "next", "dist", "bin", "next"];
     const workspaceNext = path.join(dir, ...nextBinSegments);
-    const rootNext = path.join(process.cwd(), ...nextBinSegments);
+    const rootNext = path.join(/* turbopackIgnore: true */ process.cwd(), ...nextBinSegments);
     const nextBin = fs.existsSync(workspaceNext) ? workspaceNext : rootNext;
     if (!fs.existsSync(nextBin)) {
       throw new Error(`Next.js CLI not found at ${workspaceNext} or ${rootNext}`);
@@ -223,6 +225,7 @@ export const localSandboxManager = {
       devProc.on("close", (code) => {
         console.log(`[local-sandbox] Dev server for ${projectId} closed with code ${code}`);
         activeProcesses.delete(projectId);
+        serverReadyPromises.delete(projectId);
         localProjectStore.update(projectId, { serverStatus: "Stopped" });
       });
 
@@ -253,12 +256,18 @@ export const localSandboxManager = {
         });
       
       serverReadyPromises.set(projectId, readyPromise);
-      await readyPromise.catch(() => {});
+      await readyPromise;
 
       console.log(`[local-sandbox] Dev server startup finished for ${projectId} on port ${record.port}`);
       return `/api/preview/${projectId}`;
     } catch (err) {
       console.error(`[local-sandbox] Failed to start dev server for ${projectId}:`, err);
+      const failedProcess = activeProcesses.get(projectId);
+      if (failedProcess) {
+        killProcessTree(failedProcess);
+        activeProcesses.delete(projectId);
+      }
+      serverReadyPromises.delete(projectId);
       localProjectStore.update(projectId, { serverStatus: "Error" });
       throw err;
     }
