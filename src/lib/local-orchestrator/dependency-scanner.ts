@@ -17,9 +17,28 @@ const NODE_BUILTINS = new Set([
 
 /**
  * Packages that are always available because they ship with the workspace
- * template or are peer-provided by Next.js / React.
+ * Vite template or are peer-provided by React.
  */
 const ALWAYS_AVAILABLE = ALWAYS_AVAILABLE_PACKAGES;
+
+/**
+ * Extra packages the model may request. Keep this deliberately small and pin
+ * every version so rebuilding the same generated workspace stays reproducible.
+ * Unknown imports are left for the build/repair loop to reject instead of
+ * installing arbitrary packages selected by model output.
+ */
+const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>([
+  ["@hookform/resolvers", "5.2.2"],
+  ["@radix-ui/react-accordion", "1.2.12"],
+  ["@radix-ui/react-dialog", "1.1.15"],
+  ["@radix-ui/react-dropdown-menu", "2.1.16"],
+  ["@radix-ui/react-select", "2.2.6"],
+  ["@radix-ui/react-switch", "1.2.6"],
+  ["@radix-ui/react-tabs", "1.1.13"],
+  ["@radix-ui/react-tooltip", "1.2.8"],
+  ["react-router-dom", "7.9.4"],
+  ["zod", "4.1.12"],
+]);
 
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
 
@@ -66,6 +85,51 @@ export function detectThirdPartyImports(
   }
 
   return Array.from(found);
+}
+
+/**
+ * Persist model-requested packages in the generated workspace. The sandbox owns
+ * installation; mutating the app builder's package.json at runtime made Render
+ * deployments slow, non-reproducible, and still left the generated app missing
+ * the package it imported.
+ */
+export function ensureWorkspaceDependencies(
+  files: Array<{ path: string; content: string }>,
+  workspaceDir: string
+): { added: string[] } {
+  const requested = detectThirdPartyImports(files);
+  if (requested.length === 0) return { added: [] };
+
+  const packagePath = path.join(workspaceDir, "package.json");
+  let pkg: {
+    dependencies?: Record<string, string>;
+  } = {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("package.json must contain an object");
+    }
+    pkg = parsed as { dependencies?: Record<string, string> };
+  } catch (error) {
+    console.warn("[dependency-scanner] Repairing an unreadable generated package.json:", error);
+  }
+  const dependencies =
+    pkg.dependencies && typeof pkg.dependencies === "object" && !Array.isArray(pkg.dependencies)
+      ? { ...pkg.dependencies }
+      : {};
+  const added = requested.filter(
+    (name) => ALLOWED_GENERATED_DEPENDENCIES.has(name) && !dependencies[name]
+  );
+  for (const name of added) {
+    dependencies[name] = ALLOWED_GENERATED_DEPENDENCIES.get(name)!;
+  }
+
+  if (added.length > 0) {
+    pkg.dependencies = dependencies;
+    fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
+  }
+
+  return { added };
 }
 
 /**
