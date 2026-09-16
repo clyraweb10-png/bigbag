@@ -375,7 +375,7 @@ export default function WorkspacePage() {
    */
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [expectedMinutes, setExpectedMinutesState] = useState<number | null>(null);
-  const expectedMinutesKey = `totalum:run-expected:${projectId}`;
+  const expectedMinutesKey = `bigbag:run-expected:${projectId}`;
   const setExpectedMinutes = useCallback((value: number | null) => {
     setExpectedMinutesState(value);
     try {
@@ -540,7 +540,7 @@ export default function WorkspacePage() {
          */
         setPublishedHost(getPublishedHost(proj, projectId));
         // Surface the deploy result in the chat and pull the latest conversation.
-        const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.totalum-project.com`;
+        const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.local`;
         setMessages((prev) => [...prev, {
           author: "agent",
           message: `${"🚀 Your app is now live at"} https://${liveUrl}`,

@@ -40,7 +40,7 @@ export function PublishedModal({
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    /** Hostname without a scheme, e.g. `my-app.totalum-project.com`. */
+    /** Hostname without a scheme, e.g. `my-app.bigbag.app`. */
     host: string;
     onOpenDomain?: () => void;
     hasCustomDomain?: boolean;

@@ -16,7 +16,7 @@ Run it for yourself, or put an AI app builder inside your own product.
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#-license)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
-[**🚀 Quick Start**](#-quick-start) · [**🧩 Put it in your product**](#-put-it-inside-your-own-product) · [**☁️ Deploy**](#️-deploy-it) · [**📚 Docs**](https://www.totalum.app/docs) · [**⭐ Star this repo**](https://github.com/totalumlabs/ai-app-builder-open)
+[**🚀 Quick Start**](#-quick-start) · [**🧩 Put it in your product**](#-put-it-inside-your-own-product) · [**☁️ Deploy**](#️-deploy-it) · [**📚 Docs**](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [**⭐ Star this repo**](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding)
 
 <br/>
 
@@ -36,7 +36,7 @@ A user types what they want, for example *"a CRM with kanban boards and Stripe b
 
 Everything a builder like this normally needs is already handled:
 
-- **The hard part is done by the [Totalum API](https://www.totalum.app/docs/api/overview).** Totalum runs the AI agent that writes the code, and hosts every generated app with its database, file storage, SSL, CDN, deploys and custom domains. One API key gives you all of it.
+- **The hard part is done by the [BigBag AI Engine](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api/overview).** BigBag runs the AI agent that writes the code, and hosts every generated app with its database, file storage, SSL, CDN, deploys and custom domains. One API key gives you all of it.
 - **This repo is the product on top.** It is the user interface: the prompt box, the live preview, the code editor, the visual editor, the database browser, the logs, the version history and everything else you see in the demo.
 
 > **In one sentence:** clone this repo, paste one API key, and you have your own AI app builder running in minutes, for yourself or for your customers.
@@ -84,20 +84,23 @@ You can have it running locally in about three minutes.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/totalumlabs/ai-app-builder-open.git
+git clone https://github.com/codewithumesh00-sketch/bigbag-vibe-coding.git
 cd ai-app-builder-open
 npm install
 ```
 
-### 2. Add your API key
+### 2. Configure Environment
 
-Create a `.env` file (or `.env.local`) in the project root:
+Create a `.env.local` file in the project root:
 
 ```bash
-TOTALUM_VCAAS_API_KEY=your_key_here
-```
+ORCHESTRATOR_MODE=local
+SANDBOX_PROVIDER=local
 
-> 👉 No key yet? It is free to start. See [Getting your API key](#-getting-your-api-key) just below.
+# Provide your preferred model key:
+GLM_API_KEY=your_glm_api_key
+# or GROQ_API_KEY / OPENROUTER_API_KEY
+```
 
 ### 3. Run it
 
@@ -107,19 +110,7 @@ npm run dev
 
 Open **[http://localhost:3000](http://localhost:3000)**, type what you want to build, and watch it happen. 🎉
 
-**Requirements:** [Node.js](https://nodejs.org) 20+ and npm. Nothing else.
-
----
-
-## 🔑 Getting your API key
-
-The only thing this app needs is a Totalum API key. **The first 50 AI credits are free.**
-
-1. **Create an account** at **[totalum.app/api](https://www.totalum.app/api)**.
-2. During onboarding, choose **"Use the Totalum API"**.
-3. **Copy your API key** into your `.env` file as `TOTALUM_VCAAS_API_KEY`.
-
-That single key covers hosting, databases, AI, custom domains, GitHub sync and sandboxes. No other providers are required.
+**Requirements:** [Node.js](https://nodejs.org) 20+ and npm.
 
 ---
 
@@ -127,8 +118,12 @@ That single key covers hosting, databases, AI, custom domains, GitHub sync and s
 
 | Variable | Required | What it is |
 | --- | :---: | --- |
-| `TOTALUM_VCAAS_API_KEY` | ✅ **Yes** | Your Totalum API key. The only variable the app needs. It is read on the server only and never reaches the browser. |
-| `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. Used to allow-list your origin for CSP and CORS in production. Defaults to the same host. |
+| `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
+| `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
+| `GLM_API_KEY` | ⬜ Optional | Zhipu AI GLM key for code generation. |
+| `GROQ_API_KEY` | ⬜ Optional | Groq API key for fast inference. |
+| `OPENROUTER_API_KEY` | ⬜ Optional | OpenRouter API key for multi-model access. |
+| `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 To start from the example file:
 
@@ -157,9 +152,9 @@ This is a standard Next.js app with no platform lock-in. It runs wherever Next.j
 
 ### Vercel, one click
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/totalumlabs/ai-app-builder-open&env=TOTALUM_VCAAS_API_KEY)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/codewithumesh00-sketch/bigbag-vibe-coding)
 
-Import the repo, set `TOTALUM_VCAAS_API_KEY` under **Environment Variables**, and deploy.
+Import the repo, configure your model keys under **Environment Variables**, and deploy.
 
 ### Any Node.js host (VM, Docker, Railway, Render, Fly.io…)
 
@@ -168,7 +163,7 @@ npm run build
 npm start          # serves on $PORT (default 3000)
 ```
 
-Set `TOTALUM_VCAAS_API_KEY` in the host's environment and point your process manager or container at `npm start`.
+Set your model environment variables in the host's environment and point your process manager or container at `npm start`.
 
 ---
 
@@ -176,7 +171,7 @@ Set `TOTALUM_VCAAS_API_KEY` in the host's environment and point your process man
 
 This is not only a standalone tool. It is a drop-in AI app-builder layer for a SaaS you are launching or already run.
 
-- 🏢 **Multi-tenant by design.** Every generated app is an isolated Totalum project. Create one per user, team or customer.
+- 🏢 **Multi-tenant by design.** Every generated app is an isolated BigBag project. Create one per user, team or customer.
 - 🎨 **White-label.** It is your codebase and your UI. Rebrand it, restyle it, embed it in your dashboard.
 - 🔌 **One integration.** A single API key gives your users hosting, databases, AI, domains, GitHub and sandboxes. You do not stitch together five vendors.
 - 📈 **A new revenue stream.** Resell app building, hosting or premium AI credits on top of your product.
@@ -188,7 +183,7 @@ This is not only a standalone tool. It is a drop-in AI app-builder layer for a S
 ### Two ways to integrate
 
 - **Run it beside your product.** Deploy this app on a subdomain, put your login in front, rebrand it, and link or iframe to it. Hours, not weeks.
-- **Port the flow into your stack.** Keep the contract, not the UI: a server-side proxy that adds the `api-key` header, then `launch` → poll agent status → show the preview URL → follow-up prompts → deploy. One Totalum project per customer, ownership checked on every proxied call. The step-by-step version, with the exact files to mirror, is in [`AGENTS.md`](AGENTS.md#adding-an-ai-app-builder-to-an-existing-product-any-stack).
+- **Port the flow into your stack.** Keep the contract, not the UI: a server-side proxy that adds the `api-key` header, then `launch` → poll agent status → show the preview URL → follow-up prompts → deploy. One BigBag project per customer, ownership checked on every proxied call. The step-by-step version, with the exact files to mirror, is in [`AGENTS.md`](AGENTS.md#adding-an-ai-app-builder-to-an-existing-product-any-stack).
 
 ### Use it as a boilerplate: login + payments
 
@@ -200,7 +195,7 @@ Want to ship this as your own product? Add an auth provider such as **Supabase**
 
 Two different things live here, and it is worth keeping them apart:
 
-- **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the Totalum API. Nothing to install.
+- **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the BigBag AI Engine. Nothing to install.
 - **This builder UI itself** is deliberately lean. It ships no auth, payment or AI SDK, because it needs none: it is a thin client in front of one API key. When you turn it into your own product you add exactly the providers you want — the step-by-step is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe):
 
   - **Auth**: Supabase Auth, Better Auth, Clerk, Auth0 or your own.
@@ -238,7 +233,7 @@ The builder runs on **Next.js 16 / React 19 / TypeScript / Tailwind 4**. The onl
                              │  HTTPS + your secret API key
                              ▼
         ╔═══════════════════════════════════════════╗
-        ║   Totalum API                              ║
+        ║   BigBag AI Engine                              ║
         ║   AI agent · hosting · sandboxes           ║
         ║   database · deploys · domains · GitHub    ║
         ╚═══════════════════════════════════════════╝
@@ -246,8 +241,8 @@ The builder runs on **Next.js 16 / React 19 / TypeScript / Tailwind 4**. The onl
 
 Three things worth knowing:
 
-- **The browser never sees your API key.** Client code calls same-origin proxy routes under `/api/vcaas/*`. The server adds the key and forwards the request to Totalum.
-- **Every Totalum call goes through one file.** The client side is `src/lib/vcaas.ts`, with its types in `src/lib/vcaas-types.ts`. The part that holds the key is `src/lib/vcaas-server.ts`. If you want to see how an endpoint is really called, polled and error-handled, read there.
+- **The browser never sees your API key.** Client code calls same-origin proxy routes under `/api/vcaas/*`. The server adds the key and forwards the request to BigBag.
+- **Every BigBag call goes through one file.** The client side is `src/lib/vcaas.ts`, with its types in `src/lib/vcaas-types.ts`. The part that holds the key is `src/lib/vcaas-server.ts`. If you want to see how an endpoint is really called, polled and error-handled, read there.
 - **Credits belong to the operator.** Every action runs on the one API key in your environment. When that account runs out of credits the app says so once and links to the billing page. ⚠️ That message is for **you**, not your users. Remove it before you sell this to customers.
 
 ---
@@ -256,9 +251,9 @@ Three things worth knowing:
 
 Everything this app calls is documented in one Markdown file, written to be read by people and by AI coding assistants alike:
 
-### 👉 **[www.totalum.app/totalum-api.md](https://www.totalum.app/totalum-api.md)**
+### 👉 **[www.bigbag.app/bigbag-api.md](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/bigbag-api.md)**
 
-It covers the whole core API (account and credits, projects, the AI agent, deployments, server and logs, versions, secrets, custom domains, analytics) and links to the optional areas (GitHub, Figma, database, webhooks, files, project transfer, project groups). The browsable docs are at [www.totalum.app/docs](https://www.totalum.app/docs), with the [quickstart](https://www.totalum.app/docs/quickstart) and the [OpenAPI spec](https://www.totalum.app/openapi.json).
+It covers the whole core API (account and credits, projects, the AI agent, deployments, server and logs, versions, secrets, custom domains, analytics) and links to the optional areas (GitHub, Figma, database, webhooks, files, project transfer, project groups). The browsable docs are at [www.bigbag.app/docs](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding), with the [quickstart](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/quickstart) and the [OpenAPI spec](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/openapi.json).
 
 Working on this repo with an AI agent? Start from [`AGENTS.md`](AGENTS.md). It is the short, agent-oriented map of the project: commands, architecture, where each feature lives, the rules that are not obvious from the code, and how to take the next steps.
 
@@ -272,7 +267,7 @@ src/
 │  ├─ page.tsx                 # Dashboard: prompt box, your projects, import/duplicate
 │  ├─ project/[projectId]/     # The workspace (chat, preview, code, database, …)
 │  └─ api/
-│     ├─ vcaas/[...path]/      # Server proxy to the Totalum API
+│     ├─ vcaas/[...path]/      # Server proxy to the BigBag AI Engine
 │     ├─ preview/[projectId]/  # Same-origin proxy of a project, needed by the visual editor
 │     ├─ visual-edit/…/apply   # Turns visual changes into real source edits
 │     └─ config/               # Reports whether the API key is configured
@@ -281,7 +276,7 @@ src/
 │     └─ visual-editor/        # Inspector panel, changes bar, the editor's own hook
 ├─ i18n/                       # One English dictionary + `useT()`
 ├─ lib/
-│  ├─ vcaas.ts                 # 🧠 The Totalum API client (browser side)
+│  ├─ vcaas.ts                 # 🧠 The BigBag AI Engine client (browser side)
 │  ├─ vcaas-server.ts          # The half that holds the API key, server only
 │  ├─ vcaas-types.ts           # Shared API types
 │  └─ visual-edit*.ts          # Matching a clicked element back to its source
@@ -296,13 +291,13 @@ AGENTS.md                      # The map for AI coding agents working on this re
 <details>
 <summary><b>Is it really free?</b></summary>
 
-The code is free and open source. Running it needs a Totalum API key, which is free to start (the first 50 AI credits are included). You pay only as usage grows. See [pricing](https://www.totalum.app/api#pricing).
+The code is free and open source. Running it needs a BigBag AI Engine key, which is free to start (the first 50 AI credits are included). You pay only as usage grows. See [pricing](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api#pricing).
 </details>
 
 <details>
 <summary><b>Do I need to set up a database, hosting or an AI provider?</b></summary>
 
-No. The single Totalum API key provides hosting, databases, AI, domains, GitHub and sandboxes. You can still add your own providers such as Supabase or Stripe if you want them.
+No. The single BigBag AI Engine key provides hosting, databases, AI, domains, GitHub and sandboxes. You can still add your own providers such as Supabase or Stripe if you want them.
 </details>
 
 <details>
@@ -353,7 +348,7 @@ Contributions are welcome, whether a bug fix, a new panel, docs or a feature ide
 2. Read [`AGENTS.md`](AGENTS.md) for the layout and the rules, make your changes, and run `npm run build` to check them.
 3. Open a pull request describing what you changed and why.
 
-Found a bug or have an idea? [Open an issue](https://github.com/totalumlabs/ai-app-builder-open/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/issues).
 
 ---
 
@@ -369,6 +364,6 @@ Released under the **MIT License**. Free for personal and commercial use. See [`
 
 **Open-source AI app builder** · self-hosted **v0 / Lovable / Bolt / Replit alternative** · prompt-to-app · full-stack Next.js · multi-tenant · embeddable AI app builder for your SaaS.
 
-Built with ❤️ on the [Totalum API](https://www.totalum.app/api) · [Docs](https://www.totalum.app/docs) · [Get your free API key](https://www.totalum.app/api)
+Built with ❤️ on the [BigBag AI Engine](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api) · [Docs](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [Get your free API key](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api)
 
 </div>

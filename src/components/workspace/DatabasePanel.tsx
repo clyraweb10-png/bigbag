@@ -128,8 +128,8 @@ import { cn } from "@/lib/utils";
 type View = "data" | "schema";
 
 /** Per-browser, not per-account — the same trade the projects view/sort make. */
-const PAGE_SIZE_KEY = "totalum:database:page-size";
-const TABLE_SORT_KEY = "totalum:database:table-sort";
+const PAGE_SIZE_KEY = "bigbag:database:page-size";
+const TABLE_SORT_KEY = "bigbag:database:table-sort";
 
 /**
  * A stand-in `DbProperty` for a column Totalum manages and the schema does not

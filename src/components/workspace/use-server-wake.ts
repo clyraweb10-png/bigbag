@@ -63,7 +63,7 @@ export const SERVER_NOT_READY = "SERVER_NOT_READY";
  * ⚠️ IT FIRES ON EVERY REFUSAL, INCLUDING THE SECOND AND THIRD. Pressing the button
  * again while the server is still coming up is exactly when the explanation is needed.
  */
-export const SERVER_WAKE_BLOCKED_EVENT = "totalum:server-wake-blocked";
+export const SERVER_WAKE_BLOCKED_EVENT = "bigbag:server-wake-blocked";
 
 /** How often we ask the project whether the server is back. */
 const POLL_MS = 5_000;
@@ -98,7 +98,7 @@ export const WAKE_ESTIMATE_MS = 4 * 60_000;
  * `TIMEOUT_MS` on restore and discarded when it is too old to be real. Same rule as
  * `resolveRunStart` in `agent-progress.ts`.
  */
-const wakeKey = (projectId: string) => `totalum:server-wake:${projectId}`;
+const wakeKey = (projectId: string) => `bigbag:server-wake:${projectId}`;
 
 function readWakeStart(projectId: string): number | null {
     try {

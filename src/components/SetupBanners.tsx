@@ -2,66 +2,48 @@
 
 import { KeyRound, Server, Database, Sparkles, Globe, Github, Box, ArrowRight } from "lucide-react";
 
-// Shown on the dashboard only when the Totalum VCaaS API key is missing.
-// 1) a high-contrast setup card telling the user how to add their key, and
-// 2) a compact, visual pitch for what that single key unlocks.
+// Shown on the dashboard when no LLM API key or orchestrator is configured.
 export function SetupBanners() {
   const FEATURES = [
-    { icon: Server, label: "Hosting" },
-    { icon: Database, label: "Databases" },
-    { icon: Sparkles, label: "AI integration" },
-    { icon: Globe, label: "Custom domains" },
-    { icon: Github, label: "GitHub sync" },
-    { icon: Box, label: "Sandboxes" },
+    { icon: Server, label: "Self-hosted Dev Server" },
+    { icon: Database, label: "Built-in Data Storage" },
+    { icon: Sparkles, label: "Multi-Model AI (GLM, Groq, OpenRouter)" },
+    { icon: Globe, label: "Custom Domains" },
+    { icon: Github, label: "GitHub Integration" },
+    { icon: Box, label: "Sandboxes & Live Preview" },
   ];
 
   return (
     <div className="space-y-4 mt-10">
-      {/* ── Setup: add your key (high-contrast, unmissable) ── */}
-      <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400 bg-white shadow-lg shadow-amber-500/10">
-        <div className="absolute inset-y-0 left-0 w-1.5 bg-amber-400" />
+      {/* ── Setup: configure AI providers ── */}
+      <div className="relative overflow-hidden rounded-2xl border-2 border-emerald-500/40 bg-card shadow-lg shadow-emerald-500/5">
+        <div className="absolute inset-y-0 left-0 w-1.5 bg-emerald-500" />
         <div className="flex items-start gap-4 p-5 sm:p-6 pl-6 sm:pl-7">
-          <div className="shrink-0 w-11 h-11 rounded-xl bg-amber-400 flex items-center justify-center shadow-sm">
+          <div className="shrink-0 w-11 h-11 rounded-xl bg-emerald-500 flex items-center justify-center shadow-sm">
             <KeyRound className="w-5 h-5 text-white" strokeWidth={2.5} />
           </div>
           <div className="flex-1 min-w-0">
-            <span className="inline-flex items-center text-[11px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">
-              Action required
+            <span className="inline-flex items-center text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60 rounded-full px-2 py-0.5">
+              Configuration required
             </span>
-            <h2 className="text-lg font-bold text-gray-900 mt-2">Add your Totalum API key to get started</h2>
-            <p className="text-sm text-gray-700 mt-1.5">
+            <h2 className="text-lg font-bold text-foreground mt-2">Configure BigBag AI App Builder</h2>
+            <p className="text-sm text-muted-foreground mt-1.5">
               Create a{" "}
-              <code className="font-mono text-[13px] font-semibold bg-gray-100 text-gray-900 px-1.5 py-0.5 rounded">.env</code>{" "}
-              file in the project root and add:
+              <code className="font-mono text-[13px] font-semibold bg-muted text-foreground px-1.5 py-0.5 rounded">.env.local</code>{" "}
+              file in the project root and provide your preferred LLM provider:
             </p>
-            <div className="mt-2.5 rounded-lg bg-gray-950 font-mono text-xs px-3.5 py-2.5 overflow-x-auto ring-1 ring-white/10">
-              <span className="text-amber-300">TOTALUM_VCAAS_API_KEY</span>
-              <span className="text-gray-400">=</span>
-              <span className="text-gray-500">your_key_here</span>
+            <div className="mt-2.5 rounded-lg bg-gray-950 text-white font-mono text-xs p-3.5 space-y-1 overflow-x-auto ring-1 ring-white/10">
+              <div><span className="text-emerald-400">ORCHESTRATOR_MODE</span>=<span className="text-gray-400">local</span></div>
+              <div><span className="text-emerald-400">GLM_API_KEY</span>=<span className="text-gray-400">your_glm_key</span> <span className="text-gray-500"># or GROQ_API_KEY / OPENROUTER_API_KEY</span></div>
             </div>
-            <p className="text-[13px] text-gray-600 mt-3 leading-relaxed">
-              <span className="font-semibold text-gray-800">Get your key:</span> create an account on Totalum → during
-              onboarding pick <span className="font-semibold text-gray-800">“Use the Totalum API”</span> → copy your key.
+            <p className="text-[13px] text-muted-foreground mt-3 leading-relaxed">
+              BigBag runs self-hosted with support for multiple AI models, automatic dependency scanning, and sandbox live previews.
             </p>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mt-3.5">
-              <a
-                href="https://www.totalum.app"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 px-4 py-2 rounded-lg shadow-sm transition-colors"
-              >
-                Create account <ArrowRight className="w-4 h-4" />
-              </a>
-              <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-emerald-700">
-                <Sparkles className="w-3.5 h-3.5" />
-                First 50 AI credits free
-              </span>
-            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Value: one key, everything included (visual, minimal text, no purple) ── */}
+      {/* ── Value pitch ── */}
       <div
         className="rounded-2xl p-5 sm:p-6 text-white"
         style={{ background: "linear-gradient(135deg,#0f172a 0%,#0f3f39 100%)" }}
@@ -71,8 +53,8 @@ export function SetupBanners() {
             <Sparkles className="w-5 h-5 text-emerald-300" />
           </div>
           <div>
-            <h2 className="text-base font-bold leading-tight">One key. Everything included.</h2>
-            <p className="text-[13px] text-white/60">No other providers needed.</p>
+            <h2 className="text-base font-bold leading-tight">Everything included.</h2>
+            <p className="text-[13px] text-white/60">Self-hosted, open source, and multi-model ready.</p>
           </div>
         </div>
 
@@ -87,15 +69,6 @@ export function SetupBanners() {
             </div>
           ))}
         </div>
-
-        <a
-          href="https://www.totalum.app/docs"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 mt-4 text-sm font-semibold text-emerald-300 hover:text-emerald-200 transition-colors"
-        >
-          See more at totalum.app/docs <ArrowRight className="w-4 h-4" />
-        </a>
       </div>
     </div>
   );

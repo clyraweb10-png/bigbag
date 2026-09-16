@@ -382,7 +382,7 @@ export function resolveRunStart({ fromStream, persisted, now }: ResolveRunStartI
 
 /** Per project, per browser. The key is namespaced like every other one here. */
 export function runStartKey(projectId: string): string {
-    return `totalum:run-start:${projectId}`;
+    return `bigbag:run-start:${projectId}`;
 }
 
 export function readRunStart(projectId: string): number | null {

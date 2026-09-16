@@ -11,8 +11,8 @@
 
 export const en = {
   brand: {
-    name: "Totalum",
-    product: "Totalum Platform",
+    name: "BigBag",
+    product: "BigBag AI App Builder",
     tagline: "Describe your app. Watch it get built.",
   },
 
@@ -144,7 +144,7 @@ export const en = {
      */
     freeCredits: {
       title: "Get free credits",
-      description: "Post about Totalum, or invite someone. Both pay in credits.",
+      description: "Post about BigBag, or invite someone. Both pay in credits.",
       openPage: "Open the full page",
     },
 
@@ -204,7 +204,7 @@ export const en = {
     unread: "{count} unread",
     bookCall: "Book a call",
     email: "Email us",
-    emailSubject: "I need help with the Totalum API",
+    emailSubject: "I need help with the BigBag AI API",
     copyEmail: "Copy the address",
   },
 
@@ -362,7 +362,7 @@ export const en = {
        */
       shareHeading: "Earn up to {credits} free credits",
       shareBody:
-        "Post about your experience with Totalum on X, LinkedIn or Reddit, send us the link and we'll review it.",
+        "Post about your experience with BigBag on X, LinkedIn or Reddit, send us the link and we'll review it.",
       shareAction: "Share a post",
       seeAllPlans: "Compare every plan",
       footnote: "Change or cancel whenever you like.",
@@ -401,7 +401,7 @@ export const en = {
       customDomain: {
         title: "Use your own domain",
         description:
-          "Serve your app at your own web address instead of a totalum-project.com subdomain, with HTTPS set up automatically.",
+          "Serve your app at your own web address instead of a bigbag.app subdomain, with HTTPS set up automatically.",
       },
       visualEdit: {
         title: "Edit your app visually",
@@ -485,9 +485,9 @@ export const en = {
     releaseFailed: "We couldn't turn it off. Please try again.",
     confirmTitle: "Turn {feature} off for {project}?",
     confirmGithub:
-      "This disconnects the repository from this project. Your code stays on GitHub and in Totalum; they simply stop syncing. The slot becomes available for another project.",
+      "This disconnects the repository from this project. Your code stays on GitHub and in BigBag; they simply stop syncing. The slot becomes available for another project.",
     confirmCustomDomain:
-      "This removes the custom domain from this project. It will go back to being served on its totalum-project.com address, and the slot becomes available for another project.",
+      "This removes the custom domain from this project. It will go back to being served on its bigbag.app address, and the slot becomes available for another project.",
     confirmAction: "Turn it off",
     error: "We couldn't load your feature usage.",
     upgradeCta: "See plans",
@@ -670,7 +670,7 @@ export const en = {
          * published project's frontend and backend ARE a Cloudflare Worker and are
          * deployed network-wide by design. The project DATABASE is not on
          * Cloudflare and is not replicated — it is a standalone MongoDB managed by
-         * Totalum in the EU. Merging these two sentences would publish a
+         * BigBag in the EU. Merging these two sentences would publish a
          * multi-region claim that is not true and would contradict the EU-data
          * promise on the marketing site.
          */
@@ -678,7 +678,7 @@ export const en = {
         network:
           "Your project's frontend and backend are deployed across Cloudflare's global network — 300+ cities in 100+ countries at once. No regions to choose, no servers to size, nothing to scale by hand: each request is served near whoever made it, under 50 ms for 95% of Internet users.",
         database:
-          "Your project's database is fully managed by Totalum: automatic hourly backups, data stored in the European Union, and no row limit or capacity to provision — it grows with your app.",
+          "Your project's database is fully managed by BigBag: automatic hourly backups, data stored in the European Union, and no row limit or capacity to provision — it grows with your app.",
       },
 
       features: {
@@ -702,7 +702,7 @@ export const en = {
         sourceDownload: "Download your source code",
         github: "Sync with GitHub",
         customDomain: "Use your own domain",
-        noBadge: "No \"Made with Totalum\" badge",
+        noBadge: "No \"Made with BigBag\" badge",
         priority: "Priority builds",
         support: "Direct support",
       },
@@ -739,9 +739,9 @@ export const en = {
       losesHeading: "What you lose when the plan ends",
       losesHeadingDated: "What you lose on {date}",
       lossGithub: "GitHub is disconnected from every project",
-      lossGithubDetail: "Your repositories are untouched, but the connection is removed and pushing from Totalum stops.",
+      lossGithubDetail: "Your repositories are untouched, but the connection is removed and pushing from BigBag stops.",
       lossDomain: "Every custom domain is removed",
-      lossDomainDetail: "Your projects fall back to their totalum-project.com address. Visitors to the custom domain stop reaching them.",
+      lossDomainDetail: "Your projects fall back to their bigbag.app address. Visitors to the custom domain stop reaching them.",
       lossVisualEditor: "The visual editor is switched off",
       lossVisualEditorDetail: "Editing a page by clicking on it needs a paid plan. You can still change anything by asking the agent.",
       lossCredits: "Your {credits} monthly credits stop",
@@ -790,7 +790,7 @@ export const en = {
         "Your repositories stay exactly as they are on GitHub. They just stop syncing, and you'd need to reconnect them to resume.",
       consequenceDomain: "Every custom domain is removed.",
       consequenceDomainDetail:
-        "Your projects go back to their totalum-project.com address. Your domain name stays yours — you'd just have to point it again.",
+        "Your projects go back to their bigbag.app address. Your domain name stays yours — you'd just have to point it again.",
       consequenceCredits: "Your monthly plan credits stop.",
       consequenceCreditsDetail:
         "Credits you've bought separately stay in your account and never expire.",
@@ -867,7 +867,7 @@ export const en = {
         auto_recharge: "Auto-recharge",
         plan_grant: "Plan credits",
         plan_renewal: "Monthly renewal",
-        manual: "Added by Totalum",
+        manual: "Added by BigBag",
         referral: "Referral bonus",
         signup: "Welcome credits",
         unknown: "Credits added",
@@ -1043,7 +1043,7 @@ export const en = {
       useThis: "Use in snippets",
       usedInSnippets: "In snippets",
       managed: "Managed",
-      managedHint: "This key is managed by Totalum and can't be deleted.",
+      managedHint: "This key is managed by BigBag and can't be deleted.",
       scope: "Projects",
       scopeTitle: "Projects for {name}",
       scopeBody: "Choose which projects this key may touch.",
@@ -1143,8 +1143,8 @@ export const en = {
       heading: "Never call this API from a browser",
       body:
         "An API key is a password to your whole account. It must only ever exist on your own server.",
-      right: "Your users → your frontend → your backend → Totalum",
-      wrong: "Your users → your frontend → Totalum",
+      right: "Your users → your frontend → your backend → BigBag",
+      wrong: "Your users → your frontend → BigBag",
       rightLabel: "Do this",
       wrongLabel: "Never this",
     },
@@ -1216,7 +1216,7 @@ export const en = {
       description: "Get a POST on your server when a long-running job finishes.",
       manageHeading: "Your webhooks",
       urlLabel: "Destination URL",
-      urlPlaceholder: "https://your-server.com/totalum-webhook",
+      urlPlaceholder: "https://your-server.com/bigbag-webhook",
       urlHint: "HTTPS only.",
       eventLabel: "Event",
       headersLabel: "Custom headers",
@@ -1303,7 +1303,7 @@ export const en = {
       showConversationTitle: "Show the conversation while it builds",
       showConversationBody:
         "A 10-minute silence reads as a hang. Stream realtimeConversation to your user.",
-      backendOnlyTitle: "Never call Totalum from the browser",
+      backendOnlyTitle: "Never call BigBag from the browser",
       backendOnlyBody: "The key lives on your server. Your frontend talks to your backend.",
       refreshPreviewTitle: "Re-read the preview URL, always",
       refreshPreviewBody:
@@ -1340,8 +1340,8 @@ export const en = {
       UNAUTHENTICATED: "Your session has expired. Sign in again to continue.",
       VALIDATION_ERROR: "Check the details and try again.",
       API_KEY_NOT_FOUND: "That API key no longer exists.",
-      KEY_NOT_DELETABLE: "This key is managed by Totalum and can't be deleted.",
-      KEY_IS_SYSTEM: "This key is managed by Totalum.",
+      KEY_NOT_DELETABLE: "This key is managed by BigBag and can't be deleted.",
+      KEY_IS_SYSTEM: "This key is managed by BigBag.",
       RATE_LIMITED: "Too many attempts. Wait a moment and try again.",
       BRIDGE_UNAVAILABLE: "We couldn't reach the account service. Try again in a moment.",
       UNKNOWN: "Something went wrong. Try again.",
@@ -1352,7 +1352,7 @@ export const en = {
   /**
    * ═══ THE "EMBED IT IN 4 STEPS" BLOCKS ════════════════════════════════════════
    *
-   * The same three sections the marketing site runs on totalum.app/whitelabel,
+   * The same three sections the marketing site runs on bigbag.app/whitelabel,
    * /api and /mcp — "Create it in only 4 steps", "It is just an HTTP API" and the
    * integration-help card — brought inside the product where the user already has
    * a key. The only deliberate difference: step 1 says COPY your API key, not
@@ -1373,7 +1373,7 @@ export const en = {
     promptHead: "Your prompt (example)",
     live: "LIVE",
     agentAny: "Any other",
-    httpDocsCta: "Explore all Totalum API docs",
+    httpDocsCta: "Explore all BigBag AI API docs",
     helpTitle: "Want a hand with the integration?",
     helpLead:
       "Tell us what you are building and we will tell you the shortest path to it — including the parts you should not build yourself.",
@@ -1381,15 +1381,15 @@ export const en = {
     helpCall: "Schedule a call",
     templateTitle: "Do not build the builder — start from ours",
     templateLead:
-      "An entire AI app builder, open source on GitHub: chat, live preview, hosting and deploys, already wired to the Totalum API. Clone it, paste your API key, put your brand on it — and it is your product.",
-    templateRepo: "totalumlabs/ai-app-builder-open",
+      "An entire AI app builder, open source on GitHub: chat, live preview, hosting and deploys, already wired to the BigBag AI API. Clone it, paste your API key, put your brand on it — and it is your product.",
+    templateRepo: "bigbaglabs/ai-app-builder-open",
     templateCta: "Use this prebuilt AI app builder",
     stacksMore: "…and anything else",
 
     whitelabel: {
       eyebrow: "Whitelabel",
       title: "Put an AI app builder inside your product in 5 minutes",
-      lead: "Your users describe what they need. Your product builds it, hosts it and ships it — under your brand, on your domain. All it takes is the Totalum API.",
+      lead: "Your users describe what they need. Your product builds it, hosts it and ships it — under your brand, on your domain. All it takes is the BigBag AI API.",
       stepsTitle: "Create it in only 4 steps",
       stepsLead:
         "You do not have to understand how the builder works. You only have to point your coding agent at the docs.",
@@ -1397,12 +1397,12 @@ export const en = {
       s1Body: "It is the only credential your product will ever need. Your key is in the card below.",
       s2Title: "Send these docs to your AI agent",
       s2Body:
-        "Add the key to your project, then give the whole Totalum API reference to the coding agent you already use.",
+        "Add the key to your project, then give the whole BigBag AI API reference to the coding agent you already use.",
       s3Title: "Tell your coding agent what to build",
       s3Body:
-        "Ask for an AI web app builder powered by the Totalum API, and say how it should fit your product.",
+        "Ask for an AI web app builder powered by the BigBag AI API, and say how it should fit your product.",
       s3Prompt:
-        "Using the attached Totalum API docs, add an AI app builder to our dashboard. Each project belongs to the logged-in workspace, and users can deploy from the chat.",
+        "Using the attached BigBag AI API docs, add an AI app builder to our dashboard. Each project belongs to the logged-in workspace, and users can deploy from the chat.",
       s4Title: "Ship it",
       s4Body:
         "Your agent wires it up and you are done — hosting, database, deploys and domains already handled.",
@@ -1421,11 +1421,11 @@ export const en = {
       s1Body: "Every request authenticates with it. Your key is in the card above.",
       s2Title: "Send these docs to your AI agent",
       s2Body:
-        "Give the whole Totalum API reference to Claude Code, Codex, Cursor or whichever agent you work in.",
+        "Give the whole BigBag AI API reference to Claude Code, Codex, Cursor or whichever agent you work in.",
       s3Title: "Tell it what to automate",
       s3Body: "Describe the projects you want created, changed or deployed, and let it write the calls.",
       s3Prompt:
-        "Using the attached Totalum API docs, write a script that creates a project from a prompt, waits for the agent to finish and returns the deployed URL.",
+        "Using the attached BigBag AI API docs, write a script that creates a project from a prompt, waits for the agent to finish and returns the deployed URL.",
       s4Title: "Run it",
       s4Body:
         "The first call returns a project; the second returns a live URL. Hosting, database and deploys are already handled.",
@@ -1437,7 +1437,7 @@ export const en = {
     mcp: {
       stepsTitle: "Build from your agent in 4 steps",
       stepsLead:
-        "MCP puts Totalum inside the assistant you already talk to. Four steps and it can create, edit and deploy real applications.",
+        "MCP puts BigBag inside the assistant you already talk to. Four steps and it can create, edit and deploy real applications.",
       s1Title: "Copy your API key",
       s1Body: "The MCP server authenticates with it. Your key is in the card above.",
       s2Title: "Add the MCP server",
@@ -1445,36 +1445,36 @@ export const en = {
         "One command in Claude Code, Codex, Cursor or any other MCP client — the exact snippet for yours is above.",
       s3Title: "Ask for what you need",
       s3Body:
-        "Talk to your agent the way you always do. It calls Totalum for the parts that need building, hosting or deploying.",
+        "Talk to your agent the way you always do. It calls BigBag for the parts that need building, hosting or deploying.",
       s3Prompt:
-        "Using the Totalum MCP, create 10 CRMs for my customers with a real database, and publish each one online.",
+        "Using the BigBag MCP, create 10 CRMs for my customers with a real database, and publish each one online.",
       s4Title: "Watch it ship",
       s4Body:
         "Projects appear in your dashboard as the agent works, already hosted, with a database and a live URL.",
       httpTitle: "It works in any MCP client",
       httpLead:
-        "MCP is an open protocol, so Totalum is not tied to one editor. Any client that speaks it gets the same tools — and the same HTTP API underneath if you would rather call it directly.",
+        "MCP is an open protocol, so BigBag is not tied to one editor. Any client that speaks it gets the same tools — and the same HTTP API underneath if you would rather call it directly.",
     },
   },
 
   /**
    * "Just one last question" — the post-signup modal that asks where the user
-   * discovered Totalum, shown only when the measured acquisition said nothing.
+   * discovered BigBag, shown only when the measured acquisition said nothing.
    * See `DiscoverySourceModal`.
    */
   discovery: {
     title: "Just one last question",
-    description: "Where did you discover Totalum? It helps us a lot — and it is optional.",
+    description: "Where did you discover BigBag? It helps us a lot — and it is optional.",
     // Shown instead of `description` when the answer is required: a brand-new
     // account whose signup measured as plain `direct`. Say WHY it is being asked.
     requiredDescription:
-      "Where did you discover Totalum? We could not tell how you found us, so please pick the option that fits best — it takes a second and it really helps us.",
+      "Where did you discover BigBag? We could not tell how you found us, so please pick the option that fits best — it takes a second and it really helps us.",
     saveError: "We could not save your answer. Please try again.",
     placeholder: "Choose an option",
     aiPlaceholder: "Which AI assistant?",
-    aiQuestion: "What did you search on the AI assistant to find Totalum?",
+    aiQuestion: "What did you search on the AI assistant to find BigBag?",
     aiQueryPlaceholder: "e.g. best no-code app builder",
-    googleQuestion: "What did you search on Google to find Totalum?",
+    googleQuestion: "What did you search on Google to find BigBag?",
     googlePlaceholder: "e.g. no-code app builder",
     skip: "Skip",
     submit: "Send",
@@ -1501,7 +1501,7 @@ export const en = {
     connectStep1Title: "Pick your API key",
     connectStep1Body:
       "The MCP server uses the same tlm_sk_ key as the REST API — there is no separate MCP key.",
-    connectStep2Title: "Add Totalum to your agent",
+    connectStep2Title: "Add BigBag to your agent",
     connectStep2Body: "Pick your agent and paste the config. That is the whole setup.",
     connectPickAgent: "Pick your agent",
     connectDocsLead: "Full client-by-client instructions live in the",
@@ -1510,13 +1510,13 @@ export const en = {
     copied: "Copied",
     needKey: {
       heading: "You'll need an API key first",
-      body: "MCP connects your editor to Totalum with a key. Create one and come back.",
+      body: "MCP connects your editor to BigBag with a key. Create one and come back.",
       action: "Create an API key",
     },
     what: {
       heading: "What is MCP?",
       body:
-        "MCP lets your AI editor talk to Totalum directly. Instead of switching to a browser, you ask Claude or Cursor to build, deploy and query your projects — and it does it through the same API you'd call yourself.",
+        "MCP lets your AI editor talk to BigBag directly. Instead of switching to a browser, you ask Claude or Cursor to build, deploy and query your projects — and it does it through the same API you'd call yourself.",
       buildTitle: "Build from your editor",
       buildBody: "Create projects and run the agent without leaving your terminal.",
       inspectTitle: "Query your data",
@@ -1570,7 +1570,7 @@ export const en = {
       config: "Secrets and domains",
       github: "GitHub",
       observability: "Usage and webhooks",
-      startHere: "Not sure where to start? Ask your agent to call whatCanTotalumDo.",
+      startHere: "Not sure where to start? Ask your agent to call whatCanBigBagDo.",
     },
     video: {
       heading: "See it in action",
@@ -1586,15 +1586,15 @@ export const en = {
     agents: {
       claudeCode: {
         location: "Run this in your terminal",
-        hint: "Or put it in .mcp.json at your project root to share it with your team. Use ${TOTALUM_API_KEY} instead of the key to read it from the environment.",
+        hint: "Or put it in .mcp.json at your project root to share it with your team. Use ${BIGBAG_API_KEY} instead of the key to read it from the environment.",
       },
       cursor: {
         location: "~/.cursor/mcp.json (or .cursor/mcp.json for one project)",
-        hint: "Already have MCP servers? Add just the \"totalum-vcaas\" entry inside your existing mcpServers object, then restart Cursor.",
+        hint: "Already have MCP servers? Add just the \"bigbag-vcaas\" entry inside your existing mcpServers object, then restart Cursor.",
       },
       windsurf: {
         location: "~/.codeium/windsurf/mcp_config.json",
-        hint: "Add the \"totalum-vcaas\" entry to your existing mcpServers object if you have one. Restart Windsurf completely — a reload isn't enough.",
+        hint: "Add the \"bigbag-vcaas\" entry to your existing mcpServers object if you have one. Restart Windsurf completely — a reload isn't enough.",
       },
       vscode: {
         location: ".vscode/mcp.json",
@@ -1602,12 +1602,12 @@ export const en = {
       },
       codex: {
         location: "Run this in your terminal, then add the header below",
-        hint: "The Codex CLI can't set custom headers, so add http_headers to ~/.codex/config.toml yourself. For an env var instead, use env_http_headers = { \"api-key\" = \"TOTALUM_API_KEY\" }.",
-        location2: "~/.codex/config.toml — under [mcp_servers.totalum-vcaas]",
+        hint: "The Codex CLI can't set custom headers, so add http_headers to ~/.codex/config.toml yourself. For an env var instead, use env_http_headers = { \"api-key\" = \"BIGBAG_API_KEY\" }.",
+        location2: "~/.codex/config.toml — under [mcp_servers.bigbag-vcaas]",
       },
       openclaw: {
         location: "Run this in any OpenClaw chat — it keeps your existing MCP servers",
-        hint: "Needs commands.mcp: true in your config. /mcp show verifies it, /mcp unset totalum-vcaas removes it. OpenClaw only speaks stdio, so mcp-remote bridges our HTTP server — which means Node has to be installed.",
+        hint: "Needs commands.mcp: true in your config. /mcp show verifies it, /mcp unset bigbag-vcaas removes it. OpenClaw only speaks stdio, so mcp-remote bridges our HTTP server — which means Node has to be installed.",
         location2: "Or add it to ~/.openclaw/openclaw.json under mcp.servers",
       },
       generic: {
@@ -1645,7 +1645,7 @@ export const en = {
     /**
      * ═══ THE LEGACY `/mcp` PAGE, WORD FOR WORD ═══════════════════════════════
      *
-     * ⚠️ EVERY STRING BELOW IS COPIED FROM `totalum-account-frontend`'s
+     * ⚠️ EVERY STRING BELOW IS COPIED FROM `bigbag-account-frontend`'s
      * `assets/i18n/en.json` → `mcp.*`, AND THE KEY NAMES ARE THE LEGACY ONES.
      * The page is a content clone of the Angular one, so keeping the key names
      * identical is what makes "did the wording drift?" a one-line diff against
@@ -1661,7 +1661,7 @@ export const en = {
      * English to Spanish users and that was a bug, not a decision.
      */
     title: "Connect to AI Agents",
-    subtitle: "Plug Totalum into any MCP-compatible AI coding agent",
+    subtitle: "Plug BigBag into any MCP-compatible AI coding agent",
     lockedTitle: "Buy credits to start",
     lockedDesc:
       "MCP access is enabled once you have an active credit balance. Purchase credits to unlock it.",
@@ -1676,12 +1676,12 @@ export const en = {
     valueHeadline: "Your AI agent, shipping {strong}",
     valueHeadlineStrong: "full web apps",
     valueLead:
-      "Connect Claude Code — or any AI agent — to Totalum MCP and it builds and edits complete projects on its own. No servers, databases or external services to set up.",
+      "Connect Claude Code — or any AI agent — to BigBag MCP and it builds and edits complete projects on its own. No servers, databases or external services to set up.",
     valueParallel: "Build many in parallel",
     valueParallelDesc: "From one app to hundreds — worked on at the same time.",
     valueNoDeps: "Zero external dependencies",
     valueNoDepsDesc:
-      "Everything is built in and managed by Totalum — nothing else to set up.",
+      "Everything is built in and managed by BigBag — nothing else to set up.",
     includesTitle: "Every project includes, out of the box",
     incFrontend: "Frontend",
     incBackend: "Backend",
@@ -1692,9 +1692,9 @@ export const en = {
     seeMcpDocs: "See the full MCP docs",
     videoTitle: "See it in action",
     videoSubtitle:
-      "An example of what you can do with your favourite AI agent (like Claude Code) + Totalum MCP",
+      "An example of what you can do with your favourite AI agent (like Claude Code) + BigBag MCP",
     videoDesc:
-      "In this example we use Claude Code + Totalum MCP to build and publish online 10 full-stack websites in parallel, one per description in an Excel file. It's just an example — you can build whatever you want.",
+      "In this example we use Claude Code + BigBag MCP to build and publish online 10 full-stack websites in parallel, one per description in an Excel file. It's just an example — you can build whatever you want.",
     setupTitle: "Set up your agent",
     setupSubtitle: "OpenClaw, Claude Code, Codex, Cursor, Windsurf, Claude Desktop & more",
     copyConfig: "Copy config",
@@ -1707,28 +1707,28 @@ export const en = {
     // ── Per-agent snippet captions and caveats ────────────────────────────
     openclawLocation: "Using the /mcp slash command (safe — preserves existing MCPs)",
     openclawHint:
-      "Run this in any OpenClaw chat. Requires commands.mcp: true in your config. Use /mcp show to verify and /mcp unset totalum-vcaas to remove.",
+      "Run this in any OpenClaw chat. Requires commands.mcp: true in your config. Use /mcp show to verify and /mcp unset bigbag-vcaas to remove.",
     openclawLocation2: "Or add to ~/.openclaw/openclaw.json under mcp.servers",
     openclawHint2:
-      "OpenClaw only supports stdio transport. The mcp-remote package bridges the Totalum HTTP server as a local process. Restart the gateway after editing the config file. Requires Node.js.",
+      "OpenClaw only supports stdio transport. The mcp-remote package bridges the BigBag HTTP server as a local process. Restart the gateway after editing the config file. Requires Node.js.",
     claudeCodeLocation: "Run in your terminal",
     claudeCodeHint:
-      "Or add it to .mcp.json in your project root for team sharing. Use ${TOTALUM_API_KEY} instead of the key for env variable support.",
+      "Or add it to .mcp.json in your project root for team sharing. Use ${BIGBAG_API_KEY} instead of the key for env variable support.",
     codexLocation: "Run in your terminal (safe — preserves existing MCPs)",
     codexHint:
       "Then add the api-key header to ~/.codex/config.toml (the CLI does not support custom headers):",
-    codexLocation2: "~/.codex/config.toml — add under [mcp_servers.totalum-vcaas]",
+    codexLocation2: "~/.codex/config.toml — add under [mcp_servers.bigbag-vcaas]",
     codexHint2:
-      "For env variable support, replace http_headers with env_http_headers = { \"api-key\" = \"TOTALUM_API_KEY\" } and set export TOTALUM_API_KEY=\"your_key\".",
+      "For env variable support, replace http_headers with env_http_headers = { \"api-key\" = \"BIGBAG_API_KEY\" } and set export BIGBAG_API_KEY=\"your_key\".",
     cursorLocation: "Add to ~/.cursor/mcp.json (or .cursor/mcp.json for project-level)",
     cursorHint:
-      "If you already have other MCP servers, just add the \"totalum-vcaas\" entry inside your existing mcpServers object. Restart Cursor after saving.",
+      "If you already have other MCP servers, just add the \"bigbag-vcaas\" entry inside your existing mcpServers object. Restart Cursor after saving.",
     windsurfLocation: "Add to ~/.codeium/windsurf/mcp_config.json",
     windsurfHint:
-      "If you already have other MCP servers, just add the \"totalum-vcaas\" entry inside your existing mcpServers object. Restart Windsurf completely after saving.",
+      "If you already have other MCP servers, just add the \"bigbag-vcaas\" entry inside your existing mcpServers object. Restart Windsurf completely after saving.",
     claudeDesktopLocation: "Add to claude_desktop_config.json",
     claudeDesktopHint:
-      "If you already have other MCP servers, just add the \"totalum-vcaas\" entry inside your existing mcpServers object. Claude Desktop requires mcp-remote for HTTP servers. File location: macOS ~/Library/Application Support/Claude/claude_desktop_config.json, Linux ~/.config/Claude/claude_desktop_config.json, Windows %APPDATA%\\Claude\\claude_desktop_config.json. Restart Claude Desktop after saving.",
+      "If you already have other MCP servers, just add the \"bigbag-vcaas\" entry inside your existing mcpServers object. Claude Desktop requires mcp-remote for HTTP servers. File location: macOS ~/Library/Application Support/Claude/claude_desktop_config.json, Linux ~/.config/Claude/claude_desktop_config.json, Windows %APPDATA%\\Claude\\claude_desktop_config.json. Restart Claude Desktop after saving.",
     genericLocation: "Any MCP-compatible agent",
     genericHint:
       "Use these values to configure any MCP-compatible agent. The server uses Streamable HTTP transport (not stdio). The api-key header must be sent with every request. Some agents use serverUrl instead of url — check your agent's documentation.",
@@ -1739,7 +1739,7 @@ export const en = {
    * ═══ THE LEGACY `/vcaas` PAGE, WORD FOR WORD ═════════════════════════════
    *
    * ⚠️ THIS BLOCK BACKS `/api`, NOT `api.*`. The strings are copied from
-   * `totalum-account-frontend`'s `assets/i18n/en.json` → `vcaas.*`, with the
+   * `bigbag-account-frontend`'s `assets/i18n/en.json` → `vcaas.*`, with the
    * legacy key names kept so the two dictionaries diff line for line.
    *
    * `api.*` above is the rewritten reference-manual copy the clone replaced. It
@@ -1852,7 +1852,7 @@ export const en = {
     openSourceBuilderDesc: "A complete, open-source one you can read, fork and run",
     openSourceBuilderCta: "Browse the repository on GitHub",
     openSourceBuilderNote:
-      "It is built on the Totalum API as its only dependency — everything it does, you can do with the endpoints above.",
+      "It is built on the BigBag AI API as its only dependency — everything it does, you can do with the endpoints above.",
     downloadMarkdown: "Download .md",
     downloadDocsSub: "Complete API reference as a .md file",
     copyForAi: "Copy docs for AI agent",
@@ -1990,7 +1990,7 @@ export const en = {
     hero: {
       title: "Earn up to {credits} credits for every person you invite",
       subtitle:
-        "Share your link. When someone joins Totalum through it and verifies their email, you each get {registration} credits — and {payment} more each when they make their first payment.",
+        "Share your link. When someone joins BigBag through it and verifies their email, you each get {registration} credits — and {payment} more each when they make their first payment.",
     },
 
     how: {
@@ -1998,7 +1998,7 @@ export const en = {
       description: "Two moments, and both of you are paid at each one.",
       step1Title: "They join and verify",
       step1Body:
-        "Someone opens your link, creates a Totalum account and confirms their email address.",
+        "Someone opens your link, creates a BigBag account and confirms their email address.",
       step2Title: "They make their first payment",
       step2Body:
         "Their first plan subscription or credit purchase — whichever comes first.",
@@ -2006,7 +2006,7 @@ export const en = {
     },
 
     rules: {
-      newAccounts: "It has to be a new Totalum account — an email that already has one doesn't count.",
+      newAccounts: "It has to be a new BigBag account — an email that already has one doesn't count.",
       verified: "Credits arrive once their email is verified, not when they first sign up.",
       noSelf: "You can't refer yourself.",
       oneTime: "Each reward is paid once per person, and lands in your purchased credits, which never expire.",
@@ -2026,8 +2026,8 @@ export const en = {
 
     share: {
       linkLabel: "Your referral link",
-      message: "I'm building apps with Totalum — describe what you want and it gets built. Sign up with my link and we both get free credits:",
-      emailSubject: "Try Totalum with me",
+      message: "I'm building apps with BigBag — describe what you want and it gets built. Sign up with my link and we both get free credits:",
+      emailSubject: "Try BigBag with me",
       x: "X",
       whatsapp: "WhatsApp",
       linkedin: "LinkedIn",
@@ -2051,11 +2051,11 @@ export const en = {
       menu: "Get free credits",
       widget: "Get free credits — invite a friend",
       modalHeading: "Or earn them for free",
-      modalBody: "Invite someone to Totalum and you both earn up to {credits} credits.",
+      modalBody: "Invite someone to BigBag and you both earn up to {credits} credits.",
       modalAction: "Get my link",
       projectsTitle: "Give {credits} credits, get {credits} credits",
       projectsBody:
-        "Invite someone to Totalum. When they join and verify, you each get {registration} credits — and more when they first pay.",
+        "Invite someone to BigBag. When they join and verify, you each get {registration} credits — and more when they first pay.",
       projectsAction: "Get my link",
     },
 
@@ -2098,8 +2098,8 @@ export const en = {
      * holds on two of the three networks. The per-network figures are shown beside
      * the network names, where the choice is actually made.
      */
-    title: "Post about Totalum, ask for up to {credits} credits",
-    shortTitle: "Share Totalum for up to {credits} credits",
+    title: "Post about BigBag, ask for up to {credits} credits",
+    shortTitle: "Share BigBag for up to {credits} credits",
     subtitle:
       "Tell people what you're building on LinkedIn, X or Reddit and send us the link. We read every one and reply in your support chat.",
     /** Beside a network's name, wherever one is offered. */
@@ -2109,7 +2109,7 @@ export const en = {
     how: {
       title: "How it works",
       description: "Three steps. The last one is us, not you.",
-      step1Title: "Post about Totalum",
+      step1Title: "Post about BigBag",
       /**
        * ⚠️ THE SPLIT IS NAMED HERE, IN WORDS, and not left to the badges alone.
        * Someone deciding where to post should not have to infer the rate from a
@@ -2166,7 +2166,7 @@ export const en = {
      *
      * ⚠️ THE FORBIDDEN TELLS, all pinned by `social-share.test.ts`: the em dash
      * (the single most recognisable "written by an AI" mark in a social post), a
-     * link to any Totalum profile, and anything that reads as a headline rather
+     * link to any BigBag profile, and anything that reads as a headline rather
      * than a sentence someone typed.
      *
      * ⚠️ EVERY DRAFT ENDS ON THE LINK, and hands off to it with a colon or a full
@@ -2204,85 +2204,85 @@ export const en = {
         "If you can, attach a screenshot or a short screen recording of what you built. A post that shows the actual app gets far more attention than one that only describes it, and it makes your request obvious to approve.",
       drafts: {
         d1:
-          "I spent two years telling people I was building an internal tool. I was not building anything, I was avoiding the setup. Last week I described it in one paragraph and it was live by lunchtime. Real database, real logins, a URL I could send round the office. The prompt box I typed into is the first thing on the homepage: https://www.totalum.app",
+          "I spent two years telling people I was building an internal tool. I was not building anything, I was avoiding the setup. Last week I described it in one paragraph and it was live by lunchtime. Real database, real logins, a URL I could send round the office. The prompt box I typed into is the first thing on the homepage: https://bigbag.app",
         d2:
-          "Most AI app builders hand you a beautiful screen with nothing behind it. I went in trying to make this one fail. I asked for real logins, a real database and a page a client could use without me explaining it. It gave me all three, plus a working URL, in one afternoon. Put your own idea in the box and judge it in a minute: https://www.totalum.app",
+          "Most AI app builders hand you a beautiful screen with nothing behind it. I went in trying to make this one fail. I asked for real logins, a real database and a page a client could use without me explaining it. It gave me all three, plus a working URL, in one afternoon. Put your own idea in the box and judge it in a minute: https://bigbag.app",
         d3:
-          "What kills a side project is never the idea. It is the first evening: logins, a database, deployment, four config files. All of that before you write one line that actually interests you. That evening does not exist any more and I have shipped twice since January. If your idea has been parked for months, this is where I would start: https://www.totalum.app",
+          "What kills a side project is never the idea. It is the first evening: logins, a database, deployment, four config files. All of that before you write one line that actually interests you. That evening does not exist any more and I have shipped twice since January. If your idea has been parked for months, this is where I would start: https://bigbag.app",
         d4:
-          "There is a folder on my laptop called old, with eleven dead projects in it. Every one of them died at setup, not at the idea. I started something new on Sunday afternoon and it was live that night. By Monday morning three people were putting real data into it. Same me, same ideas, and a completely different starting point: https://www.totalum.app",
+          "There is a folder on my laptop called old, with eleven dead projects in it. Every one of them died at setup, not at the idea. I started something new on Sunday afternoon and it was live that night. By Monday morning three people were putting real data into it. Same me, same ideas, and a completely different starting point: https://bigbag.app",
         d5:
-          "A client rang on a Thursday afternoon asking for a small booking system. I sent her a working link at nine the next morning. She asked whether I had been up all night, but I watched a film and went to bed at eleven. I am not taking the credit for this one. Here is the thing that actually did the work while I was asleep: https://www.totalum.app",
+          "A client rang on a Thursday afternoon asking for a small booking system. I sent her a working link at nine the next morning. She asked whether I had been up all night, but I watched a film and went to bed at eleven. I am not taking the credit for this one. Here is the thing that actually did the work while I was asleep: https://bigbag.app",
         d6:
-          "Honest review after two weeks of real use. I expected a toy and I have something sitting in front of paying customers. Real logins, a real database, hosting, and our own domain on it. I have not opened a config file once, which I still cannot explain. If an AI builder has burned you before, test this one properly: https://www.totalum.app",
+          "Honest review after two weeks of real use. I expected a toy and I have something sitting in front of paying customers. Real logins, a real database, hosting, and our own domain on it. I have not opened a config file once, which I still cannot explain. If an AI builder has burned you before, test this one properly: https://bigbag.app",
         d7:
-          "I am not a developer, and my team opens an app I built every morning at nine. I told it in plain words what the app had to do. Then I argued with it in the chat for an hour and published it. Nobody has ever asked who built the thing, they just use it. That is the highest praise an internal tool is ever going to get: https://www.totalum.app",
+          "I am not a developer, and my team opens an app I built every morning at nine. I told it in plain words what the app had to do. Then I argued with it in the chat for an hour and published it. Nobody has ever asked who built the thing, they just use it. That is the highest praise an internal tool is ever going to get: https://bigbag.app",
         d8:
-          "Three spreadsheets, four people, and one column somebody overwrote every week. I described that entire mess in a single paragraph. What came back was a real app, with proper records, permissions and a login each. Nobody has emailed me about that column since. If that is what your Monday morning looks like, read on: https://www.totalum.app",
+          "Three spreadsheets, four people, and one column somebody overwrote every week. I described that entire mess in a single paragraph. What came back was a real app, with proper records, permissions and a login each. Nobody has emailed me about that column since. If that is what your Monday morning looks like, read on: https://bigbag.app",
         d9:
-          "This was the moment I stopped being sceptical. I asked for a change using completely ordinary words. It edited the code, redeployed itself, and the live site changed while I read the reply. No pipeline, no build to babysit, nothing at all to wait for. Ask for one change on something of your own and watch it: https://www.totalum.app",
+          "This was the moment I stopped being sceptical. I asked for a change using completely ordinary words. It edited the code, redeployed itself, and the live site changed while I read the reply. No pipeline, no build to babysit, nothing at all to wait for. Ask for one change on something of your own and watch it: https://bigbag.app",
         d10:
-          "We asked for a quote on an internal dashboard and it came back at four weeks. The number was one I did not want to show my boss. That evening I described what we actually needed and had it running, database and all. The quote is still sitting in my inbox, unanswered. Ten minutes is enough to see whether this fits you: https://www.totalum.app",
+          "We asked for a quote on an internal dashboard and it came back at four weeks. The number was one I did not want to show my boss. That evening I described what we actually needed and had it running, database and all. The quote is still sitting in my inbox, unanswered. Ten minutes is enough to see whether this fits you: https://bigbag.app",
         d11:
-          "The thing that convinced me was not the speed. It was that the database underneath it is real. Not a mock, not local storage, not something that quietly resets overnight. I can query it, back it up and hand it to somebody else without apologising. That combination is still genuinely rare in this category of tool: https://www.totalum.app",
+          "The thing that convinced me was not the speed. It was that the database underneath it is real. Not a mock, not local storage, not something that quietly resets overnight. I can query it, back it up and hand it to somebody else without apologising. That combination is still genuinely rare in this category of tool: https://bigbag.app",
         d12:
-          "I run a small agency and this quietly changed the way we quote. Small internal tools were never worth a project plan, so for years we said no. Now they take an afternoon and we say yes instead. Two clients noticed the difference before we mentioned anything. If you sell client work, this is worth an hour of it: https://www.totalum.app",
+          "I run a small agency and this quietly changed the way we quote. Small internal tools were never worth a project plan, so for years we said no. Now they take an afternoon and we say yes instead. Two clients noticed the difference before we mentioned anything. If you sell client work, this is worth an hour of it: https://bigbag.app",
         d13:
-          "My card was already out for another no code subscription. I decided to try one thing first and described the app in a paragraph. It came back with the screens, the data model and a working URL. So I closed the other tab and cancelled the trial that evening. The prompt box on the homepage costs nothing to try: https://www.totalum.app",
+          "My card was already out for another no code subscription. I decided to try one thing first and described the app in a paragraph. It came back with the screens, the data model and a working URL. So I closed the other tab and cancelled the trial that evening. The prompt box on the homepage costs nothing to try: https://bigbag.app",
         d14:
-          "My idea sat in a notes app for fourteen months. The setup always felt like a weekend I never quite had. In the end the whole thing took a single sitting on a Sunday afternoon. The idea was fine all along, the wall was everything standing in front of it. Go and describe yours in one paragraph tonight and see what you get back: https://www.totalum.app",
+          "My idea sat in a notes app for fourteen months. The setup always felt like a weekend I never quite had. In the end the whole thing took a single sitting on a Sunday afternoon. The idea was fine all along, the wall was everything standing in front of it. Go and describe yours in one paragraph tonight and see what you get back: https://bigbag.app",
         d15:
-          "I built and published a full CRM for a client from a train with dreadful wifi. Real database, their own domain, their colours, a login for each member of staff. What I cannot get over is how ordinary it felt while it was happening. No heroics and no long night. If you build for clients, start with a small job: https://www.totalum.app",
+          "I built and published a full CRM for a client from a train with dreadful wifi. Real database, their own domain, their colours, a login for each member of staff. What I cannot get over is how ordinary it felt while it was happening. No heroics and no long night. If you build for clients, start with a small job: https://bigbag.app",
         d16:
-          "Every builder I tried before this handed me a prototype I would have rewritten from scratch. This one gave me code I was happy to sit down and read. It also gave me a URL that already worked in front of a paying customer. That is the whole difference between a demo and a tool. I am still using mine two months later: https://www.totalum.app",
+          "Every builder I tried before this handed me a prototype I would have rewritten from scratch. This one gave me code I was happy to sit down and read. It also gave me a URL that already worked in front of a paying customer. That is the whole difference between a demo and a tool. I am still using mine two months later: https://bigbag.app",
         d17:
-          "For years I told people their idea needed a developer, a designer and three months. This week I described one of my own in a single paragraph. It was online the same day, with a real database behind it. Humbling, and much more useful than being right. Try it on the idea you keep talking about and never start: https://www.totalum.app",
+          "For years I told people their idea needed a developer, a designer and three months. This week I described one of my own in a single paragraph. It was online the same day, with a real database behind it. Humbling, and much more useful than being right. Try it on the idea you keep talking about and never start: https://bigbag.app",
         d18:
-          "My favourite part is not that it builds the app for you. It is that feedback from Monday morning is fixed by Monday afternoon. One sentence, no ceremony, and no meeting about the ceremony. That changes what you are willing to try, which changes what you actually ship. Ten minutes on an idea of your own will show you: https://www.totalum.app",
+          "My favourite part is not that it builds the app for you. It is that feedback from Monday morning is fixed by Monday afternoon. One sentence, no ceremony, and no meeting about the ceremony. That changes what you are willing to try, which changes what you actually ship. Ten minutes on an idea of your own will show you: https://bigbag.app",
         d19:
-          "I teach, and working out who had handed in what was eating my Sunday evenings. I described the problem during a break on a Tuesday morning. That same night I tidied it up and sent it round the department. Everyone uses it now and I have my Sunday evenings back. If your job contains one of these jobs, here is the way out: https://www.totalum.app",
+          "I teach, and working out who had handed in what was eating my Sunday evenings. I described the problem during a break on a Tuesday morning. That same night I tidied it up and sent it round the department. Everyone uses it now and I have my Sunday evenings back. If your job contains one of these jobs, here is the way out: https://bigbag.app",
         d20:
-          "My shop ran on paper and a group chat for six years. I described the ordering process exactly the way I explain it to new staff. What came back was an app that does it, on our own domain. Two weeks later the clipboard lives in a drawer and nobody misses it. If you run a small business on paper, start here: https://www.totalum.app",
+          "My shop ran on paper and a group chat for six years. I described the ordering process exactly the way I explain it to new staff. What came back was an app that does it, on our own domain. Two weeks later the clipboard lives in a drawer and nobody misses it. If you run a small business on paper, start here: https://bigbag.app",
         d21:
-          "No more specs that nobody reads. I describe the thing, get a working version, and send that round instead of a document. It turns out people have far better opinions when they can click something. They will also tell you they were wrong out loud. If you work in product, give this ten minutes this afternoon: https://www.totalum.app",
+          "No more specs that nobody reads. I describe the thing, get a working version, and send that round instead of a document. It turns out people have far better opinions when they can click something. They will also tell you they were wrong out loud. If you work in product, give this ten minutes this afternoon: https://bigbag.app",
         d22:
-          "Freelance advice I wish somebody had given me two years ago. Quote the app, then build it in the first week rather than the last. Spend all the time you save on what the client actually wants changed. My last three projects went out early and calm instead of late. This is the one thing that made the difference: https://www.totalum.app",
+          "Freelance advice I wish somebody had given me two years ago. Quote the app, then build it in the first week rather than the last. Spend all the time you save on what the client actually wants changed. My last three projects went out early and calm instead of late. This is the one thing that made the difference: https://bigbag.app",
         d23:
-          "I asked for a change I was completely certain would break the whole thing. It made the change, rebuilt itself, and the site stayed up throughout. I have broken more by hand on a Friday afternoon than this has in a month. And I was genuinely trying to catch it out. Bring something fragile of your own and have a go: https://www.totalum.app",
+          "I asked for a change I was completely certain would break the whole thing. It made the change, rebuilt itself, and the site stayed up throughout. I have broken more by hand on a Friday afternoon than this has in a month. And I was genuinely trying to catch it out. Bring something fragile of your own and have a go: https://bigbag.app",
         d24:
-          "Operations is my job, not code, and I have built four internal apps this quarter. Nobody had to find room for me in a sprint to get any of them done. Our developers appreciate that more than anything I have actually shipped. It is a strange sort of compliment. If you are the person holding all the spreadsheets, look: https://www.totalum.app",
+          "Operations is my job, not code, and I have built four internal apps this quarter. Nobody had to find room for me in a sprint to get any of them done. Our developers appreciate that more than anything I have actually shipped. It is a strange sort of compliment. If you are the person holding all the spreadsheets, look: https://bigbag.app",
         d25:
-          "Real deadline, no engineer free, and a room full of people looking at me. I described the app on the Monday and we tested it on the Tuesday. On the Wednesday it went live on our own domain, very quietly. Nobody outside the team noticed anything unusual at all. That is the only reason I am posting about a tool: https://www.totalum.app",
+          "Real deadline, no engineer free, and a room full of people looking at me. I described the app on the Monday and we tested it on the Tuesday. On the Wednesday it went live on our own domain, very quietly. Nobody outside the team noticed anything unusual at all. That is the only reason I am posting about a tool: https://bigbag.app",
         d26:
-          "It is not magic and it does get things wrong sometimes. The difference is that I say what is wrong in one sentence and it fixes it. The alternative was an hour of documentation to find a comma in the wrong place. That is an easy trade to make on a Tuesday night. Judge the whole thing yourself in a few minutes: https://www.totalum.app",
+          "It is not magic and it does get things wrong sometimes. The difference is that I say what is wrong in one sentence and it fixes it. The alternative was an hour of documentation to find a comma in the wrong place. That is an easy trade to make on a Tuesday night. Judge the whole thing yourself in a few minutes: https://bigbag.app",
         d27:
-          "My cofounder and I stopped arguing about the stack this month. Mostly because there was nothing left for us to argue about. We described the product, it got built, and the rest of the week freed up. We spent it talking to people who might actually pay us. Best week since we started, and no code review at midnight: https://www.totalum.app",
+          "My cofounder and I stopped arguing about the stack this month. Mostly because there was nothing left for us to argue about. We described the product, it got built, and the rest of the week freed up. We spent it talking to people who might actually pay us. Best week since we started, and no code review at midnight: https://bigbag.app",
         d28:
-          "I finally have a habit tracker that works the way my head actually works. That is because I described my head, rather than settling for somebody else's. It took one evening and I have opened it every single day since then. Nobody else was ever going to build this app for me. Build the small selfish app you want: https://www.totalum.app",
+          "I finally have a habit tracker that works the way my head actually works. That is because I described my head, rather than settling for somebody else's. It took one evening and I have opened it every single day since then. Nobody else was ever going to build this app for me. Build the small selfish app you want: https://bigbag.app",
         d29:
-          "The code it writes is mine. That is the thing I did not expect and the thing that made me stay. I can read it, download it, push it to GitHub and carry on in my own editor. No lock in, nothing held hostage, and no export button that quietly fails halfway. If a tool has held your work hostage before, this is the difference: https://www.totalum.app",
+          "The code it writes is mine. That is the thing I did not expect and the thing that made me stay. I can read it, download it, push it to GitHub and carry on in my own editor. No lock in, nothing held hostage, and no export button that quietly fails halfway. If a tool has held your work hostage before, this is the difference: https://bigbag.app",
         d30:
-          "Last week a client saw a working prototype in our very first meeting. Not a slide deck, not a wireframe, the actual working thing. We spent the other fifty minutes arguing about what it should really do. That is the argument I have wanted to have for about six years. If you sell projects, this changes everything: https://www.totalum.app",
+          "Last week a client saw a working prototype in our very first meeting. Not a slide deck, not a wireframe, the actual working thing. We spent the other fifty minutes arguing about what it should really do. That is the argument I have wanted to have for about six years. If you sell projects, this changes everything: https://bigbag.app",
         d31:
-          "It is quietly brilliant at all the unglamorous stuff. Order tracking, a booking form, an admin panel nobody will ever post about. Three people depend on mine every single day of the working week. All of it built in one sitting after dinner, on a real database. The boring apps are where the time comes back: https://www.totalum.app",
+          "It is quietly brilliant at all the unglamorous stuff. Order tracking, a booking form, an admin panel nobody will ever post about. Three people depend on mine every single day of the working week. All of it built in one sitting after dinner, on a real database. The boring apps are where the time comes back: https://bigbag.app",
         d32:
-          "I opened it fully intending to write something cutting about AI app builders. Two weeks later I have a deployed app with a real database. My team uses it daily and nobody has complained once. So this is the post I ended up writing instead of that one. Go in as sceptical as I was and see how long it lasts: https://www.totalum.app",
+          "I opened it fully intending to write something cutting about AI app builders. Two weeks later I have a deployed app with a real database. My team uses it daily and nobody has complained once. So this is the post I ended up writing instead of that one. Go in as sceptical as I was and see how long it lasts: https://bigbag.app",
         d33:
-          "I gave it a messy paragraph, full of half formed requirements. Two of the things I asked for flatly contradicted each other. No interrogation, no wizard, no form with twelve fields to fill in first. It built something sensible and I corrected the rest by talking to it. Faster than the spec I would have written: https://www.totalum.app",
+          "I gave it a messy paragraph, full of half formed requirements. Two of the things I asked for flatly contradicted each other. No interrogation, no wizard, no form with twelve fields to fill in first. It built something sensible and I corrected the rest by talking to it. Faster than the spec I would have written: https://bigbag.app",
         d34:
-          "I have shipped more this month than in the whole six months before it. The only thing that changed is that I stopped hand writing the same four screens. Usually at about eleven at night, and usually rather badly. If that sentence hurt to read, you are who I am writing this for. Ten minutes will tell you enough: https://www.totalum.app",
+          "I have shipped more this month than in the whole six months before it. The only thing that changed is that I stopped hand writing the same four screens. Usually at about eleven at night, and usually rather badly. If that sentence hurt to read, you are who I am writing this for. Ten minutes will tell you enough: https://bigbag.app",
         d35:
-          "The setup that normally eats my entire first week took one afternoon. Database, screens, deployed, custom domain, the whole lot of it. All from a description I typed out in plain English on my phone. If your idea is stuck in a spreadsheet, that is where I would start. Writing the paragraph costs you nothing: https://www.totalum.app",
+          "The setup that normally eats my entire first week took one afternoon. Database, screens, deployed, custom domain, the whole lot of it. All from a description I typed out in plain English on my phone. If your idea is stuck in a spreadsheet, that is where I would start. Writing the paragraph costs you nothing: https://bigbag.app",
         d36:
-          "Small thing that quietly made my week. I described an app and it got built with a real database behind it. Then it went live on a URL I can send to other people. No boilerplate, no stack decisions, and no half finished folder I quietly abandon in March. Describe yours and see what comes back in about ten minutes: https://www.totalum.app",
+          "Small thing that quietly made my week. I described an app and it got built with a real database behind it. Then it went live on a URL I can send to other people. No boilerplate, no stack decisions, and no half finished folder I quietly abandon in March. Describe yours and see what comes back in about ten minutes: https://bigbag.app",
         d37:
-          "I run our warehouse and I have wanted a decent stock screen since 2019. Every quote we got was too expensive to take to the owner. Every no code tool wanted me to assemble the thing out of little blocks. I described it in plain words instead and it took one evening. If you still count stock on paper, read this: https://www.totalum.app",
+          "I run our warehouse and I have wanted a decent stock screen since 2019. Every quote we got was too expensive to take to the owner. Every no code tool wanted me to assemble the thing out of little blocks. I described it in plain words instead and it took one evening. If you still count stock on paper, read this: https://bigbag.app",
         d38:
-          "Two months in and my only real complaint is that I have run out of excuses. Every small idea I used to park needed a week of setup first. Now each of them is an evening of work, which is a completely different decision. My list of parked ideas is getting embarrassing. Pick the one you have put off longest: https://www.totalum.app",
+          "Two months in and my only real complaint is that I have run out of excuses. Every small idea I used to park needed a week of setup first. Now each of them is an evening of work, which is a completely different decision. My list of parked ideas is getting embarrassing. Pick the one you have put off longest: https://bigbag.app",
         d39:
-          "A friend who writes software for a living got the link from me. I fully expected him to pick the whole thing apart within ten minutes. He read the code, said it was fine, and asked what I was building next. That is the only review I actually cared about. If you have a sceptical developer friend, send them this: https://www.totalum.app",
+          "A friend who writes software for a living got the link from me. I fully expected him to pick the whole thing apart within ten minutes. He read the code, said it was fine, and asked what I was building next. That is the only review I actually cared about. If you have a sceptical developer friend, send them this: https://bigbag.app",
         d40:
-          "Nobody is ever going to post about an internal tool. But my Tuesday is forty minutes shorter because one of them exists now. It cost me one evening and a paragraph of plain English on a laptop. Not a project plan, not a budget, and not a meeting about the budget. That piece of maths is hard to argue with: https://www.totalum.app",
+          "Nobody is ever going to post about an internal tool. But my Tuesday is forty minutes shorter because one of them exists now. It cost me one evening and a paragraph of plain English on a laptop. Not a project plan, not a budget, and not a meeting about the budget. That piece of maths is hard to argue with: https://bigbag.app",
       },
       exampleBadge: "Example",
       copyDraft: "Copy the draft",
@@ -2320,7 +2320,7 @@ export const en = {
       widget: "Post about us — ask for up to {credits} credits",
       modalHeading: "Or post about us",
       modalBody:
-        "Share Totalum on LinkedIn or Reddit and ask for {creditsLinkedin} credits, or on X for {creditsX}.",
+        "Share BigBag on LinkedIn or Reddit and ask for {creditsLinkedin} credits, or on X for {creditsX}.",
       modalAction: "Share and ask",
       modalPendingBody:
         "Your post is with our support team. We'll reply in your chat as soon as it's reviewed.",
@@ -2357,7 +2357,7 @@ export const en = {
     history: {
       title: "Your requests",
       emptyTitle: "No requests yet",
-      emptyDescription: "Post about Totalum and your request will show up here.",
+      emptyDescription: "Post about BigBag and your request will show up here.",
     },
 
     status: {
@@ -2411,7 +2411,7 @@ export const en = {
         // ⚠️ TWO PROGRAMMES LIVE ON THIS PAGE NOW — sharing and referrals — so the
         // description names both. "Invite people" alone hid the faster one behind
         // a label nobody would click for it.
-        description: "Post about Totalum, or invite someone. Both earn you credits.",
+        description: "Post about BigBag, or invite someone. Both earn you credits.",
       },
       profile: {
         title: "Profile",
@@ -2658,9 +2658,9 @@ export const en = {
           follow-up question "so how do I move it?", which has no good answer here.
         */
         EMAIL_ALREADY_PLATFORM_USER:
-          "This person already has a Totalum account, so you can't invite them. Ask them to sign up with a different email address.",
+          "This person already has a BigBag account, so you can't invite them. Ask them to sign up with a different email address.",
         EMAIL_ALREADY_LEGACY_USER:
-          "This person already has a Totalum account, so you can't invite them. Ask them to sign up with a different email address.",
+          "This person already has a BigBag account, so you can't invite them. Ask them to sign up with a different email address.",
         /*
           ⚠️ IT NAMES THE `+`, because unlike the codes above this one is fixable by
           the inviter in five seconds — and only if they know what to change. "That
@@ -2768,7 +2768,7 @@ export const en = {
         supportHint:
           "A desktop notification the moment we answer, even if you're in another tab.",
         blocked:
-          "Your browser is blocking notifications from Totalum. Turn them back on in the site settings next to the address bar, then try again.",
+          "Your browser is blocking notifications from BigBag. Turn them back on in the site settings next to the address bar, then try again.",
         blockedToast: "Your browser wouldn't allow notifications.",
         unsupported: "This browser doesn't support notifications.",
         testTitle: "Notifications are on",
@@ -2831,10 +2831,10 @@ export const en = {
     attachment: "Attachment",
     uploading: "Uploading…",
     hint: "Enter to send · Shift + Enter for a new line. We reply by email too.",
-    fromTotalum: "Totalum",
-    fromAgent: "{name} · Totalum",
-    agentTitle: "{name} from Totalum",
-    agentAvatar: "{name}, Totalum support",
+    fromBigBag: "BigBag",
+    fromAgent: "{name} · BigBag",
+    agentTitle: "{name} from BigBag",
+    agentAvatar: "{name}, BigBag support",
     supportRoleSuccess: "Customer success",
     supportRoleEngineer: "Support engineer",
     teamLine: "{names} answer these — real people, not a bot.",
@@ -2847,7 +2847,7 @@ export const en = {
     loadFailed: "We couldn't load your conversation.",
 
     // ── The panel header ──────────────────────────────────────────────────
-    title: "Totalum Support",
+    title: "BigBag Support",
     copy: "Copy message",
     unreadDivider: "New",
 
@@ -2885,7 +2885,7 @@ export const en = {
      * unnamed source is the one people dismiss without reading.
      */
     notification: {
-      title: "Totalum Support replied",
+      title: "BigBag Support replied",
       fallbackBody: "You have a new message from our support team.",
       /* The in-app panel's link. The OS notification has no link — clicking it focuses the tab. */
       open: "Open the conversation",
@@ -2907,7 +2907,7 @@ export const en = {
   pages: {
     projects: {
       title: "Projects",
-      description: "Describe what you want to build and Totalum builds it for you.",
+      description: "Describe what you want to build and BigBag builds it for you.",
       placeholderTitle: "No projects yet",
       placeholderDescription: "Your project dashboard is being built. You'll create apps from here.",
 
@@ -3148,7 +3148,7 @@ export const en = {
     },
     api: {
       title: "API",
-      description: "Create API keys and build on the Totalum API from your own code.",
+      description: "Create API keys and build on the BigBag AI API from your own code.",
       placeholderTitle: "API keys and reference",
       placeholderDescription: "Key management and the full endpoint reference land here.",
     },
@@ -3283,8 +3283,8 @@ export const en = {
 
   onboarding: {
     title: "Welcome",
-    heading: "What brings you to Totalum?",
-    headingNamed: "Welcome, {name}. What brings you to Totalum?",
+    heading: "What brings you to BigBag?",
+    headingNamed: "Welcome, {name}. What brings you to BigBag?",
     subheading: "Pick one so we can start you in the right place. You can do both later.",
     choose: "Start here",
     reassurance: "This only decides where you land — nothing is locked in.",
@@ -3296,7 +3296,7 @@ export const en = {
       point2: "Database, auth, domains and hosting included",
     },
     api: {
-      title: "Use Totalum from my code",
+      title: "Use BigBag from my code",
       body: "Drive the whole builder from the API, or from an agent over MCP.",
       point1: "Create and deploy projects with one call",
       point2: "Works with Claude Code, Cursor and Windsurf",
@@ -3310,7 +3310,7 @@ export const en = {
       dividerEmail: "or continue with email",
       dividerSocial: "or",
       notLinked:
-        "That email already has a Totalum account with a password. Sign in with your password first, then link Google from settings.",
+        "That email already has a BigBag account with a password. Sign in with your password first, then link Google from settings.",
       noEmail: "Google didn't share an email address, so we can't match it to an account.",
       signupDisabled: "New accounts through Google are turned off right now.",
       restart: "That took too long and the sign-in expired. Give it another go.",
@@ -3373,7 +3373,7 @@ export const en = {
       hidePassword: "Hide password",
       emailLabelHint: "We'll send a confirmation code here.",
       protectedByRecaptcha: "Protected by reCAPTCHA.",
-      socialProof: "Join the builders shipping real apps on Totalum.",
+      socialProof: "Join the builders shipping real apps on BigBag.",
       noCreditCard: "No credit card required · 50 free credits",
       or: "or",
       backToLogin: "Back to sign in",
@@ -3391,7 +3391,7 @@ export const en = {
     continueToAccount: "Continue",
       submitting: "Signing in…",
       forgotPassword: "Forgot your password?",
-      noAccount: "New to Totalum?",
+      noAccount: "New to BigBag?",
       createAccount: "Create an account",
       emailRequired: "Enter your email address.",
       passwordRequired: "Enter your password.",
@@ -3489,7 +3489,7 @@ export const en = {
       codeBadge: "8-digit code",
       codeTitleSignIn: "Enter your sign-in code",
       codeSubtitle:
-        "If {email} has a Totalum account, an 8-digit code is on its way. It's valid for 15 minutes.",
+        "If {email} has a BigBag account, an 8-digit code is on its way. It's valid for 15 minutes.",
       // {time} is mm:ss — the code's real, server-enforced life ticking down.
       expiresIn: "This code expires in {time}",
       signInWithCode: "Sign in",
@@ -3532,7 +3532,7 @@ export const en = {
     legacyAccount: {
       /*
         ⚠️⚠️ THIS COPY MUST NOT ANNOUNCE THE MIGRATION. It used to open with "Your
-        account lives on our previous platform" and name accounts.totalum.app
+        account lives on our previous platform" and name accounts.bigbag.app
         twice — which told a customer who was simply signing in, as they have for
         years, that something had changed under them and they were on the wrong
         side of it. Nothing here is untrue now; it is just no longer THEIR problem.
@@ -3568,8 +3568,8 @@ export const en = {
     // Feature F7 — joining someone else's account.
     acceptInvitation: {
       loading: "Checking your invitation…",
-      title: "Join {owner} on Totalum",
-      titleFallback: "You've been invited to Totalum",
+      title: "Join {owner} on BigBag",
+      titleFallback: "You've been invited to BigBag",
       roleLine: "You've been invited as {role}.",
       sentTo: "The invitation was sent to {email}.",
       /** ⚠️ The one thing this page must never leave ambiguous. */
@@ -3585,7 +3585,7 @@ export const en = {
       registerHint:
         "Sign up with {email} — the address the invitation was sent to — and we'll bring you straight back here.",
       newAccountOnly:
-          "This invitation can only be accepted with a new account. If you already use Totalum with another address, ask for the invitation to be sent there instead.",
+          "This invitation can only be accepted with a new account. If you already use BigBag with another address, ask for the invitation to be sent there instead.",
       loginCta: "I already have an account",
       wrongEmailTitle: "This invitation is for a different email",
       wrongEmailDescription:
@@ -3610,9 +3610,9 @@ export const en = {
           "This invitation link doesn't work. Ask whoever invited you to send a new one.",
         INVITATION_NOT_PENDING: "This invitation has already been used or was revoked.",
         INVITATION_EXPIRED: "This invitation has expired. Ask for a new one.",
-        ALREADY_A_MEMBER: "You already belong to another Totalum account, so you can't join this one.",
+        ALREADY_A_MEMBER: "You already belong to another BigBag account, so you can't join this one.",
         ACCOUNT_ALREADY_EXISTS:
-            "This email already had a Totalum account before the invitation was sent, so it can't be used to join. Ask for a new invitation for an address that doesn't have an account yet.",
+            "This email already had a BigBag account before the invitation was sent, so it can't be used to join. Ask for a new invitation for an address that doesn't have an account yet.",
         EMAIL_IS_SELF: "That's your own account — there's nothing to join.",
         USER_NOT_FOUND: "We couldn't find your account. Sign in again and reopen this link.",
         FORBIDDEN: "This invitation was sent to a different email address.",
@@ -3645,7 +3645,7 @@ export const en = {
     tabsLabel: "Workspace panels",
 
     /**
-     * ⭐ THE MENU BEHIND THE TOTALUM MARK (`WorkspaceMenu`).
+     * ⭐ THE MENU BEHIND THE BIGBAG MARK (`WorkspaceMenu`).
      *
      * ⚠️ MOST OF ITS ROWS ARE **NOT** IN HERE, and that is deliberate: Version
      * history, Secrets, Restart the server, Get free credits and the three theme
@@ -3735,9 +3735,9 @@ export const en = {
         modelOpusHint: "Default. Best quality for building features.",
         modelSonnet: "Sonnet",
         modelSonnetHint: "Faster and cheaper. Good for questions and small changes.",
-        autoNote: "Totalum already picks the best model and effort for each prompt. Change these only if you are sure of what you are doing.",
+        autoNote: "BigBag already picks the best model and effort for each prompt. Change these only if you are sure of what you are doing.",
         effort: "Effort",
-        effortHint: "Higher is more thorough and slower. Default lets Totalum decide.",
+        effortHint: "Higher is more thorough and slower. Default lets BigBag decide.",
         effortDefault: "Default",
         effort_low: "Low",
         effort_medium: "Medium",
@@ -4686,7 +4686,7 @@ export const en = {
       removed: "Domain removed",
       removeFailed: "We couldn't remove that domain",
       removeTitle: "Remove {name}?",
-      removeDescription: "Your app goes back to its totalum-project.com address. You can add the domain again later.",
+      removeDescription: "Your app goes back to its bigbag.app address. You can add the domain again later.",
       deployFirstTitle: "Publish your app first",
       deployFirstDescription:
         "A custom domain points at your published app, so there needs to be something to point at. Publish, then come back.",
@@ -4903,10 +4903,10 @@ export const en = {
       title: "GitHub",
       description: "Keep a repository and your project in step.",
 
-      flowTitle: "How Totalum uses your repository",
+      flowTitle: "How BigBag uses your repository",
       /** ⚠️ Each of these is completed by a branch name in <code>. Keep them as
        *  sentence starts, not whole sentences. */
-      flowPrompt: "After every prompt, Totalum commits and pushes to",
+      flowPrompt: "After every prompt, BigBag commits and pushes to",
       flowPublish: "When you publish, it opens a pull request and merges it:",
       flowPull: "Before every prompt, it pulls the latest from",
       flowLocalWork: "Working on your own machine? Work on",
@@ -4941,8 +4941,8 @@ export const en = {
       setupStep3: "Repository permissions → set all three to Read and write:",
       setupStep4: "Generate it, then paste it below. It starts with github_pat_.",
       directionLabel: "Sync direction",
-      dirToGithub: "Totalum → GitHub",
-      dirFromGithub: "GitHub → Totalum",
+      dirToGithub: "BigBag → GitHub",
+      dirFromGithub: "GitHub → BigBag",
       directionHint: "Which side wins the first time they're synced. You can pull from GitHub at any time afterwards.",
       securityBody:
         "We send it straight to your project and never store it in your browser. If it leaks, revoke it on GitHub.",
@@ -5027,7 +5027,7 @@ export const en = {
       tipLogsTitle: "Logs for dev and production",
       tipLogsChip: "Dev + prod",
       tipLogs: "Each one has its own stream, so you see an error the moment it happens and can paste it back to the agent.",
-      tipMcpTitle: "Use Totalum from your AI agent",
+      tipMcpTitle: "Use BigBag from your AI agent",
       tipMcpChip: "MCP",
       tipMcp: "Connect the MCP server and Claude Code, Cursor or Windsurf can build, query and publish this project for you.",
       tipFullStackTitle: "A real full-stack app",
@@ -5035,7 +5035,7 @@ export const en = {
       tipFullStack: "Pages are rendered on the server and fast by default, so search engines and AI answer engines can read them.",
       tipCreditsTitle: "Earn 200 credits per friend",
       tipCreditsChip: "+200 credits",
-      tipCredits: "Invite a friend for 50 credits when they join and 150 more when they first pay — or post about Totalum and ask us for credits.",
+      tipCredits: "Invite a friend for 50 credits when they join and 150 more when they first pay — or post about BigBag and ask us for credits.",
       tipTeamTitle: "Invite your teammates",
       tipTeamChip: "Whole account",
       tipTeam: "Anyone you invite works alongside you on every project in this account, not one at a time.",
