@@ -16,11 +16,14 @@ import { publicUrlRejectionReason } from "@/lib/safe-url";
  */
 const MAX_DIFF_BYTES = 10 * 1024 * 1024;
 
+const IS_LOCAL_MODE =
+  process.env.ORCHESTRATOR_MODE === "local" ||
+  !process.env.TOTALUM_VCAAS_API_KEY ||
+  process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active";
+
 const ALLOWED_HOSTS = [
-  "totalum.app",
-  "totalum-project.com",
-  "webapp-project.com", 
   "storage.googleapis.com",
+  "amazonaws.com",
 ];
 
 function isAllowedDiffUrl(url: URL): boolean {
@@ -32,6 +35,16 @@ function isAllowedDiffUrl(url: URL): boolean {
 }
 
 export async function GET(req: NextRequest) {
+  if (IS_LOCAL_MODE) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Git diff history is not available in local mode. Files are written directly to the workspace.",
+      },
+      { status: 410 }
+    );
+  }
+
   const target = req.nextUrl.searchParams.get("url");
 
   if (!target) {

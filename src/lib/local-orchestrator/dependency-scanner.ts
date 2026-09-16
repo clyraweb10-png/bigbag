@@ -1,0 +1,202 @@
+import fs from "fs";
+import path from "path";
+import { execSync } from "child_process";
+import { ALWAYS_AVAILABLE_PACKAGES } from "./starter-template";
+
+/**
+ * Node.js built-in modules that should never be npm-installed.
+ */
+const NODE_BUILTINS = new Set([
+  "assert", "buffer", "child_process", "cluster", "console", "constants",
+  "crypto", "dgram", "dns", "domain", "events", "fs", "http", "http2",
+  "https", "inspector", "module", "net", "os", "path", "perf_hooks",
+  "process", "punycode", "querystring", "readline", "repl", "stream",
+  "string_decoder", "sys", "timers", "tls", "trace_events", "tty",
+  "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib",
+]);
+
+/**
+ * Packages that are always available because they ship with the workspace
+ * template or are peer-provided by Next.js / React.
+ */
+const ALWAYS_AVAILABLE = ALWAYS_AVAILABLE_PACKAGES;
+
+/**
+ * Scan a list of generated file contents for third-party npm package imports.
+ *
+ * Returns a deduplicated list of bare specifiers (package names) that are NOT
+ * Node built-ins and NOT in the always-available set.
+ */
+export function detectThirdPartyImports(
+  files: Array<{ path: string; content: string }>
+): string[] {
+  const found = new Set<string>();
+
+  const importPatterns = [
+    /import\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"./][^'"]*)['"]/g,
+    /require\s*\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g,
+    /import\s*\(\s*['"]([^'"./][^'"]*)['"]\s*\)/g,
+  ];
+
+  for (const file of files) {
+    if (!file.path.match(/\.(tsx?|jsx?|mjs|cjs)$/)) continue;
+
+    for (const pattern of importPatterns) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(file.content)) !== null) {
+        let specifier = match[1];
+        if (specifier.startsWith("@")) {
+          const parts = specifier.split("/");
+          specifier = parts.slice(0, 2).join("/");
+        } else {
+          specifier = specifier.split("/")[0];
+        }
+
+        if (NODE_BUILTINS.has(specifier)) continue;
+        if (ALWAYS_AVAILABLE.has(specifier)) continue;
+        if (specifier.startsWith("@/")) continue;
+
+        found.add(specifier);
+      }
+    }
+  }
+
+  return Array.from(found);
+}
+
+/**
+ * Check which packages from the list are NOT present in node_modules.
+ */
+export function findMissingPackages(
+  nodeModulesDir: string,
+  packages: string[]
+): string[] {
+  return packages.filter((pkg) => {
+    const pkgDir = path.join(nodeModulesDir, ...pkg.split("/"));
+    return !fs.existsSync(pkgDir);
+  });
+}
+
+/**
+ * Install packages into the given directory using npm.
+ * Returns the list of packages that were successfully installed.
+ */
+export function installPackages(
+  targetDir: string,
+  packages: string[]
+): { installed: string[]; failed: string[] } {
+  if (packages.length === 0) return { installed: [], failed: [] };
+
+  const installed: string[] = [];
+  const failed: string[] = [];
+
+  console.log(
+    `[dep-scanner] Installing ${packages.length} missing packages: ${packages.join(", ")}`
+  );
+
+  try {
+    execSync(
+      `npm install ${packages.join(" ")} --legacy-peer-deps --no-audit --no-fund`,
+      {
+        cwd: targetDir,
+        timeout: 120_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, NODE_ENV: "development" },
+      }
+    );
+    installed.push(...packages);
+    console.log(`[dep-scanner] Successfully installed: ${packages.join(", ")}`);
+  } catch (err: any) {
+    console.warn(`[dep-scanner] Batch install failed, trying one by one...`);
+
+    for (const pkg of packages) {
+      try {
+        execSync(
+          `npm install ${pkg} --legacy-peer-deps --no-audit --no-fund`,
+          {
+            cwd: targetDir,
+            timeout: 60_000,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env, NODE_ENV: "development" },
+          }
+        );
+        installed.push(pkg);
+        console.log(`[dep-scanner] Installed: ${pkg}`);
+      } catch (pkgErr: any) {
+        failed.push(pkg);
+        console.error(
+          `[dep-scanner] Failed to install ${pkg}:`,
+          pkgErr.message || pkgErr
+        );
+      }
+    }
+  }
+
+  return { installed, failed };
+}
+
+/**
+ * Full pipeline: scan files → detect imports → find missing → install.
+ * Returns which packages were installed and which failed.
+ */
+export function autoInstallDependencies(
+  files: Array<{ path: string; content: string }>,
+  rootDir: string
+): { installed: string[]; failed: string[] } {
+  const imports = detectThirdPartyImports(files);
+  if (imports.length === 0) {
+    console.log("[dep-scanner] No third-party imports detected.");
+    return { installed: [], failed: [] };
+  }
+
+  console.log(
+    `[dep-scanner] Detected third-party imports: ${imports.join(", ")}`
+  );
+
+  const nodeModulesDir = path.join(rootDir, "node_modules");
+  const missing = findMissingPackages(nodeModulesDir, imports);
+
+  if (missing.length === 0) {
+    console.log("[dep-scanner] All detected packages are already installed.");
+    return { installed: [], failed: [] };
+  }
+
+  console.log(`[dep-scanner] Missing packages: ${missing.join(", ")}`);
+  return installPackages(rootDir, missing);
+}
+
+/**
+ * Parse a compiler/build error to extract a missing module name.
+ * Works with Next.js / Turbopack / Webpack error messages.
+ */
+export function extractMissingModuleFromError(
+  errorText: string
+): string | null {
+  const patterns = [
+    /Module not found:\s*(?:Error:\s*)?Can't resolve\s+'([^']+)'/i,
+    /Cannot find module\s+'([^']+)'/i,
+    /Module not found:\s*(?:Error:\s*)?(?:Can't|Cannot) resolve\s+'([^']+)'/i,
+    /Error:\s*Cannot find package\s+'([^']+)'/i,
+    /error\s*\[ERR_MODULE_NOT_FOUND\]:\s*Cannot find package\s+'([^']+)'/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(errorText);
+    if (match) {
+      let specifier = match[1];
+      if (specifier.startsWith("@")) {
+        const parts = specifier.split("/");
+        specifier = parts.slice(0, 2).join("/");
+      } else {
+        specifier = specifier.split("/")[0];
+      }
+      if (NODE_BUILTINS.has(specifier)) return null;
+      if (ALWAYS_AVAILABLE.has(specifier)) return null;
+      if (specifier.startsWith(".") || specifier.startsWith("@/")) return null;
+      return specifier;
+    }
+  }
+
+  return null;
+}

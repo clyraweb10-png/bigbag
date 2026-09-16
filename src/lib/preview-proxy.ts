@@ -28,6 +28,12 @@ import { AGENT_SCRIPT_TAG } from "@/lib/visual-edit-agent";
  */
 export function rewriteHtml(html: string, base: string): string {
     return html
+        // ⚠️ Strip <link rel="preload" as="font"> tags that point at /_next/static/media/
+        // fonts — those are baked into the parent app's layout and leak into proxied child
+        // workspace HTML. The child never serves those font files so the browser fires a
+        // "preloaded but not used" warning for every one of them on every page load.
+        .replace(/<link[^>]+rel=["']preload["'][^>]+as=["']font["'][^>]*\/?>/gi, "")
+        .replace(/<link[^>]+as=["']font["'][^>]+rel=["']preload["'][^>]*\/?>/gi, "")
         .replace(/(\s(?:src|href|action|poster)\s*=\s*")\/(?!\/)/g, `$1${base}/`)
         .replace(/(\s(?:src|href|action|poster)\s*=\s*')\/(?!\/)/g, `$1${base}/`)
         .replace(/(\ssrcset\s*=\s*")([^"]*)"/g, (_full, prefix: string, value: string) => {
@@ -71,8 +77,88 @@ export function rewriteCss(css: string, base: string): string {
     );
 }
 
+/**
+ * Error boundary overlay injected into every preview iframe.
+ * Catches runtime errors, unhandled promise rejections, and Next.js
+ * compilation errors, then replaces the blank white screen with a
+ * styled diagnostic card.
+ */
+const ERROR_BOUNDARY_SCRIPT = `<script data-error-boundary>
+(function(){
+  var overlay = null;
+  var errorQueue = [];
+  var MAX_ERRORS = 5;
+
+  function createOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = '__error-boundary-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;padding:20px;overflow:auto;';
+    overlay.innerHTML = '<div style="max-width:560px;width:100%;background:#1a1a2e;border:1px solid #e74c3c;border-radius:12px;padding:28px;color:#fff;box-shadow:0 25px 50px rgba(0,0,0,0.5);">'
+      + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">'
+      + '<div style="width:32px;height:32px;border-radius:8px;background:#e74c3c;display:flex;align-items:center;justify-content:center;font-size:18px;">⚠️</div>'
+      + '<h2 style="margin:0;font-size:18px;font-weight:600;color:#ff6b6b;">Preview Error</h2>'
+      + '</div>'
+      + '<div id="__error-list" style="margin-bottom:16px;"></div>'
+      + '<div style="display:flex;gap:8px;">'
+      + '<button onclick="document.getElementById(\\'__error-boundary-overlay\\').style.display=\\'none\\'" style="flex:1;padding:10px 16px;border-radius:8px;border:1px solid #333;background:#2a2a3e;color:#ccc;cursor:pointer;font-size:13px;">Dismiss</button>'
+      + '<button onclick="location.reload()" style="flex:1;padding:10px 16px;border-radius:8px;border:none;background:#e74c3c;color:#fff;cursor:pointer;font-size:13px;font-weight:500;">Reload Preview</button>'
+      + '</div>'
+      + '<p style="margin:12px 0 0;font-size:11px;color:#666;text-align:center;">💡 Tip: Ask the AI to fix the error shown above</p>'
+      + '</div>';
+    return overlay;
+  }
+
+  function addError(msg, source) {
+    if (errorQueue.length >= MAX_ERRORS) return;
+    errorQueue.push({ msg: msg, source: source });
+
+    var list = overlay ? document.getElementById('__error-list') : null;
+    if (!list) {
+      createOverlay();
+      if (document.body) document.body.appendChild(overlay);
+      else document.addEventListener('DOMContentLoaded', function() { document.body.appendChild(overlay); });
+      list = document.getElementById('__error-list');
+    }
+    if (!list) return;
+
+    var item = document.createElement('div');
+    item.style.cssText = 'background:#16213e;border:1px solid #1a1a3e;border-radius:8px;padding:12px;margin-bottom:8px;';
+    var srcHtml = source ? '<div style="font-size:11px;color:#888;margin-bottom:4px;">📁 ' + source.replace(/</g,'&lt;') + '</div>' : '';
+    item.innerHTML = srcHtml + '<pre style="margin:0;font-size:12px;color:#ff8a80;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto;">' + String(msg).replace(/</g,'&lt;').substring(0, 500) + '</pre>';
+    list.appendChild(item);
+  }
+
+  window.addEventListener('error', function(e) {
+    var source = e.filename ? e.filename.replace(/.*\\//, '') + ':' + e.lineno : '';
+    addError(e.message || 'Unknown error', source);
+  });
+
+  window.addEventListener('unhandledrejection', function(e) {
+    var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled promise rejection';
+    addError(msg, '');
+  });
+
+  // Intercept Next.js runtime errors shown as full-page overlays
+  var origCE = document.createElement.bind(document);
+  document.createElement = function(tag) {
+    var el = origCE(tag);
+    if (tag === 'nextjs-portal') {
+      setTimeout(function() {
+        var shadow = el.shadowRoot;
+        if (shadow) {
+          var text = shadow.textContent || '';
+          if (text.length > 20) addError(text.substring(0, 300), 'Next.js Compilation');
+        }
+      }, 500);
+    }
+    return el;
+  };
+})();
+</script>`;
+
 export function injectAgent(html: string, base: string): string {
-    const tag = AGENT_SCRIPT_TAG(base);
+    const tag = ERROR_BOUNDARY_SCRIPT + AGENT_SCRIPT_TAG(base);
 
     const headOpen = /<head[^>]*>/i.exec(html);
     if (headOpen) {

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🪄 Open-Source AI App Builder
+# 🪄 bigbag-vibe-coding
 
 ### Type a prompt, get a working full-stack **Next.js** app — hosted, with a database, auth, a visual editor, GitHub sync, Figma and custom domains already built in.
 

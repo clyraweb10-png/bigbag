@@ -33,7 +33,7 @@ export function PreviewPanel({ previewUrl, onRefresh, loading, mobilePreview = f
   const [iframeLoading, setIframeLoading] = useState(true);
   /** ⚠️ The proxy wins when present — see `proxiedSrc`. */
   const base = (proxiedSrc || previewUrl || "").replace(/\/$/, "");
-  const fullIframeUrl = base ? `${base}${iframePath === "/" ? "" : iframePath}` : null;
+  const fullIframeUrl = base ? (iframePath === "/" ? `${base}/` : `${base}${iframePath}`) : null;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -81,7 +81,6 @@ export function PreviewPanel({ previewUrl, onRefresh, loading, mobilePreview = f
               src={fullIframeUrl || undefined}
               className="w-full h-full border-0"
               title="Preview"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
               onLoad={() => setIframeLoading(false)}
             />
           </div>

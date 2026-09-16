@@ -1,0 +1,31 @@
+services:
+  ai-app-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-app-builder-open:latest
+    container_name: ai-app-builder-open
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - ORCHESTRATOR_MODE=${ORCHESTRATOR_MODE:-local}
+      - SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-local}
+      - E2B_API_KEY=${E2B_API_KEY:-}
+      - GLM_API_KEY=${GLM_API_KEY:-}
+      - GLM_BASE_URL=${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - GLM_MODEL=${GLM_MODEL:-glm-4.5-flash}
+      - GLM_MAX_TOKENS=${GLM_MAX_TOKENS:-16384}
+      - GLM_API_KEY_2=${GLM_API_KEY_2:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-qwen/qwen3.8-27b}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-inclusionai/ling-3.0-flash-vl:free}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - TOTALUM_VCAAS_API_KEY=${TOTALUM_VCAAS_API_KEY:-local-orchestrator-active}
+    volumes:
+      - ./data:/app/data
+      - ./workspaces:/app/workspaces

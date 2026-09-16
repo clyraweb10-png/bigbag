@@ -5,11 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { vcaasApi } from "@/lib/vcaas";
 import { Button } from "@/components/ui/button";
 import {
-  Rocket, Loader2, Eye, Database, Key, Globe, Terminal,
-  RefreshCw, Server, PanelLeftClose, PanelLeft, Monitor, Smartphone,
-  ExternalLink, Sparkles, ChevronDown, FolderOpen, Plus,
-  Clock, Github, Code2, ArrowLeft, Figma, Copy,
+  Rocket, Loader2, Key, Globe, Terminal,
+  Server, PanelLeftClose, PanelLeft, Laptop, Smartphone,
+  ExternalLink, ChevronDown, FolderOpen, Plus,
+  Github, ArrowLeft, Figma, Copy,
+  RotateCw, Compass, HardDrive, Braces, History, KeyRound, Boxes,
 } from "lucide-react";
+import { useTheme } from "next-themes";
+import { BigBagLogo } from "@/components/BigBagLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChatPanel } from "@/components/workspace/ChatPanel";
@@ -50,7 +54,13 @@ import { t as translate } from "@/i18n";
 function getPreviewUrlFromProject(proj: VcaasProject): string | null {
   const field = proj.developmentUrlFieldToUse || "temporalDevelopmentProjectUrl";
   const url = (proj as unknown as Record<string, unknown>)[field] || proj.temporalDevelopmentProjectUrl;
-  return (url as string) || null;
+  const finalUrl = (url as string) || null;
+
+  if (finalUrl?.includes("e2b.app")) {
+    return `/api/preview/${proj.projectId}`;
+  }
+
+  return finalUrl;
 }
 
 // True when the preview being shown is the cached snapshot (dev server not active).
@@ -296,15 +306,15 @@ export default function WorkspacePage() {
   const blocked = useServerBlocked();
 
   const TABS = [
-    { id: "preview", label: "Preview", icon: Eye },
-    { id: "database", label: "Database", icon: Database },
-    { id: "code", label: "Code", icon: Code2 },
+    { id: "preview", label: "Preview", icon: Compass },
+    { id: "database", label: "Database", icon: HardDrive },
+    { id: "code", label: "Code", icon: Braces },
   ];
 
   // The errands, for the mobile menu: each opens a modal rather than a tab.
-  const MODAL_ENTRIES: { id: WorkspaceModal | "logs"; label: string; icon: typeof Clock }[] = [
-    { id: "versions", label: "Versions", icon: Clock },
-    { id: "secrets", label: "Secrets", icon: Key },
+  const MODAL_ENTRIES: { id: WorkspaceModal | "logs"; label: string; icon: typeof History }[] = [
+    { id: "versions", label: "Versions", icon: History },
+    { id: "secrets", label: "Secrets", icon: KeyRound },
     { id: "domain", label: "Custom domain", icon: Globe },
     { id: "github", label: "GitHub", icon: Github },
     { id: "figma", label: "Figma", icon: Figma },
@@ -353,7 +363,8 @@ export default function WorkspacePage() {
   const [mobileTab, setMobileTab] = useState<"chat" | "panel">("panel");
   const [mobilePreview, setMobilePreview] = useState(false);
   const [iframePath, setIframePath] = useState("/");
-  const [darkMode, setDarkMode] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const darkMode = resolvedTheme === "dark";
   const [menuOpen, setMenuOpen] = useState(false);
   const [diffSource, setDiffSource] = useState<DiffSource | null>(null);
   /**
@@ -400,12 +411,7 @@ export default function WorkspacePage() {
 
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
-  // Global dark mode
-  useEffect(() => {
-    if (darkMode) { document.documentElement.classList.add("dark"); document.body.style.background = "#1a1a1a"; document.body.style.color = "#e5e5e5"; }
-    else { document.documentElement.classList.remove("dark"); document.body.style.background = ""; document.body.style.color = ""; }
-    return () => { document.documentElement.classList.remove("dark"); document.body.style.background = ""; document.body.style.color = ""; };
-  }, [darkMode]);
+
 
   // Close menu on outside click or iframe blur
   useEffect(() => {
@@ -1265,35 +1271,23 @@ export default function WorkspacePage() {
 
   const isBuilding = project?.agentProcessStatus === "init";
   /**
-   * ═══⭐ THE FIRST BUILD SHOWS THE LOADER, NEVER THE TEMPORAL PREVIEW ═════════
-   *
-   * ⚠️⚠️ VCaaS PUBLISHES `temporalDevelopmentProjectUrl` AS SOON AS THE SANDBOX EXISTS,
-   * minutes before the very first build serves anything. So on the FIRST prompt, a page
-   * reload would set `previewUrl` from that link and point an iframe at a server that is
-   * not up yet — the user watching their first build gets a broken preview instead of the
-   * loader. A not-yet-built app is the EXPECTED state during the first run, not an error.
-   *
-   * "Has never completed a build" = the conversation carries no `finished` message. It is
-   * refetched on every load (the page's full-screen `loading` gate holds render until the
-   * conversation has resolved), so this is reload-proof. ONLY the first build: a follow-up
-   * run has a prior `finished` message, so it keeps showing the existing preview while it
-   * rebuilds. And it self-releases anyway the moment `isBuilding` turns false.
+   * Local orchestrator seeds a real Next.js app before the first prompt finishes,
+   * so the iframe can stay up during generation (HMR updates as files land).
    */
-  const isFirstBuild = isBuilding && !messages.some((m) => m.messageType === "finished");
-  const shownPreviewUrl = isFirstBuild ? null : previewUrl;
+  const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#1a1a1a" : "#fcfbf8";
-  const cardBg = darkMode ? "#222" : "#fff";
-  const btnBorder = darkMode ? "border-gray-700/60" : "border-gray-200/60";
+  const pageBg = darkMode ? "#0B0B0A" : "#FAFAF7";
+  const cardBg = darkMode ? "#151513" : "#FFFFFF";
+  const btnBorder = darkMode ? "border-[#3A3A3A]" : "border-[#DDDDD5]";
 
-  if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 dark:text-gray-200" style={{ background: pageBg }}><Loader2 className="w-7 h-7 animate-spin" /><p className="text-sm text-gray-400">{"Loading..."}</p></div>;
-  if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 dark:text-gray-200" style={{ background: pageBg }}><p className="text-gray-500">Project not found</p><Link href="/"><Button variant="outline">{"Back"}</Button></Link></div>;
+  if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
+  if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
   const popupMenu = menuOpen && (
-    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: darkMode ? "#2a2a2a" : "#fff", border: `1px solid ${darkMode ? "#444" : "#e5e5e5"}` }}>
-      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#444" : "#eee" }}>
-        <p className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">{projectId}</p>
+    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: cardBg, border: `1px solid ${darkMode ? "#3A3A3A" : "#DDDDD5"}` }}>
+      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#3A3A3A" : "#DDDDD5" }}>
+        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{projectId}</p>
       </div>
       <div className="py-1">
         <button onClick={() => { setMenuOpen(false); router.push("/"); }}
@@ -1365,56 +1359,49 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden dark:text-gray-200" style={{ background: pageBg }} onClickCapture={markWorkspaceTouched}>
+    <div className="h-screen flex flex-col overflow-hidden text-foreground" style={{ background: pageBg }} onClickCapture={markWorkspaceTouched}>
       {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
 
       {/* ═══ DESKTOP LAYOUT ═══ */}
       <div className="hidden sm:flex flex-col h-full">
         {/* Desktop header 48px */}
-        <header data-workspace-header className="flex items-stretch shrink-0 z-10" style={{ height: 48 }}>
+        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
           {/* LEFT: aside width */}
           <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
-            <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0">
+            <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="relative flex-1 min-w-0" ref={menuRef}>
-              <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 max-w-full rounded-lg px-1.5 py-1 hover:bg-black/5 dark:hover:bg-white/10 transition-colors">
-                <div className="w-5 h-5 rounded bg-gray-900 dark:bg-white flex items-center justify-center shrink-0"><Sparkles className="w-2.5 h-2.5 text-white dark:text-gray-900" /></div>
-                <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">{project.label || projectId}</span>
-                <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
+              <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 max-w-full rounded-lg px-2 py-1 hover:bg-accent transition-colors border border-transparent hover:border-border">
+                <BigBagLogo size="sm" hideText />
+                <span className="text-sm font-semibold text-foreground truncate">{project.label || projectId}</span>
+                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
               </button>
               {popupMenu}
             </div>
-            <button onClick={() => setOpenModal("versions")} className={`h-7 w-7 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10`} title={translate("workspace.versions.title")}>
-              <Clock className="w-3.5 h-3.5" />
+            <button onClick={() => setOpenModal("versions")} className={`h-7 w-7 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-muted-foreground hover:text-foreground hover:bg-accent`} title={translate("workspace.versions.title")}>
+              <History className="w-3.5 h-3.5" />
             </button>
-            <button onClick={() => setChatCollapsed(!chatCollapsed)} className={`h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 border ${btnBorder} transition-colors shrink-0`}>
+            <button onClick={() => setChatCollapsed(!chatCollapsed)} className={`h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent border ${btnBorder} transition-colors shrink-0`}>
               {chatCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
             </button>
           </div>
           {/* RIGHT: preview width */}
-          <div className="flex items-center flex-1 min-w-0 gap-1.5 px-3">
-            <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
+            <div className="flex items-center gap-1 shrink-0 p-0.5 rounded-lg border border-border bg-secondary/50">
               {TABS.map((tab) => (
                 <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-1 h-7 px-2.5 rounded-lg text-sm font-medium transition-all border ${btnBorder} ${activeTab === tab.id ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 bg-transparent"}`}>
+                  className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-all ${activeTab === tab.id ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:text-foreground hover:bg-card/60"}`}>
                   <tab.icon className="w-3.5 h-3.5" /><span className="hidden lg:inline">{tab.label}</span>
                 </button>
               ))}
             </div>
             <div className="flex-1 flex items-center justify-center min-w-0">
-              <div className={`flex items-center h-7 w-[320px] rounded-full border ${btnBorder} px-1.5 gap-1`}>
+              <div className={`flex items-center h-8 w-[340px] rounded-full border ${btnBorder} bg-card/80 px-2 gap-1.5 shadow-xs`}>
                 {/* ⭐ Logs open as a dialog from the address bar — the platform's placement. */}
-                <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
-                <div className="w-px h-3.5 bg-gray-200 dark:bg-gray-600 shrink-0" />
-                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Monitor className="w-3.5 h-3.5" />}</button>
-                {/*
-                  ⭐ THE ADDRESS BOX LISTS THE PROJECT'S OWN PAGES. It was a bare text
-                  input, so reaching any page but `/` meant knowing its URL by heart.
-                  `PathPicker` (the platform's, copied) reads the file tree — free, not
-                  the charged source download — turns the route files into a list, and
-                  filters it as you type; picking one navigates the preview.
-                */}
+                <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-muted-foreground hover:text-foreground" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
+                <div className="w-px h-3.5 bg-border shrink-0" />
+                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0">{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}</button>
                 <PathPicker
                   projectId={projectId}
                   path={iframePath}
@@ -1422,24 +1409,14 @@ export default function WorkspacePage() {
                   onRefresh={() => setPreviewKey((k) => k + 1)}
                   className="flex-1 min-w-0"
                 />
-                <button className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0" onClick={() => { fetchProject(); setPreviewKey((k) => k + 1); }}><RefreshCw className="w-3.5 h-3.5" /></button>
-                {previewUrl && <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>}
+                <button className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0" onClick={() => { fetchProject(); setPreviewKey((k) => k + 1); }}><RotateCw className="w-3.5 h-3.5" /></button>
+                {previewUrl && <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>}
               </div>
             </div>
-            {/*
-              ⭐ THE HEADER KEEPS ONLY WHAT IS NOT A PROMPT TOOL: Secrets and Publish.
-              GitHub, Figma and the visual editor moved into the composer's tool tray
-              (see `ChatPanel`), where the platform puts them — they act on what you are
-              about to type, so they sit next to where you type it.
-            */}
-            <button onClick={() => setOpenModal("secrets")} className={`h-7 w-7 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10`} title={translate("workspace.secrets.title")}>
-              <Key className="w-3.5 h-3.5" />
+            <button onClick={() => setOpenModal("secrets")} className={`h-8 w-8 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-muted-foreground hover:text-foreground hover:bg-accent`} title={translate("workspace.secrets.title")}>
+              <KeyRound className="w-3.5 h-3.5" />
             </button>
-            {/*
-              ⭐⭐ PUBLISH — the platform's control: the button, the dialog that says what
-              publishing does (public address, ~3 minutes, 1 credit) and the custom-domain
-              row with its DNS-propagation notice. Copied unchanged from totalum-platform.
-            */}
+            <ThemeToggle showLabel={false} />
             <DeployControl
               projectId={projectId}
               project={project}
@@ -1492,7 +1469,7 @@ export default function WorkspacePage() {
               </div>
             )}
             <div className={`flex-1 overflow-hidden ${activeTab === "preview" ? "rounded-none" : "m-2 sm:m-3 rounded-xl shadow-sm"}`} style={{ background: cardBg }}>
-              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} /* ⭐ Same-origin ONLY while the editor is open — and for the length of an apply, which outlives the panel: dropping the proxy mid-apply would reload the frame and throw away the preview-only edits the user is watching. */ proxiedSrc={visualEditorOpen || visualLocked ? `/api/preview/${encodeURIComponent(projectId)}` : null} />}
+              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} proxiedSrc={`/api/preview/${encodeURIComponent(projectId)}`} />}
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>
@@ -1551,18 +1528,21 @@ export default function WorkspacePage() {
       {/* ═══ MOBILE LAYOUT: header → content → fixed switch → fixed textarea ═══ */}
       <div className="flex sm:hidden flex-col h-full">
         {/* Mobile header */}
-        <header data-workspace-header className="flex items-center gap-1 px-2 shrink-0 z-10" style={{ height: 44 }}>
-          <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0">
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div className="relative" ref={menuRef}>
-            <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors">
-              <div className="w-5 h-5 rounded bg-gray-900 dark:bg-white flex items-center justify-center shrink-0"><Sparkles className="w-2.5 h-2.5 text-white dark:text-gray-900" /></div>
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate max-w-[160px]">{project.label || projectId}</span>
-              <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
-            </button>
-            {popupMenu}
+        <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b" style={{ height: 44, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
+          <div className="flex items-center gap-1.5">
+            <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+            <div className="relative" ref={menuRef}>
+              <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-accent transition-colors">
+                <BigBagLogo size="sm" hideText />
+                <span className="text-sm font-semibold text-foreground truncate max-w-[160px]">{project.label || projectId}</span>
+                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
+              </button>
+              {popupMenu}
+            </div>
           </div>
+          <ThemeToggle showLabel={false} />
         </header>
 
         {/*
@@ -1586,7 +1566,7 @@ export default function WorkspacePage() {
             </div>
           ) : (
             <div className="h-full overflow-hidden">
-              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={false} iframePath={iframePath} />}
+              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={false} iframePath={iframePath} proxiedSrc={`/api/preview/${encodeURIComponent(projectId)}`} />}
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>

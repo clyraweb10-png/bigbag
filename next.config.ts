@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
   // during `next dev`). Compile/runtime errors are still surfaced.
   devIndicators: false,
   allowedDevOrigins: ["*"],
+  skipTrailingSlashRedirect: true,
   async headers() {
     // Only cache-control headers here. CSP and CORS are handled exclusively in proxy.ts
     return [

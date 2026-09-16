@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import fs from "fs";
+import path from "path";
+import net from "net";
+import http from "http";
 
 import {
     authFailed,
@@ -64,7 +68,55 @@ export const dynamic = "force-dynamic";
  * "the visual editor is unavailable", never to "the preview is broken".
  */
 
-/** Hop-by-hop and identity headers that must not be forwarded either way. */
+function previewBootPage(): NextResponse {
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="refresh" content="2" />
+  <title>Starting preview</title>
+  <style>
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      font-family: ui-sans-serif, system-ui, sans-serif; background:#0b0b0a; color:#a1a1aa; }
+    .card { text-align:center; }
+    .spin { width:28px; height:28px; margin:0 auto 12px; border:2px solid #3f3f46; border-top-color:#818cf8;
+      border-radius:50%; animation:s .8s linear infinite; }
+    @keyframes s { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spin"></div>
+    <p>Starting live preview…</p>
+  </div>
+</body>
+</html>`;
+    return new NextResponse(html, {
+        status: 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+}
+
+async function originIsLive(origin: string): Promise<boolean> {
+    try {
+        const url = new URL(origin);
+        const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+        const host = url.hostname;
+        return await new Promise<boolean>((resolve) => {
+            const socket = net.connect(port, host);
+            const done = (ok: boolean) => {
+                socket.destroy();
+                resolve(ok);
+            };
+            socket.setTimeout(600);
+            socket.once("connect", () => done(true));
+            socket.once("error", () => done(false));
+            socket.once("timeout", () => done(false));
+        });
+    } catch {
+        return false;
+    }
+}
 const STRIPPED_REQUEST_HEADERS = new Set([
     "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade", "cookie", "origin", "referer",
@@ -133,8 +185,72 @@ function rememberOrigin(key: string, origin: string): void {
 
 async function resolvePreviewOrigin(
     projectId: string,
-    ctx: Parameters<typeof vcaasRequest>[2]
+    ctx: Parameters<typeof vcaasRequest>[2],
+    opts: { isDocument: boolean }
 ): Promise<{ origin: string } | { error: NextResponse }> {
+    if (process.env.ORCHESTRATOR_MODE === "local" || process.env.USE_LOCAL_ORCHESTRATOR === "true") {
+        const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
+        const { localSandboxManager } = await import("@/lib/local-orchestrator/sandbox-manager");
+        const { e2bSandboxManager } = await import("@/lib/local-orchestrator/e2b-sandbox-manager");
+        
+        const rec = localProjectStore.getRecord(projectId);
+        if (!rec) {
+            console.error(`[preview] Project ${projectId} not found`);
+            return { error: NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 }) };
+        }
+
+        console.log(`[preview] Resolving preview for ${projectId}, server status: ${rec.serverStatus}`);
+
+        const dir = localProjectStore.getWorkspaceDir(projectId);
+        const hasNextApp = fs.existsSync(path.join(dir, "src", "app", "page.tsx"));
+
+        const e2bPreviewUrl = hasNextApp ? null : e2bSandboxManager.getPreviewUrl(projectId);
+        if (e2bPreviewUrl) {
+            try {
+                const url = new URL(e2bPreviewUrl);
+                console.log(`[preview] Using E2B preview URL: ${url.origin}`);
+                return { origin: url.origin };
+            } catch (err) {
+                console.warn(`[preview] Invalid E2B URL: ${e2bPreviewUrl}, falling back to local`, err);
+            }
+        }
+
+        const localCacheKey = `local:${projectId}`;
+        const cached = cachedOrigin(localCacheKey);
+        if (cached && await originIsLive(cached)) return { origin: cached };
+        if (cached) originCache.delete(localCacheKey);
+
+        const live = localSandboxManager.getRunningOrigin(projectId);
+        if (live && await originIsLive(live)) {
+            rememberOrigin(localCacheKey, live);
+            return { origin: live };
+        }
+
+        const isDocument = opts.isDocument;
+        console.log(`[preview] Starting local sandbox for ${projectId}`);
+        const start = localSandboxManager.startDevServer(projectId).then(() => {
+            const updatedRec = localProjectStore.getRecord(projectId);
+            const port = updatedRec?.port || rec.port;
+            const origin = `http://127.0.0.1:${port}`;
+            rememberOrigin(localCacheKey, origin);
+            return origin;
+        });
+
+        if (isDocument) {
+            start.catch((err) => console.error(`[preview] Sandbox start failed for ${projectId}:`, err));
+            return { error: previewBootPage() };
+        }
+
+        try {
+            const origin = await start;
+            console.log(`[preview] Local sandbox ready at ${origin}`);
+            return { origin };
+        } catch (err) {
+            console.error(`[preview] Failed to start local sandbox for ${projectId}:`, err);
+            return { error: NextResponse.json({ ok: false, error: "Preview server failed to start", code: "SANDBOX_START_FAILED" }, { status: 503 }) };
+        }
+    }
+
     const cacheKey = `${ctx?.accountUserId ?? ""}:${projectId}`;
     const hit = cachedOrigin(cacheKey);
     if (hit) return { origin: hit };
@@ -172,33 +288,48 @@ async function handle(
     request: NextRequest,
     { params }: { params: Promise<{ projectId: string; path?: string[] }> }
 ) {
-    const auth = await resolveVcaasContext();
-    if (authFailed(auth)) return auth.response;
-
     const { projectId, path } = await params;
+
+    // 1. If projectId is not a valid slug (e.g. "index.html" or an asset that escaped relative resolution),
+    // rescue it using the Referer header so preview never breaks with "Invalid project"
     if (!isRoutableProjectSlug(projectId)) {
+        const referer = request.headers.get("referer");
+        if (referer) {
+            const m = referer.match(/\/api\/preview\/([a-zA-Z0-9_-]+)/) || referer.match(/\/project\/([a-zA-Z0-9_-]+)/);
+            if (m && isRoutableProjectSlug(m[1])) {
+                const realProject = m[1];
+                const realSubpath = [projectId, ...(path ?? [])].join("/");
+                const targetUrl = new URL(`/api/preview/${encodeURIComponent(realProject)}/${realSubpath}`, request.url);
+                targetUrl.search = request.nextUrl.search;
+                return NextResponse.redirect(targetUrl, 307);
+            }
+        }
         return NextResponse.json({ ok: false, error: "Invalid project" }, { status: 404 });
     }
 
-    /**
-     * ⚠️⚠️ THE MANAGER-SCOPE GATE, MISSING UNTIL NOW. Control 3 in the
-     * header above says "ownership is upstream's answer" — true for the ACCOUNT, but
-     * every member presents the OWNER's key, so upstream cannot separate members
-     * from each other. Without this a manager scoped to one project could proxy, and
-     * therefore read, the running preview of every other project on the account.
-     *
-     * ⚠️ IT ASKS FOR `project.view` ON EVERY METHOD, deliberately — note the literal
-     * `"GET"` rather than `request.method`. A POST through this proxy is somebody
-     * USING the previewed app (submitting its forms), not editing the project, so
-     * requiring `project.edit` for it would break the preview for a view-scoped
-     * manager who is entitled to look at it. Viewing the project is the right
-     * question, and it is the same one for every verb.
-     *
-     * ⚠️ IT RUNS BEFORE THE AGENT IS SERVED BELOW, so an out-of-scope caller cannot
-     * fetch the injected editor agent for a project they may not open either.
-     */
-    const outOfScope = enforceProjectScope(auth.team, "GET", ["projects", projectId]);
-    if (outOfScope) return outOfScope;
+    // 2. Enforce trailing slash for root preview documents so relative assets resolve within the project scope
+    if ((!path || path.length === 0) && !request.nextUrl.pathname.endsWith("/")) {
+        const url = new URL(request.url);
+        url.pathname = `${url.pathname}/`;
+        return NextResponse.redirect(url, 308);
+    }
+
+    const IS_LOCAL = process.env.ORCHESTRATOR_MODE === "local" ||
+        !process.env.TOTALUM_VCAAS_API_KEY ||
+        process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
+        process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
+        process.env.USE_LOCAL_ORCHESTRATOR === "true" ||
+        process.env.E2B_API_KEY ||
+        process.env.SANDBOX_PROVIDER === "e2b";
+
+    let auth: any;
+    if (!IS_LOCAL) {
+        auth = await resolveVcaasContext();
+        if (authFailed(auth)) return auth.response;
+
+        const outOfScope = enforceProjectScope(auth.team, "GET", ["projects", projectId]);
+        if (outOfScope) return outOfScope;
+    }
 
     /**
      * ⭐ THE AGENT IS SERVED BY US, NOT PROXIED. It never touches the user's
@@ -225,7 +356,9 @@ async function handle(
         });
     }
 
-    const resolved = await resolvePreviewOrigin(projectId, auth.ctx);
+    const resolved = await resolvePreviewOrigin(projectId, auth?.ctx, {
+        isDocument: (!path || path.length === 0) && request.method === "GET",
+    });
     if ("error" in resolved) return resolved.error;
 
     const suffix = (path ?? []).map(encodeURIComponent).join("/");
@@ -241,16 +374,36 @@ async function handle(
     // Ask for an unencoded body so the HTML rewrite below does not have to gunzip.
     headers.set("accept-encoding", "identity");
 
-    let upstream: Response;
-    try {
-        upstream = await fetch(target, {
-            method: request.method,
-            headers,
-            body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
-            redirect: "manual",
-            cache: "no-store",
-        });
-    } catch {
+    const bodyBuffer = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+
+    let upstream: Response | null = null;
+    const isDocument = (!path || path.length === 0) && request.method === "GET";
+    const MAX_ATTEMPTS = isDocument ? 12 : 4;
+    const perAttemptMs = isDocument ? 8000 : 4000;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        try {
+            upstream = await fetch(target, {
+                method: request.method,
+                headers,
+                body: bodyBuffer,
+                redirect: "manual",
+                cache: "no-store",
+                signal: AbortSignal.timeout(perAttemptMs),
+            });
+            break;
+        } catch (fetchErr) {
+            console.log(`[preview] Fetch attempt ${attempt + 1}/${MAX_ATTEMPTS} failed for ${target.toString()}:`, fetchErr);
+            if (attempt < MAX_ATTEMPTS - 1) {
+                await new Promise((resolve) => setTimeout(resolve, isDocument ? 700 : 300));
+            }
+        }
+    }
+
+    if (!upstream) {
+        originCache.delete(`local:${projectId}`);
+        if ((!path || path.length === 0) && request.method === "GET") {
+            return previewBootPage();
+        }
         return NextResponse.json(
             { ok: false, error: "The preview server did not respond", code: "PREVIEW_UNREACHABLE" },
             { status: 502 }

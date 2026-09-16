@@ -5,16 +5,20 @@ const isProduction = process.env.NODE_ENV === "production";
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
 // Extract origin from app URL (e.g. "https://my-app.com" from "https://my-app.com/")
 const appOrigin = appUrl ? new URL(appUrl).origin : "";
+// Optional: comma-separated list of additional allowed origins for custom deployments
+const extraAllowedOrigins = new Set(
+  (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean)
+);
 
 /**
- * Check if an origin is allowed for CORS
+ * Check if an origin is allowed for CORS.
  * - Development: any origin
- * - Production: NEXT_PUBLIC_APP_URL, *.totalum-project.com, or same-host (custom domains)
+ * - Production: NEXT_PUBLIC_APP_URL, ALLOWED_ORIGINS env, or same-host (custom domains)
  */
 function isAllowedOrigin(origin: string, request: NextRequest): boolean {
   if (!isProduction) return true;
   if (appOrigin && origin === appOrigin) return true;
-  if (/^https:\/\/[^/]+\.totalum-project\.com$/.test(origin)) return true;
+  if (extraAllowedOrigins.has(origin)) return true;
 
   // Trust same-host requests — custom domains served by this same server
   const host = request.headers.get("host");

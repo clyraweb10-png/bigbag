@@ -7,11 +7,17 @@ import {
     isRoutableProjectSlug,
     resolveVcaasContext,
 } from "../../../vcaas/_shared";
-import { vcaasRequest } from "@/lib/vcaas-server";
 import { applyEdits, verifyEdits, type VisualChange } from "@/lib/visual-edit";
 import { resolveChangesDeep } from "@/lib/visual-edit-resolve";
 import { installSourceTags } from "@/lib/visual-edit-upgrade";
 import { publicUrlRejectionReason } from "@/lib/safe-url";
+
+const IS_LOCAL_MODE =
+    process.env.ORCHESTRATOR_MODE === "local" ||
+    !process.env.TOTALUM_VCAAS_API_KEY ||
+    process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
+    process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
+    process.env.USE_LOCAL_ORCHESTRATOR === "true";
 
 export const dynamic = "force-dynamic";
 
@@ -120,7 +126,11 @@ function fileWriteBody(path: string, content: string): string {
  * is to prove THE PATH WE ACTUALLY USE is faithful; encoding it differently from the
  * real writes would make it answer a question nobody asked.
  */
-async function probeWriteFidelity(base: string, ctx: Parameters<typeof vcaasRequest>[2]): Promise<boolean> {
+async function probeWriteFidelity(
+    base: string,
+    ctx: any,
+    vcaasRequest: (path: string, init?: RequestInit | Record<string, any>, ctx?: any) => Promise<Response>
+): Promise<boolean> {
     const path = ".totalum/visual-edit-write-check.txt";
     const content = `<div id="c" className="a b">x</div> ${Date.now()}`;
 
@@ -226,11 +236,220 @@ export async function POST(
     request: NextRequest,
     { params }: { params: Promise<{ projectId: string }> }
 ) {
-    const auth = await resolveVcaasContext();
-    if (authFailed(auth)) return auth.response;
-
     const { projectId } = await params;
     if (!isRoutableProjectSlug(projectId)) return fail("PROJECT_NOT_FOUND", 404);
+
+    /**
+     * ═══ LOCAL MODE ═════════════════════════════════════════════════════════
+     *
+     * Reads and writes files through localFileManager (disk I/O), skips
+     * Totalum auth / billing / write-fidelity-probe, and triggers sandbox
+     * HMR restart instead of calling the Totalum rebuild API.
+     *
+     * The core edit logic (resolveChangesDeep, applyEdits, verifyEdits) is
+     * identical — only the I/O layer changes.
+     */
+    if (IS_LOCAL_MODE) {
+        const { localFileManager } = await import("@/lib/local-orchestrator/file-manager");
+        const { localSandboxManager } = await import("@/lib/local-orchestrator/sandbox-manager");
+
+        let body: { changes?: VisualChange[] };
+        try {
+            body = (await request.json()) as { changes?: VisualChange[] };
+        } catch {
+            return fail("VALIDATION_ERROR", 400);
+        }
+
+        const changes = Array.isArray(body.changes) ? body.changes.slice(0, 100) : [];
+        if (changes.length === 0) return fail("NO_CHANGES", 400);
+
+        // 1. Read file tree from disk
+        const tree = localFileManager.getTree(projectId);
+        const allSourcePaths = tree.entries
+            .filter(e => e.type === "file" && SOURCE_EXTENSIONS.some(ext => e.path.endsWith(ext)))
+            .map(e => e.path);
+
+        if (allSourcePaths.length === 0) {
+            return fail("NO_SOURCE_FILES", 409, "This project has no editable source files.");
+        }
+
+        const sourcePaths = allSourcePaths.slice(0, MAX_FILES);
+
+        // 2. Read source files from disk
+        const files = new Map<string, string>();
+        for (const filePath of sourcePaths) {
+            const result = localFileManager.getContent(projectId, filePath);
+            if (result && result.encoding === "utf8") {
+                files.set(filePath, result.content);
+            }
+        }
+
+        if (files.size === 0) {
+            return fail("READ_FAILED", 502, "We couldn't read this project's source files.");
+        }
+
+        // Internalise uploaded images: download and save to public/uploads/
+        const assetsCopied: { from: string; to: string }[] = [];
+        const assetFailures: { url: string; reason: string }[] = [];
+        const internalised = new Map<string, string>();
+
+        for (const change of changes) {
+            if (change.kind !== "src" || !change.uploaded) continue;
+            if (!/^https?:\/\//i.test(change.after)) continue;
+            if (internalised.has(change.after)) {
+                change.after = internalised.get(change.after)!;
+                continue;
+            }
+
+            const original = change.after;
+            try {
+                const rejection = await publicUrlRejectionReason(original);
+                if (rejection) throw new Error(rejection);
+
+                const download = await fetch(original, {
+                    signal: AbortSignal.timeout(20_000),
+                    redirect: "error",
+                });
+                if (!download.ok) throw new Error(`HTTP ${download.status}`);
+
+                const contentType = download.headers.get("content-type") ?? "";
+                if (!/^(image|video)\//i.test(contentType)) throw new Error(`not media (${contentType || "no type"})`);
+
+                const bytes = Buffer.from(await download.arrayBuffer());
+                if (bytes.length === 0) throw new Error("empty");
+                if (bytes.length > MAX_ASSET_BYTES) throw new Error("too large");
+
+                const name = assetName(bytes, contentType, original);
+                const path = `${UPLOAD_DIR}/${name}`;
+                localFileManager.writeContent(projectId, path, bytes.toString("base64"), "base64");
+
+                const publicPath = `/${path.slice("public/".length)}`;
+                internalised.set(original, publicPath);
+                assetsCopied.push({ from: original, to: publicPath });
+                change.after = publicPath;
+            } catch (error) {
+                assetFailures.push({ url: original, reason: error instanceof Error ? error.message : "unknown" });
+            }
+        }
+
+        // 3. Resolve and apply edits (same logic as Totalum mode)
+        const { edits, unmapped, satisfied, engine } = resolveChangesDeep(files, changes);
+
+        if (edits.length === 0) {
+            return NextResponse.json({
+                ok: true,
+                data: {
+                    applied: satisfied.map(changeId => ({
+                        changeId, filePath: null, confident: true, score: 0, alreadySatisfied: true,
+                    })),
+                    unmapped, filesWritten: 0, rebuildStarted: false, engine,
+                },
+            }, { status: 200 });
+        }
+
+        const { files: updated, applied, skipped } = applyEdits(files, edits);
+        for (const edit of skipped) {
+            unmapped.push({ changeId: edit.changeId, reason: "overlapping", occurrences: 1 });
+        }
+
+        // Verify edits — drop unsafe writes
+        const unsafeWrites: { path: string; reason: string }[] = [];
+        for (const [filePath, content] of [...updated]) {
+            const original = files.get(filePath);
+            const check = original === undefined
+                ? { safe: false as const, reason: "the original was not read" }
+                : verifyEdits(original, content, applied.filter(e => e.filePath === filePath));
+            if (!check.safe) {
+                unsafeWrites.push({ path: filePath, reason: (check as { reason: string }).reason });
+                updated.delete(filePath);
+            }
+        }
+
+        if (updated.size === 0) {
+            return NextResponse.json({
+                ok: false, code: "UNSAFE_WRITE",
+                error: "We could not safely apply these changes, so nothing was written.",
+                data: { unmapped, unsafeWrites },
+            }, { status: 409 });
+        }
+
+        // 4. Write files to disk (no write-fidelity probe needed — local disk is always faithful)
+        const written: string[] = [];
+        for (const [filePath, content] of updated) {
+            localFileManager.writeContent(projectId, filePath, content, "utf8");
+            written.push(filePath);
+        }
+
+        // 5. Source tag install (local disk I/O)
+        let sourceTagInstall: { status: string; configPath?: string } | null = null;
+        if (!engine.sourceTagged && unmapped.length > 0) {
+            try {
+                sourceTagInstall = await installSourceTags({
+                    read: async (path) => {
+                        const result = localFileManager.getContent(projectId, path);
+                        if (!result || result.encoding !== "utf8") return null;
+                        return result.content;
+                    },
+                    write: async (path, content) => {
+                        localFileManager.writeContent(projectId, path, content, "utf8");
+                        return true;
+                    },
+                });
+            } catch (error) {
+                console.error("[visual-edit] source-tag install failed:", error);
+            }
+        }
+
+        // 6. Restart sandbox for HMR to pick up changes
+        try {
+            await localSandboxManager.startDevServer(projectId);
+        } catch (e) {
+            console.warn("[visual-edit] sandbox restart failed:", e);
+        }
+
+        return NextResponse.json({
+            ok: true,
+            data: {
+                applied: [
+                    ...[...new Map(
+                        applied
+                            .filter(edit => written.includes(edit.filePath))
+                            .flatMap(edit =>
+                                (edit.changeIds ?? [edit.changeId]).map(
+                                    changeId => [changeId, {
+                                        changeId, filePath: edit.filePath,
+                                        confident: edit.confident, score: edit.score,
+                                    }] as const
+                                )
+                            )
+                    ).values()],
+                    ...satisfied.map(changeId => ({
+                        changeId, filePath: null, confident: true, score: 0, alreadySatisfied: true,
+                    })),
+                ],
+                unmapped,
+                filesWritten: written.length,
+                writeFailures: [],
+                rebuildStarted: true,
+                rebuildCode: null,
+                billing: { charged: false, amount: 0, reason: "local-mode" },
+                filesTruncated: Math.max(0, allSourcePaths.length - sourcePaths.length),
+                unsafeWrites,
+                assetsCopied,
+                assetFailures,
+                sourceTagInstall,
+                engine,
+            },
+        }, { status: 200 });
+    }
+
+    /**
+     * ═══ TOTALUM / REMOTE MODE (original path) ═════════════════════════════
+     */
+    const { vcaasRequest } = await import("@/lib/vcaas-server");
+
+    const auth = await resolveVcaasContext();
+    if (authFailed(auth)) return auth.response;
 
     /**
      * ⚠️⚠️ THE MANAGER-SCOPE GATE. THIS ROUTE WRITES SOURCE FILES, and it did not
@@ -560,7 +779,7 @@ export async function POST(
      * thereafter, and a "faithful" one never probes again.
      */
     if (writeFidelity === "unknown") {
-        writeFidelity = (await probeWriteFidelity(base, auth.ctx)) ? "faithful" : "unfaithful";
+        writeFidelity = (await probeWriteFidelity(base, auth.ctx, vcaasRequest)) ? "faithful" : "unfaithful";
     }
 
     if (writeFidelity === "unfaithful") {

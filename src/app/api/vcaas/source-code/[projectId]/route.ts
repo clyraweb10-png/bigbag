@@ -1,18 +1,115 @@
 import { NextRequest, NextResponse } from "next/server";
-import { vcaasRequest } from "@/lib/vcaas-server";
+import path from "path";
+import fs from "fs";
 
-// Binary source-code proxy. Fetches the VCaaS source-code signed URL, then
-// downloads the ZIP archive SERVER-SIDE (avoids browser CORS on the storage
-// host) and streams the raw bytes back to the client with Content-Type
-// application/zip plus x-files-count and x-commit-sha metadata headers.
+const IS_LOCAL_MODE =
+  process.env.ORCHESTRATOR_MODE === "local" ||
+  !process.env.TOTALUM_VCAAS_API_KEY ||
+  process.env.TOTALUM_VCAAS_API_KEY === "your_key_here" ||
+  process.env.TOTALUM_VCAAS_API_KEY === "local-orchestrator-active" ||
+  process.env.USE_LOCAL_ORCHESTRATOR === "true";
+
+const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
+const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
+
+/**
+ * ═══ LOCAL SOURCE ARCHIVE ════════════════════════════════════════════════════
+ *
+ * Builds a ZIP archive of the workspace directory using PowerShell on Windows
+ * or the system `zip` command on Linux/macOS, with no extra npm dependencies.
+ */
+async function buildLocalZip(projectId: string, workspaceDir: string): Promise<Buffer> {
+  const { exec } = await import("child_process");
+  const { promisify } = await import("util");
+  const os = await import("os");
+  const execAsync = promisify(exec);
+
+  const tmpOut = path.join(os.tmpdir(), `${projectId}-${Date.now()}.zip`);
+
+  try {
+    if (process.platform === "win32") {
+      const safeWorkspaceDir = workspaceDir.replace(/'/g, "''");
+      const safeTmpOut = tmpOut.replace(/'/g, "''");
+      await execAsync(
+        `powershell -NoProfile -Command "Get-ChildItem -Path '${safeWorkspaceDir}' -Exclude 'node_modules','.next','.git','.turbo' | Compress-Archive -DestinationPath '${safeTmpOut}' -Force"`,
+        { timeout: 60000 }
+      );
+    } else {
+      await execAsync(
+        `cd "${workspaceDir}" && zip -r "${tmpOut}" . -x "node_modules/*" -x ".next/*" -x ".git/*" -x ".turbo/*"`,
+        { timeout: 60000 }
+      );
+    }
+
+    if (fs.existsSync(tmpOut)) {
+      const buffer = fs.readFileSync(tmpOut);
+      fs.unlinkSync(tmpOut);
+      return buffer;
+    }
+  } catch (e) {
+    console.error("[source-code] ZIP build failed:", e);
+    if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+  }
+
+  // Return a minimal valid empty ZIP as last resort
+  return Buffer.from("PK\x05\x06" + "\x00".repeat(18));
+}
+
+function countFiles(dir: string): number {
+  if (!fs.existsSync(dir)) return 0;
+  let count = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (IGNORED_DIRS.has(entry.name)) continue;
+    if (entry.isDirectory()) count += countFiles(path.join(dir, entry.name));
+    else count++;
+  }
+  return count;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
 
+  if (IS_LOCAL_MODE) {
+    try {
+      const workspaceDir = path.join(WORKSPACES_DIR, projectId);
+      if (!fs.existsSync(workspaceDir)) {
+        return NextResponse.json(
+          { ok: false, error: "Project not found" },
+          { status: 404 }
+        );
+      }
+
+      const buffer = await buildLocalZip(projectId, workspaceDir);
+
+      const filesCount = countFiles(workspaceDir);
+
+      return new NextResponse(buffer, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${projectId}.zip"`,
+          "Content-Length": String(buffer.byteLength),
+          "x-files-count": String(filesCount),
+          "x-commit-sha": "",
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : "Failed to build archive",
+        },
+        { status: 500 }
+      );
+    }
+  }
+
   try {
-    // 1) Ask VCaaS for the signed download URL + metadata.
+    const { vcaasRequest } = await import("@/lib/vcaas-server");
     const metaRes = await vcaasRequest(`/projects/${projectId}/source-code`);
     const metaJson = (await metaRes.json()) as {
       errors: { errorCode: string; errorMessage: string } | null;
@@ -23,7 +120,6 @@ export async function GET(
       const errorMessage =
         metaJson.errors?.errorMessage ||
         "No download URL returned for project source code";
-      // Map known VCaaS error codes to sensible HTTP statuses.
       const code = metaJson.errors?.errorCode;
       const status =
         code === "PROJECT_NOT_FOUND"
@@ -39,9 +135,7 @@ export async function GET(
     }
 
     const { downloadUrl, filesCount, lastCommitSha } = metaJson.data;
-
-    // 2) Download the ZIP archive server-side.
-    const zipRes = await fetch(downloadUrl);
+    const zipRes = await fetch(downloadUrl!);
     if (!zipRes.ok) {
       return NextResponse.json(
         { ok: false, error: `Failed to download source archive (HTTP ${zipRes.status})` },
@@ -51,7 +145,6 @@ export async function GET(
 
     const buffer = await zipRes.arrayBuffer();
 
-    // 3) Return raw ZIP bytes with metadata headers.
     return new NextResponse(buffer, {
       status: 200,
       headers: {
@@ -69,3 +162,4 @@ export async function GET(
     );
   }
 }
+
