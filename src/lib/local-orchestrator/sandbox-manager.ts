@@ -2,24 +2,13 @@ import fs from "fs";
 import path from "path";
 import net from "net";
 import http from "http";
-import { spawn, spawnSync, ChildProcess } from "child_process";
+import { spawn, ChildProcess } from "child_process";
 import { localProjectStore } from "./project-store";
 import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
-import { GeneratedAppBuildError } from "./sandbox-errors";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
-
-type StartOptions = {
-  rebuild?: boolean;
-};
-
-type StartLock = {
-  promise: Promise<string>;
-  rebuild: boolean;
-};
-
-const startLocks = new Map<string, StartLock>();
+const startLocks = new Map<string, Promise<string>>();
 
 function killProcessTree(proc: ChildProcess): void {
   if (!proc.pid) return;
@@ -28,14 +17,6 @@ function killProcessTree(proc: ChildProcess): void {
   } else {
     proc.kill("SIGTERM");
   }
-}
-
-async function waitForProcessExit(proc: ChildProcess, timeoutMs = 5_000): Promise<void> {
-  if (proc.exitCode != null) return;
-  await Promise.race([
-    new Promise<void>((resolve) => proc.once("close", () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
 }
 
 /**
@@ -144,37 +125,18 @@ export const localSandboxManager = {
     return `http://127.0.0.1:${rec.port}`;
   },
 
-  async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
-    const ongoing = startLocks.get(projectId);
-    if (ongoing) {
-      if (!options.rebuild || ongoing.rebuild) return ongoing.promise;
+  async startDevServer(projectId: string): Promise<string> {
+    const inflight = startLocks.get(projectId);
+    if (inflight) return inflight;
 
-      // A preview health-check may already be starting the old source while a
-      // generation finishes. Queue one real rebuild after it; all later callers
-      // converge on this stronger lock instead of accepting the stale start.
-      const queued = ongoing.promise
-        .catch(() => undefined)
-        .then(() => this.startDevServerUnlocked(projectId, { rebuild: true }));
-      const replacement: StartLock = { promise: queued, rebuild: true };
-      startLocks.set(projectId, replacement);
-      const clearReplacement = () => {
-        if (startLocks.get(projectId) === replacement) startLocks.delete(projectId);
-      };
-      void queued.then(clearReplacement, clearReplacement);
-      return queued;
-    }
-
-    const run = this.startDevServerUnlocked(projectId, options);
-    const lock: StartLock = { promise: run, rebuild: Boolean(options.rebuild) };
-    startLocks.set(projectId, lock);
-    const clearLock = () => {
-      if (startLocks.get(projectId) === lock) startLocks.delete(projectId);
-    };
-    void run.then(clearLock, clearLock);
+    const run = this.startDevServerUnlocked(projectId).finally(() => {
+      startLocks.delete(projectId);
+    });
+    startLocks.set(projectId, run);
     return run;
   },
 
-  async startDevServerUnlocked(projectId: string, options: StartOptions = {}): Promise<string> {
+  async startDevServerUnlocked(projectId: string): Promise<string> {
     const record = localProjectStore.getRecord(projectId);
     if (!record) throw new Error(`Project ${projectId} not found`);
 
@@ -183,7 +145,7 @@ export const localSandboxManager = {
     const dir = localProjectStore.getWorkspaceDir(projectId);
 
     const existing = activeProcesses.get(projectId);
-    if (existing && existing.exitCode == null && !existing.killed && !options.rebuild) {
+    if (existing && existing.exitCode == null && !existing.killed) {
       console.log(`[local-sandbox] Dev server already running for ${projectId}`);
       const pending = serverReadyPromises.get(projectId);
       if (pending) {
@@ -194,13 +156,8 @@ export const localSandboxManager = {
     }
     if (existing) {
       killProcessTree(existing);
-      // Wait before probing the stored port. Otherwise the old listener can
-      // still own the port—and can fire after the replacement starts.
-      await waitForProcessExit(existing);
-      if (activeProcesses.get(projectId) === existing) {
-        activeProcesses.delete(projectId);
-        serverReadyPromises.delete(projectId);
-      }
+      activeProcesses.delete(projectId);
+      serverReadyPromises.delete(projectId);
     }
 
     linkSharedNodeModules(dir, projectId);
@@ -213,34 +170,19 @@ export const localSandboxManager = {
       record.port = freePort;
     }
 
-    const nextBinSegments = ["node_modules", "next", "dist", "bin", "next"];
-    const workspaceNext = path.join(dir, ...nextBinSegments);
-    const rootNext = path.join(/* turbopackIgnore: true */ process.cwd(), ...nextBinSegments);
-    const nextBin = fs.existsSync(workspaceNext) ? workspaceNext : rootNext;
-    if (!fs.existsSync(nextBin)) {
-      throw new Error(`Next.js CLI not found at ${workspaceNext} or ${rootNext}`);
+    // Use the same lightweight Vite runtime as E2B. Workspaces normally share
+    // the platform's node_modules, but a standalone workspace install also works.
+    const viteBinSegments = ["node_modules", "vite", "bin", "vite.js"];
+    const workspaceVite = path.join(dir, ...viteBinSegments);
+    const rootVite = path.join(/* turbopackIgnore: true */ process.cwd(), ...viteBinSegments);
+    const viteBin = fs.existsSync(workspaceVite) ? workspaceVite : rootVite;
+    if (!fs.existsSync(viteBin)) {
+      throw new Error(`Vite CLI not found at ${workspaceVite} or ${rootVite}`);
     }
-
-    const build = spawnSync(process.execPath, [nextBin, "build", "--webpack"], {
-      cwd: dir,
-      timeout: 120_000,
-      encoding: "utf8",
-      windowsHide: true,
-      env: {
-        ...process.env,
-        NODE_ENV: "production",
-      },
-    });
-    if (build.error || build.status !== 0) {
-      const details = `${build.stdout || ""}\n${build.stderr || ""}`.trim().slice(-12_000);
-      throw new GeneratedAppBuildError(
-        `Generated app failed to compile${build.error ? `: ${build.error.message}` : ""}${details ? `\n${details}` : ""}`
-      );
-    }
-    console.log(`[local-sandbox] Starting Next.js dev server for ${projectId} on port ${record.port}...`);
+    console.log(`[local-sandbox] Starting Vite dev server for ${projectId} on port ${record.port}...`);
 
     try {
-      const devProc = spawn(process.execPath, [nextBin, "dev", "--webpack", "--hostname", "127.0.0.1", "--port", String(record.port)], {
+      const devProc = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(record.port)], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -262,7 +204,6 @@ export const localSandboxManager = {
 
       devProc.on("close", (code) => {
         console.log(`[local-sandbox] Dev server for ${projectId} closed with code ${code}`);
-        if (activeProcesses.get(projectId) !== devProc) return;
         activeProcesses.delete(projectId);
         serverReadyPromises.delete(projectId);
         localProjectStore.update(projectId, { serverStatus: "Stopped" });
@@ -270,9 +211,7 @@ export const localSandboxManager = {
 
       devProc.on("error", (err) => {
         console.error(`[local-sandbox] Dev server error for ${projectId}:`, err);
-        if (activeProcesses.get(projectId) !== devProc) return;
         activeProcesses.delete(projectId);
-        serverReadyPromises.delete(projectId);
         localProjectStore.update(projectId, { serverStatus: "Error" });
       });
 
@@ -314,15 +253,11 @@ export const localSandboxManager = {
     }
   },
 
-  async stopDevServer(projectId: string): Promise<void> {
+  stopDevServer(projectId: string): void {
     const proc = activeProcesses.get(projectId);
     if (proc) {
       killProcessTree(proc);
       activeProcesses.delete(projectId);
-      // Project deletion removes the watched source tree immediately after this
-      // resolves. Wait for Next to release its watchers first to avoid teardown
-      // ENOENT errors and orphaned child processes.
-      await waitForProcessExit(proc);
     }
     serverReadyPromises.delete(projectId);
     startLocks.delete(projectId);

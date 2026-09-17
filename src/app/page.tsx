@@ -23,7 +23,6 @@ import {
   Plus, Loader2, Trash2, SendHorizontal, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
   AlertCircle, MoreVertical, AlertTriangle, CodeXml, Braces, Sparkles,
-  Link2, Palette, ShieldCheck,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -34,7 +33,6 @@ import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADV
 import { SetupBanners } from "@/components/SetupBanners";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { UserMenu } from "@/components/auth/UserMenu";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 
 type ViewMode = "cards" | "table";
@@ -347,71 +345,43 @@ export default function DashboardPage() {
   };
 
   const hasProjects = projects.length > 0;
-  const referenceUrl = firstPrompt.match(/https?:\/\/[^\s<>"']+/i)?.[0]?.replace(/[.,;:!?]+$/, "");
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-background text-foreground transition-colors duration-200">
-      <div className="studio-grid fixed inset-0 -z-20 pointer-events-none" />
-      <div className="studio-orb studio-orb-one fixed -z-10 pointer-events-none" />
-      <div className="studio-orb studio-orb-two fixed -z-10 pointer-events-none" />
+      {/* Background ambient lighting */}
+      <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
+      <div className="fixed top-[-10%] left-[20%] w-[600px] h-[350px] bg-primary/10 blur-[120px] rounded-full pointer-events-none" />
+      <div className="fixed bottom-[-10%] right-[15%] w-[500px] h-[300px] bg-accent/40 dark:bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/75 border-b border-border/60">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border/60">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <BigBagLogo size="md" />
-          <div className="flex items-center gap-1.5">
-            {hasProjects && (
-              <button
-                onClick={focusComposer}
-                className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full text-xs font-semibold text-foreground hover:bg-accent transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" /> New project
-              </button>
-            )}
+          <div className="flex items-center gap-2">
             <ThemeToggle showLabel={false} />
-            <UserMenu />
           </div>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
         {/* Hero prompt */}
         {!loading && (
-          <section className={hasProjects || keyConfigured === false ? "mb-12" : "flex flex-col items-center justify-center min-h-[66vh]"}>
-            <div className="w-full max-w-3xl mx-auto">
+          <div className={hasProjects || keyConfigured === false ? "mb-10" : "flex flex-col items-center justify-center min-h-[50vh]"}>
+            <div className="w-full max-w-2xl mx-auto">
               {!hasProjects && (
-                <div className="mb-8 text-center animate-in fade-in slide-in-from-bottom-2 duration-700">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/[0.07] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary mb-5">
-                    <Sparkles className="w-3.5 h-3.5" /> AI product studio
-                  </div>
-                  <h1 className="text-balance text-4xl sm:text-5xl md:text-[3.5rem] md:leading-[1.02] font-semibold tracking-[-0.045em] text-foreground">
-                    Turn an idea into a product<br className="hidden sm:block" /> people want to use.
-                  </h1>
-                  <p className="mt-5 mx-auto max-w-xl text-sm sm:text-base leading-7 text-muted-foreground">
-                    Describe the experience—or paste a website you love. BigBag designs, builds, checks, and previews the complete app in one flow.
-                  </p>
+                <div className="mb-6 flex justify-center">
+                  <BigBagLogo size="lg" />
                 </div>
               )}
 
-              <div className="composer-shell rounded-[1.35rem] border border-border/80 bg-card/90 backdrop-blur-xl transition-all duration-300 focus-within:border-primary/40 focus-within:ring-4 focus-within:ring-primary/10 overflow-hidden">
-                <div className="flex items-center justify-between px-5 pt-4">
-                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">
-                    <Braces className="w-3.5 h-3.5 text-primary" /> What should we build?
-                  </div>
-                  {referenceUrl && (
-                    <div className="max-w-[48%] inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary" title={referenceUrl}>
-                      <Link2 className="w-3 h-3 shrink-0" />
-                      <span className="truncate">Reference detected</span>
-                    </div>
-                  )}
-                </div>
+              {/* Simple & Modern Floating Card */}
+              <div className="rounded-2xl border border-border/80 dark:border-white/10 bg-card/80 dark:bg-[#121210]/90 backdrop-blur-xl shadow-lg transition-all duration-300 hover:border-border dark:hover:border-white/20 focus-within:border-foreground/30 dark:focus-within:border-white/30 focus-within:ring-2 focus-within:ring-ring/20 overflow-hidden">
                 <textarea
                   ref={heroTextareaRef}
                   value={firstPrompt}
                   onChange={(e) => setFirstPrompt(e.target.value)}
-                  aria-label="Describe the app you want to build"
-                  placeholder="Build a calm finance dashboard for freelancers—or recreate the visual direction from https://example.com"
-                  className="w-full min-h-[116px] sm:min-h-[142px] resize-none text-[15px] sm:text-base px-5 py-4 outline-none placeholder:text-muted-foreground/55 bg-transparent text-foreground leading-7"
+                  placeholder="Describe your app... e.g. 'A modern task management app with kanban boards and AI analytics'"
+                  className="w-full min-h-[95px] sm:min-h-[115px] resize-none text-[15px] p-5 pb-2 outline-none placeholder:text-muted-foreground/60 bg-transparent text-foreground leading-relaxed"
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); openBuildModal(); } }}
                   onPaste={handleHeroPaste}
                 />
@@ -423,7 +393,7 @@ export default function DashboardPage() {
                   onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
                 />
 
-                <div className="flex items-center justify-between px-3.5 sm:px-4 py-3 border-t border-border/60 bg-secondary/25">
+                <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/60 dark:border-white/5 bg-secondary/30 dark:bg-white/[0.02]">
                   <div className="flex items-center gap-1.5">
                     <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-secondary/60 dark:hover:bg-white/5">
                       <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
@@ -448,7 +418,7 @@ export default function DashboardPage() {
                     onClick={openBuildModal}
                     disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || buildCreating}
                     size="sm"
-                    className="flex items-center gap-1.5 font-semibold px-4 h-9 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all active:scale-[0.98] disabled:opacity-40 shadow-sm shadow-primary/20"
+                    className="flex items-center gap-1.5 font-medium px-4 h-8 rounded-xl bg-foreground text-background hover:opacity-90 dark:bg-white dark:text-black dark:hover:bg-white/90 transition-all active:scale-[0.98] disabled:opacity-40 shadow-xs"
                   >
                     <SendHorizontal className="w-3.5 h-3.5" />
                     <span>Build App</span>
@@ -456,29 +426,9 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {!hasProjects && (
-                <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-left">
-                  {[
-                    { icon: Link2, title: "Match a reference", copy: "Paste any public URL" },
-                    { icon: Palette, title: "Designer-level system", copy: "Type, color, rhythm" },
-                    { icon: ShieldCheck, title: "Verified preview", copy: "Build + auto-repair" },
-                  ].map(({ icon: Icon, title, copy }) => (
-                    <div key={title} className="rounded-xl border border-border/65 bg-card/55 px-3.5 py-3 flex items-center gap-3 backdrop-blur-sm">
-                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                        <Icon className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-foreground">{title}</p>
-                        <p className="text-[11px] text-muted-foreground truncate">{copy}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
               {keyConfigured === false && <SetupBanners />}
             </div>
-          </section>
+          </div>
         )}
 
         {/* Projects */}

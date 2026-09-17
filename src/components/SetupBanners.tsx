@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Server, Database, Sparkles, Globe, Github, Box } from "lucide-react";
+import { KeyRound, Server, Database, Sparkles, Globe, Github, Box, ArrowRight } from "lucide-react";
 
 // Shown on the dashboard when no LLM API key or orchestrator is configured.
 export function SetupBanners() {
@@ -34,7 +34,7 @@ export function SetupBanners() {
             </p>
             <div className="mt-2.5 rounded-lg bg-gray-950 text-white font-mono text-xs p-3.5 space-y-1 overflow-x-auto ring-1 ring-white/10">
               <div><span className="text-emerald-400">ORCHESTRATOR_MODE</span>=<span className="text-gray-400">local</span></div>
-              <div><span className="text-emerald-400">GLM_API_KEY</span>=<span className="text-gray-300">your_glm_key</span> <span className="text-gray-300"># or GROQ_API_KEY / OPENROUTER_API_KEY</span></div>
+              <div><span className="text-emerald-400">GLM_API_KEY</span>=<span className="text-gray-400">your_glm_key</span> <span className="text-gray-500"># or GROQ_API_KEY / OPENROUTER_API_KEY</span></div>
             </div>
             <p className="text-[13px] text-muted-foreground mt-3 leading-relaxed">
               BigBag runs self-hosted with support for multiple AI models, automatic dependency scanning, and sandbox live previews.
@@ -44,14 +44,17 @@ export function SetupBanners() {
       </div>
 
       {/* ── Value pitch ── */}
-      <div className="rounded-2xl p-5 sm:p-6 text-white bg-[#102925]">
+      <div
+        className="rounded-2xl p-5 sm:p-6 text-white"
+        style={{ background: "linear-gradient(135deg,#0f172a 0%,#0f3f39 100%)" }}
+      >
         <div className="flex items-center gap-2.5">
           <div className="shrink-0 w-9 h-9 rounded-lg bg-emerald-400/15 ring-1 ring-emerald-400/20 flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-emerald-300" />
           </div>
           <div>
             <h2 className="text-base font-bold leading-tight">Everything included.</h2>
-            <p className="text-[13px] text-white/80">Self-hosted, open source, and multi-model ready.</p>
+            <p className="text-[13px] text-white/60">Self-hosted, open source, and multi-model ready.</p>
           </div>
         </div>
 
@@ -62,7 +65,7 @@ export function SetupBanners() {
               className="flex items-center gap-2 rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2"
             >
               <Icon className="w-4 h-4 text-emerald-300 shrink-0" />
-              <span className="text-[13px] font-medium text-white truncate">{label}</span>
+              <span className="text-[13px] font-medium text-white/90 truncate">{label}</span>
             </div>
           ))}
         </div>

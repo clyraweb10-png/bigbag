@@ -1,7 +1,5 @@
 "use client";
 
-import { authenticatedFetch } from "@/lib/authenticated-fetch";
-
 /**
  * Typed client-side fetch service.
  *
@@ -21,7 +19,7 @@ async function request<T>(
   options?: RequestInit
 ): Promise<ApiResponse<T>> {
   try {
-    const res = await authenticatedFetch(url, options);
+    const res = await fetch(url, options);
     const json = (await res.json()) as ApiResponse<T>;
     return json;
   } catch (err) {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { publicUrlRejectionReason } from "@/lib/safe-url";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
-import { authFailed, resolveVcaasContext } from "../_shared";
 
 // Git-diff text proxy. The `gitDiffUrl` returned by the VCaaS conversation API
 // points at an external (signed) storage host, so the browser can't fetch it
@@ -34,8 +33,6 @@ function isAllowedDiffUrl(url: URL): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await resolveVcaasContext();
-  if (authFailed(auth)) return auth.response;
   if (IS_LOCAL_MODE) {
     return NextResponse.json(
       {

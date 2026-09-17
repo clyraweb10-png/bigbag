@@ -3,11 +3,10 @@ import path from "path";
 import fs from "fs";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
-import { authFailed, enforceProjectScope, resolveVcaasContext } from "../../_shared";
-import { BIGBAG_WORKSPACES_DIR } from "@/lib/local-orchestrator/storage-paths";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
+const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
 const MAX_LOCAL_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 /**
@@ -44,7 +43,7 @@ async function handleLocalUpload(
       );
     }
 
-    const uploadsDir = path.join(BIGBAG_WORKSPACES_DIR, projectId, "public", "uploads");
+    const uploadsDir = path.join(WORKSPACES_DIR, projectId, "public", "uploads");
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
@@ -93,10 +92,6 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const auth = await resolveVcaasContext();
-  if (authFailed(auth)) return auth.response;
-  const outOfScope = enforceProjectScope(auth.team, "POST", ["projects", projectId]);
-  if (outOfScope) return outOfScope;
 
   if (!isRoutableProjectSlug(projectId)) {
     return NextResponse.json(

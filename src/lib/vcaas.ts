@@ -40,7 +40,6 @@
 import { toBase64 } from "@/lib/base64";
 import type { ApiResponse } from "@/lib/api";
 import type { VcaasErrorCode, VcaasErrorDetails } from "@/lib/vcaas-errors";
-import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import type {
   ProjectGroup,
   VcaasProject,
@@ -137,7 +136,7 @@ function signalInsufficientCredits(): void {
 
 async function proxyRequest<T>(url: string, init?: RequestInit): Promise<VcaasResponse<T>> {
   try {
-    const res = await authenticatedFetch(url, init);
+    const res = await fetch(url, init);
     const payload = (await res.json()) as VcaasResponse<T>;
 
     if (payload?.ok === false && payload.code === "INSUFFICIENT_CREDITS") {
@@ -931,7 +930,7 @@ export const vcaasApi = {
    * ⚠️ EITHER INTENT COSTS 1 CREDIT (`VCAAS_CREDIT_COSTS.GET_SOURCE_CODE`).
    */
   sourceCode: (projectId: string, intent: "view" | "download" = "view"): Promise<Response> =>
-    authenticatedFetch(`${API}/source-code/${encodeURIComponent(projectId)}?intent=${intent}`, {
+    fetch(`${API}/source-code/${encodeURIComponent(projectId)}?intent=${intent}`, {
       cache: "no-store",
     }),
 
@@ -946,7 +945,7 @@ export const vcaasApi = {
     formData: FormData
   ): Promise<VcaasResponse<{ url: string; fileNameId: string }>> => {
     try {
-      const res = await authenticatedFetch(`${API}/upload/${encodeURIComponent(projectId)}`, {
+      const res = await fetch(`${API}/upload/${encodeURIComponent(projectId)}`, {
         method: "POST",
         body: formData,
       });

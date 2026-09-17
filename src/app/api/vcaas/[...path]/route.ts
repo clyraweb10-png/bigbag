@@ -8,13 +8,10 @@ import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { isPromptEndpoint, injectDesignPrompt } from "@/lib/design-system-prompt";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
-import { authFailed, enforceProjectScope, resolveVcaasContext } from "../_shared";
-import { projectAccess } from "@/lib/project-access";
-import { figmaConnector, validateFigmaToken } from "@/lib/local-orchestrator/figma-connector";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
-async function handleLocalRequest(req: NextRequest, path: string[], userId: string) {
+async function handleLocalRequest(req: NextRequest, path: string[]) {
   const method = req.method.toUpperCase();
   const url = new URL(req.url);
 
@@ -22,13 +19,11 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
   if (path[0] === "projects" && path.length === 1) {
     if (method === "GET") {
       const list = localProjectStore.list();
-      projectAccess.claimLegacyProjects(userId, list.map((project) => project.projectId));
-      return NextResponse.json({ ok: true, data: projectAccess.filter(userId, list) }, { status: 200 });
+      return NextResponse.json({ ok: true, data: list }, { status: 200 });
     }
     if (method === "POST") {
       const body = await req.json().catch(() => ({}));
       const proj = localProjectStore.create(body);
-      projectAccess.assign(userId, proj.projectId);
       return NextResponse.json({ ok: true, data: proj }, { status: 200 });
     }
   }
@@ -41,19 +36,10 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
       description: body.prompt || body.description || "Web Application",
       label: body.label || body.projectId,
     });
-    projectAccess.assign(userId, proj.projectId);
-    if (body.figma?.token) {
-      try { await figmaConnector.connect(proj.projectId, body.figma.token); }
-      catch (error) {
-        localProjectStore.remove(proj.projectId);
-        projectAccess.remove(userId, proj.projectId);
-        return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Figma connection failed", code: "FIGMA_INVALID" }, { status: 400 });
-      }
-    }
 
     // Start background agent run & dev sandbox
     void localAgentEngine
-      .runPrompt(proj.projectId, body.prompt || body.description || "", userId)
+      .runPrompt(proj.projectId, body.prompt || body.description || "")
       .catch((error) => console.error(`[vcaas] Failed to launch agent for ${proj.projectId}:`, error));
 
     return NextResponse.json(
@@ -99,8 +85,6 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
       if (method === "DELETE") {
         await e2bSandboxManager.stopDevServer(projectId);
         localProjectStore.remove(projectId);
-        projectAccess.remove(userId, projectId);
-        figmaConnector.disconnect(projectId);
         return NextResponse.json({ ok: true, data: { deleted: true } }, { status: 200 });
       }
     }
@@ -150,7 +134,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
         return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
       }
       void localAgentEngine
-        .runPrompt(projectId, body.prompt || "", userId)
+        .runPrompt(projectId, body.prompt || "")
         .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
       return NextResponse.json({ ok: true, data: { started: true } }, { status: 200 });
     }
@@ -231,24 +215,10 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
       return NextResponse.json({ ok: true, data: { status } }, { status: 200 });
     }
 
-    if (subRoute === "figma/status" && method === "GET") {
-      return NextResponse.json({ ok: true, data: await figmaConnector.status(projectId, url.searchParams.get("verify") === "true") });
+    // /projects/:id/figma/status
+    if (subRoute === "figma/status") {
+      return NextResponse.json({ ok: true, data: { connected: false } }, { status: 200 });
     }
-    if (subRoute === "figma/connect" && method === "POST") {
-      const body = await req.json().catch(() => ({}));
-      try { return NextResponse.json({ ok: true, data: await figmaConnector.connect(projectId, body.token || "") }); }
-      catch (error) { return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Figma connection failed", code: "FIGMA_INVALID" }, { status: 400 }); }
-    }
-    if (subRoute === "figma/connect" && method === "DELETE") {
-      figmaConnector.disconnect(projectId);
-      return NextResponse.json({ ok: true, data: { connected: false } });
-    }
-  }
-
-  if (path[0] === "figma" && path[1] === "validate" && method === "POST") {
-    const body = await req.json().catch(() => ({}));
-    try { return NextResponse.json({ ok: true, data: { valid: true, account: await validateFigmaToken(body.token || "") } }); }
-    catch (error) { return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Figma token is invalid", code: "FIGMA_INVALID" }, { status: 400 }); }
   }
 
   // Fallback 404 for unimplemented local endpoint
@@ -264,14 +234,10 @@ async function handleRequest(
 ) {
   try {
     const { path } = await params;
-    const auth = await resolveVcaasContext();
-    if (authFailed(auth)) return auth.response;
-    const outOfScope = enforceProjectScope(auth.team, req.method, path);
-    if (outOfScope) return outOfScope;
 
     // Route to local orchestrator when in local mode
     if (IS_LOCAL_MODE) {
-      return await handleLocalRequest(req, path, auth.team.userId);
+      return await handleLocalRequest(req, path);
     }
 
     // Upstream Totalum fallback
@@ -306,16 +272,7 @@ async function handleRequest(
       return NextResponse.json(toErrorEnvelope(normalized), { status: normalized.status });
     }
 
-    let data = json.data;
-    if (req.method === "GET" && path[0] === "projects" && path.length === 1 && Array.isArray(data)) {
-      const projects = data.filter((item): item is { projectId: string } => item && typeof item.projectId === "string");
-      projectAccess.claimLegacyProjects(auth.team.userId, projects.map((project) => project.projectId));
-      data = projectAccess.filter(auth.team.userId, projects);
-    }
-    if (req.method === "POST" && path[0] === "projects" && data && typeof data.projectId === "string") {
-      projectAccess.assign(auth.team.userId, data.projectId);
-    }
-    return NextResponse.json({ ok: true, data }, { status: 200 });
+    return NextResponse.json({ ok: true, data: json.data }, { status: 200 });
   } catch (error) {
     if (error instanceof VcaasPathError) {
       return NextResponse.json(

@@ -7,8 +7,6 @@ import { GlobalErrorCatcher } from "@/components/GlobalErrorCatcher";
 import { Toaster } from "@/components/ui/sonner";
 import { InsufficientCreditsModal } from "@/components/workspace/InsufficientCreditsModal";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { AuthProvider } from "@/components/auth/AuthProvider";
-import { AuthenticatedShell } from "@/components/auth/AuthenticatedShell";
 
 const dmSans = DM_Sans({ variable: "--font-dm-sans", subsets: ["latin"], weight: ["300", "400", "500", "600", "700"], preload: false });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], preload: false });
@@ -27,8 +25,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <body className={`${dmSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <AuthProvider>
-          <AuthenticatedShell>
           <GlobalErrorCatcher />
           <Toaster position="top-right" richColors />
           {/*
@@ -41,8 +37,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="min-h-screen flex flex-col bg-background text-foreground transition-colors duration-200">
             <main className="flex-1 flex flex-col">{children}</main>
           </div>
-          </AuthenticatedShell>
-          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

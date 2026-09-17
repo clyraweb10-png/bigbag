@@ -2,16 +2,17 @@ import fs from "fs";
 import path from "path";
 import type { VcaasProject, VcaasProjectSummary } from "@/lib/vcaas-types";
 import type { LocalProjectRecord } from "./types";
-import { BIGBAG_DATA_DIR, BIGBAG_WORKSPACES_DIR } from "./storage-paths";
 
-const PROJECTS_FILE = path.join(BIGBAG_DATA_DIR, "projects.json");
+const DATA_DIR = path.join(process.cwd(), "data");
+const PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
+const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
 
 // Ensure data directory exists
-if (!fs.existsSync(BIGBAG_DATA_DIR)) {
-  fs.mkdirSync(BIGBAG_DATA_DIR, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
-if (!fs.existsSync(BIGBAG_WORKSPACES_DIR)) {
-  fs.mkdirSync(BIGBAG_WORKSPACES_DIR, { recursive: true });
+if (!fs.existsSync(WORKSPACES_DIR)) {
+  fs.mkdirSync(WORKSPACES_DIR, { recursive: true });
 }
 
 function readProjects(): Record<string, LocalProjectRecord> {
@@ -74,7 +75,7 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
 
 export const localProjectStore = {
   getWorkspaceDir(projectId: string): string {
-    const dir = path.join(BIGBAG_WORKSPACES_DIR, projectId);
+    const dir = path.join(WORKSPACES_DIR, projectId);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -157,7 +158,7 @@ export const localProjectStore = {
     saveProjects(projects);
 
     // Optionally cleanup workspace
-    const dir = path.join(BIGBAG_WORKSPACES_DIR, projectId);
+    const dir = path.join(WORKSPACES_DIR, projectId);
     try {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
