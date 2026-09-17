@@ -13,24 +13,62 @@ export interface RouterCompletionResult {
   text: string;
   usedModel: string;
   providerName: string;
+  providerId: string;
 }
 
 export type StatusCallback = (statusMessage: string) => void;
+
+export interface RouterCompletionOptions {
+  /** Maximum network time for one provider attempt. */
+  perProviderTimeoutMs?: number;
+  /** Maximum wall-clock time across queueing and all provider attempts. */
+  totalTimeoutMs?: number;
+  /** Move a provider to the end after it produced an unusable response. */
+  deprioritizeProviderId?: string;
+  /** Lower response budget for short conversational requests. */
+  maxTokens?: number;
+}
 
 class MultiModelRouter {
   // Provider-level concurrency locks (mutex) to avoid concurrent calls on single free keys
   private providerQueues: Map<string, Promise<void>> = new Map();
 
-  private enqueue(providerId: string, task: () => Promise<any>): Promise<any> {
+  private enqueue<T>(
+    providerId: string,
+    task: () => Promise<T>,
+    maxQueueWaitMs?: number
+  ): Promise<T> {
     const prev = this.providerQueues.get(providerId) || Promise.resolve();
-    let res: any;
+
+    let cancelled = false;
+    let queueTimer: ReturnType<typeof setTimeout> | undefined;
+    let resolveResult!: (result: T) => void;
+    let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+
+    if (maxQueueWaitMs !== undefined) {
+      queueTimer = setTimeout(() => {
+        cancelled = true;
+        rejectResult(new Error("Provider queue wait exceeded the completion deadline"));
+      }, Math.max(1, maxQueueWaitMs));
+    }
+
     const next = prev
-      .catch(() => {})
+      .catch(() => undefined)
       .then(async () => {
-        res = await task();
+        if (cancelled) return;
+        if (queueTimer) clearTimeout(queueTimer);
+        try {
+          resolveResult(await task());
+        } catch (error) {
+          rejectResult(error);
+        }
       });
     this.providerQueues.set(providerId, next);
-    return next.then(() => res);
+    return result;
   }
 
   public getProviders(): ModelProviderConfig[] {
@@ -40,12 +78,13 @@ class MultiModelRouter {
     // complex design prompt while the older flash endpoint timed out.
     const zhipuKey2 = process.env.GLM_API_KEY_2 || "";
     if (zhipuKey2) {
+      const model = process.env.GLM_MODEL_2 || "glm-4.7-flash";
       providers.push({
         id: "zhipu-acc-2",
-        name: "Zhipu AI (GLM-4.7-Flash / Acc 2)",
+        name: `Zhipu AI (${model} / Acc 2)`,
         baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
         apiKey: zhipuKey2,
-        model: process.env.GLM_MODEL_2 || "glm-4.7-flash",
+        model,
         maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
         isZhipu: true,
       });
@@ -54,12 +93,13 @@ class MultiModelRouter {
     // Fallback Zhipu account/model.
     const zhipuKey1 = process.env.GLM_API_KEY || "";
     if (zhipuKey1) {
+      const model = process.env.GLM_MODEL || "glm-4.7-flash";
       providers.push({
         id: "zhipu-acc-1",
-        name: "Zhipu AI (GLM-4.5-Flash)",
+        name: `Zhipu AI (${model} / Acc 1)`,
         baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
         apiKey: zhipuKey1,
-        model: process.env.GLM_MODEL || "glm-4.5-flash",
+        model,
         maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
         isZhipu: true,
       });
@@ -100,30 +140,49 @@ class MultiModelRouter {
 
   public async complete(
     messages: Array<{ role: string; content: string }>,
-    onStatus?: StatusCallback
+    onStatus?: StatusCallback,
+    options: RouterCompletionOptions = {}
   ): Promise<RouterCompletionResult> {
-    const providers = this.getProviders();
+    const configuredProviders = this.getProviders();
 
-    if (providers.length === 0) {
+    if (configuredProviders.length === 0) {
       throw new Error(
         "No AI API keys configured. Please configure GLM_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY."
       );
     }
 
+    const providers = options.deprioritizeProviderId
+      ? [
+          ...configuredProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
+          ...configuredProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
+        ]
+      : configuredProviders;
     const errors: string[] = [];
+    const startedAt = Date.now();
+    const totalTimeoutMs = options.totalTimeoutMs;
+    const perProviderTimeoutMs = options.perProviderTimeoutMs ?? 120_000;
 
     for (let i = 0; i < providers.length; i++) {
       const provider = providers[i];
       const isLast = i === providers.length - 1;
+      const remainingTotalMs = totalTimeoutMs === undefined
+        ? undefined
+        : totalTimeoutMs - (Date.now() - startedAt);
+
+      if (remainingTotalMs !== undefined && remainingTotalMs <= 0) {
+        errors.push(`Completion deadline exceeded after ${totalTimeoutMs}ms`);
+        break;
+      }
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
+      let attemptTimeoutMs = perProviderTimeoutMs;
 
       try {
         const payload: Record<string, any> = {
           model: provider.model,
           messages,
           temperature: 0.2,
-          max_tokens: provider.maxTokens,
+          max_tokens: Math.min(provider.maxTokens, options.maxTokens ?? provider.maxTokens),
         };
 
         if (provider.isZhipu) {
@@ -136,14 +195,24 @@ class MultiModelRouter {
           ...(provider.extraHeaders || {}),
         };
 
-        const res: Response = await this.enqueue(provider.id, () =>
-          fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        const res: Response = await this.enqueue(provider.id, () => {
+          const remainingAtStartMs = totalTimeoutMs === undefined
+            ? undefined
+            : totalTimeoutMs - (Date.now() - startedAt);
+          if (remainingAtStartMs !== undefined && remainingAtStartMs <= 0) {
+            throw new Error(`Completion deadline exceeded after ${totalTimeoutMs}ms`);
+          }
+          attemptTimeoutMs = Math.max(
+            1,
+            Math.min(perProviderTimeoutMs, remainingAtStartMs ?? perProviderTimeoutMs)
+          );
+          return fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
             method: "POST",
             headers,
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(120_000),
-          })
-        );
+            signal: AbortSignal.timeout(attemptTimeoutMs),
+          });
+        }, remainingTotalMs);
 
         if (res.ok) {
           const json = await res.json();
@@ -157,6 +226,7 @@ class MultiModelRouter {
             text,
             usedModel: provider.model,
             providerName: provider.name,
+            providerId: provider.id,
           };
         }
 
@@ -199,7 +269,10 @@ class MultiModelRouter {
           onStatus?.(failoverMsg);
         }
       } catch (err: any) {
-        const netErr = `Provider [${provider.name}] exception: ${err.message || String(err)}`;
+        const errorMessage = err?.name === "TimeoutError"
+          ? `request timed out after ${attemptTimeoutMs}ms`
+          : err?.message || String(err);
+        const netErr = `Provider [${provider.name}] exception: ${errorMessage}`;
         console.warn(`[MultiModelRouter] ${netErr}`);
         errors.push(netErr);
 

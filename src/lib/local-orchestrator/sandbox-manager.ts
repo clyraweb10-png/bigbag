@@ -314,11 +314,15 @@ export const localSandboxManager = {
     }
   },
 
-  stopDevServer(projectId: string): void {
+  async stopDevServer(projectId: string): Promise<void> {
     const proc = activeProcesses.get(projectId);
     if (proc) {
       killProcessTree(proc);
       activeProcesses.delete(projectId);
+      // Project deletion removes the watched source tree immediately after this
+      // resolves. Wait for Next to release its watchers first to avoid teardown
+      // ENOENT errors and orphaned child processes.
+      await waitForProcessExit(proc);
     }
     serverReadyPromises.delete(projectId);
     startLocks.delete(projectId);

@@ -101,6 +101,7 @@ SANDBOX_PROVIDER=local
 
 # Provide your preferred model key:
 GLM_API_KEY=your_glm_api_key
+GLM_MODEL=glm-4.7-flash
 # or GROQ_API_KEY / OPENROUTER_API_KEY
 
 # Optional: match public reference URLs pasted into a prompt
@@ -126,6 +127,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
 | `GLM_API_KEY` | ⬜ Optional | Zhipu AI GLM key for code generation. |
+| `GLM_MODEL` | ⬜ Optional | Zhipu model ID; defaults to the current `glm-4.7-flash`. |
 | `GROQ_API_KEY` | ⬜ Optional | Groq API key for fast inference. |
 | `OPENROUTER_API_KEY` | ⬜ Optional | OpenRouter API key for multi-model access. |
 | `FIRECRAWL_API_KEY` | ⬜ Optional | Captures branding, layout content, screenshots, and visual assets from public reference URLs in local-orchestrator prompts. |
@@ -145,16 +147,12 @@ cp .env.example .env.local
 
 This is a standard Next.js app with no platform lock-in. It runs wherever Next.js runs.
 
-> ### ⚠️ Important: this project ships with NO authentication
+> ### Authentication and tenant isolation
 >
-> That is on purpose — we want you to add the auth that fits how your system works, or
-> however you prefer. Out of the box every route is public and the app acts on a single
-> API key, so **anyone who can reach the URL can use it and spend that key's credits.**
->
-> **Before you publish this anywhere public, put an auth layer in front of it.** The
-> hooks are already there: make the two guards in `src/app/api/vcaas/_shared.ts` real and
-> protect the pages in `src/proxy.ts`. See [Use it as a boilerplate](#use-it-as-a-boilerplate-login--payments) for the step-by-step. Running it locally or on a private
-> network with no login is fine.
+> The builder uses Firebase Google sign-in. Pages and API routes require a verified
+> Firebase session, and local projects, conversations, files, previews, uploads,
+> visual edits, and connector state are scoped to the owning Firebase user. Set
+> `FIREBASE_ALLOWED_EMAILS` when the deployment should be private.
 
 ### Vercel, one click
 
@@ -171,29 +169,38 @@ npm start          # serves on $PORT (default 3000)
 
 Set your model environment variables in the host's environment and point your process manager or container at `npm start`.
 
+For Render, mount a persistent disk at `/var/data` and set
+`BIGBAG_DATA_DIR=/var/data/bigbag-data` plus
+`BIGBAG_WORKSPACES_DIR=/var/data/bigbag-workspaces`. Use
+`SANDBOX_PROVIDER=e2b` for hosted generated previews. Render supplies `PORT`; do
+not hard-code it. The tested build/start commands are `npm run build` and
+`npm start`.
+
 ---
 
 ## 🧩 Put it inside your own product
 
 This is not only a standalone tool. It is a drop-in AI app-builder layer for a SaaS you are launching or already run.
 
-- 🏢 **Multi-tenant by design.** Every generated app is an isolated BigBag project. Create one per user, team or customer.
+- 🏢 **Multi-tenant by design.** Every generated app is assigned to its Firebase owner and filtered at every project boundary.
 - 🎨 **White-label.** It is your codebase and your UI. Rebrand it, restyle it, embed it in your dashboard.
 - 🔌 **One integration.** A single API key gives your users hosting, databases, AI, domains, GitHub and sandboxes. You do not stitch together five vendors.
 - 📈 **A new revenue stream.** Resell app building, hosting or premium AI credits on top of your product.
 
 > **The pitch to your customers:** *"Build and ship a full-stack app right here, inside our platform."*
 
-> ⚠️ **Before you put real users behind it, read `src/app/api/vcaas/_shared.ts`.** This app runs on one API key, so "who is asking?" and "may they touch this project?" are answered with "yes" by default. That file is where you add your own auth and ownership checks. The API routes already delegate the decision to it.
+> Authentication verifies the caller in `src/app/api/vcaas/_shared.ts`; ownership
+> is stored separately from project content in `src/lib/project-access.ts` so an
+> unknown or foreign project ID returns 404 rather than exposing its existence.
 
 ### Two ways to integrate
 
-- **Run it beside your product.** Deploy this app on a subdomain, put your login in front, rebrand it, and link or iframe to it. Hours, not weeks.
+- **Run it beside your product.** Deploy this app on a subdomain, configure Firebase Google login, rebrand it, and link or iframe to it. Hours, not weeks.
 - **Port the flow into your stack.** Keep the contract, not the UI: a server-side proxy that adds the `api-key` header, then `launch` → poll agent status → show the preview URL → follow-up prompts → deploy. One BigBag project per customer, ownership checked on every proxied call. The step-by-step version, with the exact files to mirror, is in [`AGENTS.md`](AGENTS.md#adding-an-ai-app-builder-to-an-existing-product-any-stack).
 
-### Use it as a boilerplate: login + payments
+### Use it as a boilerplate: accounts + payments
 
-Want to ship this as your own product? Add an auth provider such as **Supabase** for login (a `profiles` and a `projects` table, make the two guards in `_shared.ts` real, protect the pages in `src/proxy.ts`) and **Stripe** for payments (checkout for credit packs or a plan, a webhook that tops up `profiles.credits`, a 402 on spend-shaped calls when the balance is empty, which the UI already turns into a "buy credits" dialog). The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe).
+Want to ship this as your own product? Firebase Google login and per-user project ownership are already included. Add your preferred billing provider for subscriptions or credits, and move ownership metadata to your main database before horizontally scaling the builder across multiple server instances.
 
 ---
 
@@ -202,9 +209,9 @@ Want to ship this as your own product? Add an auth provider such as **Supabase**
 Two different things live here, and it is worth keeping them apart:
 
 - **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the BigBag AI Engine. Nothing to install.
-- **This builder UI itself** is deliberately lean. It ships no auth, payment or AI SDK, because it needs none: it is a thin client in front of one API key. When you turn it into your own product you add exactly the providers you want — the step-by-step is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe):
+- **This builder UI itself** uses Firebase Authentication and server-side model adapters. Billing remains deliberately unopinionated:
 
-  - **Auth**: Supabase Auth, Better Auth, Clerk, Auth0 or your own.
+  - **Auth**: Firebase Google sign-in with server-side token verification.
   - **Payments**: Stripe, or any provider — for credit packs or plans.
   - **Database (for your own users/billing)**: Supabase, Postgres, PlanetScale, MongoDB, anything.
 

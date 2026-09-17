@@ -385,7 +385,7 @@ class E2BSandboxManager {
     if (sandbox) await sandbox.kill().catch(() => undefined);
     this.activeSandboxes.delete(projectId);
     this.activeUrls.delete(projectId);
-    localSandboxManager.stopDevServer(projectId);
+    await localSandboxManager.stopDevServer(projectId);
     localProjectStore.update(projectId, {
       serverStatus: "Stopped",
       previewUrl: undefined,

@@ -77,6 +77,7 @@ export async function verifyFirebaseIdToken(
       account.disabled === true ||
       typeof account.localId !== "string" ||
       typeof account.email !== "string" ||
+      account.emailVerified !== true ||
       !emailAllowed(account.email)
     ) {
       return null;

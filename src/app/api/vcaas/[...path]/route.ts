@@ -53,7 +53,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
 
     // Start background agent run & dev sandbox
     void localAgentEngine
-      .runPrompt(proj.projectId, body.prompt || body.description || "")
+      .runPrompt(proj.projectId, body.prompt || body.description || "", userId)
       .catch((error) => console.error(`[vcaas] Failed to launch agent for ${proj.projectId}:`, error));
 
     return NextResponse.json(
@@ -150,7 +150,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], userId: stri
         return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
       }
       void localAgentEngine
-        .runPrompt(projectId, body.prompt || "")
+        .runPrompt(projectId, body.prompt || "", userId)
         .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
       return NextResponse.json({ ok: true, data: { started: true } }, { status: 200 });
     }

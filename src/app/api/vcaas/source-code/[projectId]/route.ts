@@ -5,10 +5,10 @@ import { zip } from "fflate";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
 import { authFailed, enforceProjectScope, resolveVcaasContext } from "../../_shared";
+import { BIGBAG_WORKSPACES_DIR } from "@/lib/local-orchestrator/storage-paths";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
-const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
 const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 
 /**
@@ -74,7 +74,7 @@ export async function GET(
 
   if (IS_LOCAL_MODE) {
     try {
-      const workspaceDir = path.join(WORKSPACES_DIR, projectId);
+      const workspaceDir = path.join(BIGBAG_WORKSPACES_DIR, projectId);
       if (!fs.existsSync(workspaceDir)) {
         return NextResponse.json(
           { ok: false, error: "Project not found" },

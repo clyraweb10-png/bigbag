@@ -2,9 +2,9 @@ import "server-only";
 
 import fs from "node:fs";
 import path from "node:path";
+import { BIGBAG_DATA_DIR } from "@/lib/local-orchestrator/storage-paths";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const OWNERS_FILE = path.join(DATA_DIR, "project-owners.json");
+const OWNERS_FILE = path.join(BIGBAG_DATA_DIR, "project-owners.json");
 
 function readOwners(): Record<string, string> {
   try {
@@ -13,7 +13,7 @@ function readOwners(): Record<string, string> {
 }
 
 function writeOwners(owners: Record<string, string>): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(BIGBAG_DATA_DIR, { recursive: true });
   const temporary = `${OWNERS_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(owners, null, 2), { mode: 0o600 });
   fs.renameSync(temporary, OWNERS_FILE);

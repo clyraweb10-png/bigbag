@@ -164,6 +164,49 @@ function FormattedText({ text }: { text: string }) {
   );
 }
 
+function suggestedPrompts(text: string): string[] {
+  const marker = text.search(/^suggestions\s*:/im);
+  if (marker < 0) return [];
+  return text
+    .slice(marker)
+    .split("\n")
+    .slice(1)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function SuggestionChips({ text, onSelect }: { text: string; onSelect: (prompt: string) => void }) {
+  const suggestions = suggestedPrompts(text);
+  if (suggestions.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {suggestions.map((suggestion) => (
+        <button
+          key={suggestion}
+          type="button"
+          onClick={() => onSelect(suggestion)}
+          className="rounded-full border border-border bg-background px-3 py-1.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {suggestion}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ChatAnswer({ text, onSelect }: { text: string; onSelect: (prompt: string) => void }) {
+  const suggestions = suggestedPrompts(text);
+  const marker = suggestions.length > 0 ? text.search(/^suggestions\s*:/im) : -1;
+  const answer = marker >= 0 ? text.slice(0, marker).trimEnd() : text;
+  return (
+    <>
+      <FormattedText text={answer} />
+      <SuggestionChips text={text} onSelect={onSelect} />
+    </>
+  );
+}
+
 // --- User Message (with large-text preview + "See all") ---
 // When a user pastes/uploads a very large block of text, we don't want the chat
 // bubble to become a giant wall. Instead we show a generous preview (not too
@@ -715,7 +758,11 @@ export function ChatPanel({
             return <UserMessage key={gi} text={msg.message} files={msg.inputFiles} />;
           }
           // Agent message - NO background
-          return <div key={gi} className="max-w-full"><FormattedText text={msg.message} /></div>;
+          return (
+            <div key={gi} className="max-w-full">
+              <ChatAnswer text={msg.message} onSelect={setPrompt} />
+            </div>
+          );
         })}
 
         {isBuilding && (

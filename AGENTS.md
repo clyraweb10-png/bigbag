@@ -5,13 +5,10 @@ Next.js app, the user previews it live, edits it, and publishes it. **This repo 
 UI.** Everything heavy — the coding agent, sandboxes, hosting, database, deploys, custom
 domains, GitHub sync — is done by the **Totalum API** behind one API key.
 
-> **⚠️ NO AUTH BY DESIGN.** This project ships with no authentication — deliberately, so
-> whoever adopts it can add the auth that fits their system, or whatever they prefer.
-> Every route is public and the app acts on one API key, so anyone who can reach the URL
-> can use it and spend that key's credits. **If this is going online, an auth layer must
-> be in place first** — make the guards in `src/app/api/vcaas/_shared.ts` real and protect
-> the pages in `src/proxy.ts` (see "Boilerplate mode" below). Local or private-network use
-> without a login is fine.
+> **Authentication is enabled.** Firebase Google sign-in protects pages and API
+> routes, while `src/lib/project-access.ts` scopes local project data to its owner.
+> Configure Firebase and optionally restrict access with `FIREBASE_ALLOWED_EMAILS`
+> before exposing a deployment publicly.
 
 **Totalum API reference (read this before touching anything under `src/lib/vcaas*` or
 `src/app/api/`):** https://www.totalum.app/totalum-api.md — the whole core API in one
@@ -86,14 +83,14 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 5. **New endpoint?** Add the typed function in `vcaas.ts`, the type in `vcaas-types.ts`, and let the catch-all proxy carry it. Only add a dedicated route under `src/app/api/vcaas/` when the request is not plain JSON (uploads, downloads).
 6. **New user-facing string?** Add the key to totalum-platform's `en.ts` first, then copy the file here. Do not fork the dictionary.
    **⚠️ BUT NEVER RE-COPY `en.ts` WHOLESALE TO PICK UP A FEW KEYS.** This dictionary carries deliberate local values — `workspace.serverWake.startingTitle` is "Your project **server** is still starting" here, and the credit copy names this app's own minimum — and a blind overwrite silently reverts every one of them while also importing unrelated platform copy changes. Copy the individual keys you need, or diff `git diff HEAD -- src/i18n/en.ts` afterwards and put the local values back.
-8. **The proxy holds an account-wide key and the app has no login.** Two rules follow, and both are load-bearing security, not style:
+8. **The proxy holds an account-wide key, so authenticated ownership checks are load-bearing.** Two additional rules follow, and both are security requirements, not style:
    - **Every proxied path must stay inside `/api/v1/vcaas/`.** `vcaas-server.ts`'s `resolveVcaasUrl` resolves the final URL and refuses anything that escapes. Route params arrive decoded, so a traversal segment can otherwise survive into the joined path and `fetch` normalise it onto another part of the account API the key authorises. Never build an upstream URL any other way.
    - **Any server route that fetches a client-supplied URL is an SSRF hole until it calls `publicUrlRejectionReason` (async, resolves DNS) from `lib/safe-url.ts`, with `redirect: "error"` and a timeout.** The sync `urlRejectionReason` is for IP literals only. Both cover IPv4-mapped IPv6 (`::ffff:169.254.169.254`) and every private range; a plain host allowlist does not, because a redirect or a rebinding DNS name walks straight past it.
 
 
 ## Dependencies & security
 
-- **This UI ships no auth / payment / AI SDK.** `better-auth`, `stripe`, `bcrypt`, `jsonwebtoken`, `date-fns`, `recharts`, the AI SDK and their `@types` were listed but never imported and were removed. The builder is a thin client in front of one key; those belong in **boilerplate mode**, added by the operator. Before adding a dependency, confirm it is actually imported.
+- **Auth is Firebase; billing is not bundled.** Keep provider credentials server-side and confirm a dependency is actually imported before adding it.
 - **Runtime deps** are UI/utility only: Next 16, React 19, Tailwind 4, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
 - **Keep `npm audit` at zero.** A `dompurify` override (`>=3.4.15`) pins the copy Monaco pulls in. Run `npm audit` after any dependency change; do not commit a new advisory.
 
