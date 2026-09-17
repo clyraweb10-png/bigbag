@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
+import { authFailed, enforceProjectScope, resolveVcaasContext } from "../../_shared";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
@@ -92,6 +93,10 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+  const auth = await resolveVcaasContext();
+  if (authFailed(auth)) return auth.response;
+  const outOfScope = enforceProjectScope(auth.team, "POST", ["projects", projectId]);
+  if (outOfScope) return outOfScope;
 
   if (!isRoutableProjectSlug(projectId)) {
     return NextResponse.json(

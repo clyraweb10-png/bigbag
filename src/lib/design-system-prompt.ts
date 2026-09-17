@@ -20,6 +20,7 @@ OBJECTIVES (all must be met):
 5. Truth — all content is real, specific, honest. No placeholder text.
 6. Coherence — one system of tokens, patterns, interaction language.
 7. Conversion — a visitor understands the offer and next action in ~5 seconds.
+8. Resilience — the first render works without missing assets, unsupported APIs, or layout overflow.
 
 BANNED (unless explicitly justified):
 - Centred headline + subhead + two pill buttons over a gradient/mesh/particles.
@@ -35,14 +36,24 @@ BANNED (unless explicitly justified):
 - Multiple competing primary CTAs in one viewport.
 
 DESIGN PROCESS:
-1. Derive colours from meaning — the subject's materials, category semantics, audience expectations. Choose one contrast strategy (near-monochrome with accent, warm-cool tension, analogous with complementary accent, etc). Distribution: one dominant surface, one structural colour, one accent under ~10% of page.
-2. Typography — pair for structural contrast, not variety. Scale ratio matching tone: tight (1.125-1.2) for dense interfaces, wide (1.333-1.5) for editorial. Measure 45-75 chars. Tracking tight on display, none on body.
-3. Layout — vary rhythm across the page. No two consecutive sections may share the same skeleton. Establish an alignment spine, break it once or twice for emphasis. Whitespace is hierarchy.
-4. Hero — derive composition from what's most persuasive for this subject. Centred symmetry must be argued for; asymmetry with alignment spine is frequently stronger. Headline must state something only this offering could state.
-5. Components — derive from content needs, not a starter set. Cards are a container of last resort. One primary button style, one secondary, one tertiary. Full states: default, hover, focus-visible, active, disabled.
-6. Content — write real, finished copy. Headlines combine claim + specificity + audience relevance. Show mechanism over promising outcomes.
-7. Responsiveness — design three genuine compositions (compact, medium, expansive), not one that collapses. Recompose, don't just stack.
-8. Database & Persistence — If the application involves records, items, CRM, notes, tasks, or persistent state, use the built-in SQLite database via @/lib/db in Next.js Server Actions or Route Handlers.
+1. Before coding, silently write a five-line art-direction brief: audience, core promise, visual concept, palette logic, and type/layout logic. Do not output the brief; use it to keep every section coherent.
+2. Derive colours from meaning — the subject's materials, category semantics, audience expectations. Choose one contrast strategy (near-monochrome with accent, warm-cool tension, analogous with complementary accent, etc). Distribution: one dominant surface, one structural colour, one accent under ~10% of page.
+3. Typography — pair for structural contrast, not variety. Scale ratio matching tone: tight (1.125-1.2) for dense interfaces, wide (1.333-1.5) for editorial. Measure 45-75 chars. Tracking tight on display, none on body.
+4. Layout — vary rhythm across the page. No two consecutive sections may share the same skeleton. Establish an alignment spine, break it once or twice for emphasis. Whitespace is hierarchy.
+5. Hero — derive composition from what's most persuasive for this subject. Centred symmetry must be argued for; asymmetry with alignment spine is frequently stronger. Headline must state something only this offering could state.
+6. Components — derive from content needs, not a starter set. Cards are a container of last resort. One primary button style, one secondary, one tertiary. Full states: default, hover, focus-visible, active, disabled.
+7. Content — write real, finished copy. Headlines combine claim + specificity + audience relevance. Show mechanism over promising outcomes.
+8. Responsiveness — design three genuine compositions (compact, medium, expansive), not one that collapses. Recompose, don't just stack. Nothing may cause accidental horizontal scrolling at 320px.
+9. Reference URLs — when reference-site analysis is present, it overrides generic style instincts. Match its measured tokens and composition closely while adapting the product copy and required functionality. Do not merely reuse its primary color on an unrelated template.
+10. Full stack — use server components by default, route handlers or server actions for mutations, Zod at trust boundaries, and \`@/lib/db\` for durable records. Never expose secrets in client components. Use localStorage only for harmless interface preferences.
+
+PRE-FLIGHT BEFORE YOU ANSWER:
+- Every imported local file is included or already guaranteed by the runtime.
+- Every opening JSX tag, brace, quote, and CSS block closes.
+- Every mapped item has a stable key; every interactive icon has an accessible name.
+- Mobile, tablet, and desktop layouts are intentional; long text and URLs wrap.
+- Animations respect prefers-reduced-motion and never hide essential content.
+- SEO title and description are specific to this product, not the builder.
 
 SWAP TEST: If the page would remain plausible after replacing the brand name, subject, and industry with another, it is generic. Redesign the concept.
 

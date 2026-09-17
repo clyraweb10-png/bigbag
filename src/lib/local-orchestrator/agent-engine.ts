@@ -9,14 +9,16 @@ import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "@/lib/vcaas-types";
 import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
+import { buildReferenceSiteContext } from "./reference-site";
+import { figmaConnector } from "./figma-connector";
 
-const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer. Build complete web apps using Vite, React 19, TypeScript, and Tailwind CSS 4.
+const SYSTEM_PROMPT = `You are an expert product designer and full-stack engineer. Build complete web apps using Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, and libSQL/Turso.
 
 ## CRITICAL RULES
 
 **OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
 
-1. Runtime — This is a browser-only Vite React app. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or backend-only code.
+1. Runtime — This is a real full-stack Next.js App Router app. Use Server Components by default. Add 'use client' only to components that need hooks or browser APIs. Use route handlers and server actions for backend behavior, Zod for request validation, and \`@/lib/db\` for durable data. Never expose secret environment variables to client code.
 
 2. Output Format — Each file with markdown heading + code block:
 ### File: src/app/page.tsx
@@ -25,19 +27,21 @@ import { useState } from 'react';
 // code
 \`\`\`
 
-The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Put optional components after those required entry files so a token limit can never leave the app disconnected.
+The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Include src/app/layout.tsx when metadata changes. Route handlers use src/app/api/<name>/route.ts. Put optional components after required entry files so a token limit can never leave the app disconnected.
 
-3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, and @/lib/utils (cn) — they already exist.
+3. Dependencies — Installed and ready: next, react, react-dom (v19), @libsql/client, zod, tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, react-day-picker, cmdk, next-themes, lodash, and sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/db, and @/lib/utils (cn) — they already exist. Do not import another local UI component unless you output that file.
 
 4. Styling — Use Tailwind utilities and src/app/globals.css for tokens, keyframes, and special effects. NO styled-jsx, CSS modules, or @apply rules. Keep @import "tailwindcss" as the first non-comment rule in globals.css. All CSS properties MUST be inside a selector.
 
-5. Structure — src/app/page.tsx is the main app, src/app/globals.css contains global styles, and reusable sections belong in src/components/*.tsx. The runtime entrypoint already exists; do not output src/main.tsx.
+5. Structure — src/app/page.tsx is the main app, src/app/layout.tsx owns product-specific Metadata, src/app/globals.css contains global styles, src/app/api/**/route.ts owns JSON APIs, and reusable sections belong in src/components/*.tsx. The runtime entrypoint and database client already exist; do not output src/main.tsx.
 
 6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, or TODOs. Use semantic HTML, accessible labels, keyboard focus states, and responsive layouts at mobile/tablet/desktop sizes.
 
 7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids. Honor every concrete detail in the user's prompt.
 
-8. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO external images/fonts (use gradients or lucide-react icons). NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+8. Assets — Prefer CSS, inline SVG, and lucide-react for reliable visuals. When reference-site analysis supplies public image URLs and the user asks for a close match, you may use those URLs with useful alt text, fixed aspect-ratio containers, object-fit, and an onError/CSS fallback. Never use the temporary Firecrawl screenshot URL as an app asset. Do not fetch or import external font files; reproduce the hierarchy with the system font stack.
+
+9. DON'T — NO react-dom/client imports. NO require(). NO package.json/vite.config/tsconfig/postcss/src/main output. NO secrets or database calls in client components. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside the App Router. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
@@ -403,67 +407,6 @@ export default function Page() {
   }
 }
 
-function autoHealMissingImports(projectId: string, newMessages: ConversationMessage[]): void {
-  const pageFile = localFileManager.getContent(projectId, "src/app/page.tsx");
-  if (!pageFile?.content) return;
-
-  const content = pageFile.content;
-  const importRegex = /import\s+(?:\{([^}]+)\}|([a-zA-Z0-9_$]+))\s+from\s+['"](?:@\/components\/|\.\/components\/|\.\.\/components\/)([^'"]+)['"]/g;
-  let match;
-
-  while ((match = importRegex.exec(content)) !== null) {
-    const namedImports = match[1]
-      ? match[1].split(",").map((s: string) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)
-      : [];
-    const defaultImport = match[2] ? match[2].trim() : null;
-    const componentPath = match[3];
-
-    let targetRelPath = `src/components/${componentPath}`;
-    if (!targetRelPath.endsWith(".tsx") && !targetRelPath.endsWith(".ts")) {
-      targetRelPath += ".tsx";
-    }
-
-    const existing = localFileManager.getContent(projectId, targetRelPath);
-    if (!existing) {
-      console.log(`[localAgentEngine] Auto-healing missing component: ${targetRelPath}`);
-      const componentNames = defaultImport ? [defaultImport, ...namedImports] : namedImports;
-      const primaryName = componentNames[0] || "Section";
-
-      let stubExports = "";
-      for (const name of componentNames) {
-        stubExports += `
-export function ${name}() {
-  return (
-    <section className="py-16 px-6 max-w-7xl mx-auto text-center border-t border-slate-800/60">
-      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-medium mb-4">
-        ${name}
-      </div>
-      <h3 className="text-2xl font-bold text-white mb-2">${name}</h3>
-      <p className="text-slate-400 max-w-lg mx-auto text-sm">
-        Customizable component ready for additional features.
-      </p>
-    </section>
-  );
-}
-`;
-      }
-
-      const fileContent = `'use client';
-import React from 'react';
-${stubExports}
-export default ${primaryName};
-`;
-      localFileManager.writeContent(projectId, targetRelPath, fileContent, "utf8");
-      newMessages.push({
-        author: "agent",
-        message: `Created component \`${targetRelPath}\``,
-        messageType: "building",
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-}
-
 export const localAgentEngine = {
   async runPrompt(projectId: string, prompt: string): Promise<void> {
     const record = localProjectStore.getRecord(projectId);
@@ -549,6 +492,28 @@ export const localAgentEngine = {
             ? existingStyles.content.slice(0, 5_000)
             : "";
           userPromptContent = `Current page:\n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nCurrent global styles:\n\`\`\`css\n${styles}\n\`\`\`\n\nUser Request: ${prompt}\n\nUpdate the application completely enough to fulfill this request while preserving working features.`;
+        }
+
+        const appendStatus = (message: string) => {
+          const current = localProjectStore.getRecord(projectId);
+          const statusMessage: ConversationMessage = {
+            author: "agent",
+            message,
+            messageType: "building",
+            createdAt: new Date().toISOString(),
+          };
+          localProjectStore.update(projectId, {
+            conversation: [...(current?.conversation || []), statusMessage],
+          });
+        };
+        const referenceContext = await buildReferenceSiteContext(prompt, appendStatus);
+        if (referenceContext) {
+          userPromptContent = `${userPromptContent}\n\n${referenceContext}`;
+        }
+        const figmaContext = await figmaConnector.contextForPrompt(projectId, prompt);
+        if (figmaContext) {
+          appendStatus("Reading the connected Figma design system…");
+          userPromptContent = `${userPromptContent}\n\n${figmaContext}`;
         }
 
         // MotionSites-style prompts carry precise layout, motion and art direction.
@@ -652,9 +617,6 @@ export const localAgentEngine = {
           });
         }
 
-        // Auto-heal any components imported in page.tsx that were omitted by the AI
-        autoHealMissingImports(projectId, newMessages);
-
         purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
 
         // Add detected dependencies to this generated app. Installation happens
@@ -742,7 +704,6 @@ export const localAgentEngine = {
               }
               localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
             }
-            autoHealMissingImports(projectId, newMessages);
             purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
             ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));
 

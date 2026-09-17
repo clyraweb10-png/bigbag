@@ -36,7 +36,7 @@ const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>([
   ["@radix-ui/react-switch", "1.2.6"],
   ["@radix-ui/react-tabs", "1.1.13"],
   ["@radix-ui/react-tooltip", "1.2.8"],
-  ["react-router-dom", "7.9.4"],
+  ["react-router-dom", "7.18.4"],
   ["zod", "4.1.12"],
 ]);
 

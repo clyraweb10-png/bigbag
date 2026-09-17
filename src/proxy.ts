@@ -50,9 +50,6 @@ function addCspHeaders(response: NextResponse) {
   return response;
 }
 
-// NOTE: Authentication has been removed — the platform is fully open and every
-// route is public. No user account is required. This proxy now only handles
-// CORS and CSP headers (needed for the live preview iframe and custom domains).
 export async function proxy(request: NextRequest) {
   // Handle CORS preflight requests
   if (request.method === "OPTIONS") {
@@ -62,7 +59,21 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  // Every route is public — just attach CORS + CSP headers and continue.
+  const { pathname, search } = request.nextUrl;
+  const isPublic = pathname === "/login" || pathname === "/api/auth/session" || pathname === "/api/config";
+  const isPage = !pathname.startsWith("/api/");
+  const hasSession = Boolean(request.cookies.get("bigbag_session")?.value);
+
+  // This is only a fast presence check. API routes verify the Firebase token.
+  if (isPage && !isPublic && !hasSession) {
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", `${pathname}${search}`);
+    return addCspHeaders(NextResponse.redirect(login));
+  }
+  if (pathname === "/login" && hasSession) {
+    return addCspHeaders(NextResponse.redirect(new URL("/", request.url)));
+  }
+
   const response = NextResponse.next();
   addCorsHeaders(response, request);
   addCspHeaders(response);

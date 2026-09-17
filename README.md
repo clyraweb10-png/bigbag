@@ -68,6 +68,8 @@ All of this works with **one API key**. No other cloud accounts, no glue code:
 - 🌐 **Custom domains.** Attach your own domain with guided DNS setup and watch it go live.
 - 🔗 **GitHub sync.** Connect a repo and push or pull changes in both directions.
 - 🎨 **Figma.** Paste a Figma frame link in the chat and the agent builds from the design.
+- 🔐 **Google sign-in.** Firebase-backed sessions protect project APIs, previews, source archives and uploads; each user sees only their own projects.
+- 🧱 **Reliable full-stack previews.** Generated projects run on Next.js App Router with route handlers, server actions and a prepared libSQL/Turso client, while a production compile gate rejects broken generations before preview.
 - 📦 **Export, import and duplicate projects.** Package a whole project into an import code, restore it, or clone it in one action.
 - 🕓 **Version history.** Every AI build is a restorable checkpoint, with a diff viewer showing exactly what changed.
 - 📜 **Logs.** Read runtime logs from the preview server and from production.
@@ -100,6 +102,9 @@ SANDBOX_PROVIDER=local
 # Provide your preferred model key:
 GLM_API_KEY=your_glm_api_key
 # or GROQ_API_KEY / OPENROUTER_API_KEY
+
+# Optional: match public reference URLs pasted into a prompt
+# FIRECRAWL_API_KEY=your_firecrawl_api_key
 ```
 
 ### 3. Run it
@@ -110,7 +115,7 @@ npm run dev
 
 Open **[http://localhost:3000](http://localhost:3000)**, type what you want to build, and watch it happen. 🎉
 
-**Requirements:** [Node.js](https://nodejs.org) 20+ and npm.
+**Requirements:** [Node.js](https://nodejs.org) 20.19+ and npm.
 
 ---
 
@@ -123,6 +128,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `GLM_API_KEY` | ⬜ Optional | Zhipu AI GLM key for code generation. |
 | `GROQ_API_KEY` | ⬜ Optional | Groq API key for fast inference. |
 | `OPENROUTER_API_KEY` | ⬜ Optional | OpenRouter API key for multi-model access. |
+| `FIRECRAWL_API_KEY` | ⬜ Optional | Captures branding, layout content, screenshots, and visual assets from public reference URLs in local-orchestrator prompts. |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 To start from the example file:
@@ -131,7 +137,7 @@ To start from the example file:
 cp .env.example .env.local
 ```
 
-> 🔒 **Security:** the API key is only read in `src/lib/vcaas-server.ts`, which never ships to the browser. It is deliberately **not** a `NEXT_PUBLIC_` variable.
+> 🔒 **Security:** provider keys are read only by server-side modules and never ship to the browser. They are deliberately **not** `NEXT_PUBLIC_` variables.
 
 ---
 
@@ -367,3 +373,5 @@ Released under the **MIT License**. Free for personal and commercial use. See [`
 Built with ❤️ on the [BigBag AI Engine](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api) · [Docs](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [Get your free API key](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api)
 
 </div>
+
+# original-

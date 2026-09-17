@@ -7,6 +7,7 @@ import path from "path";
  * is a junction/symlink to that shared tree (Lovable-style preinstall).
  */
 export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
+  next: "^16.2.10",
   react: "^19.0.0",
   "react-dom": "^19.0.0",
   "lucide-react": "^0.536.0",
@@ -14,24 +15,55 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "tailwind-merge": "^3.3.1",
   "class-variance-authority": "^0.7.1",
   "framer-motion": "^13.3.0",
+  motion: "^13.3.0",
   gsap: "^3.15.0",
   zustand: "^5.0.15",
   recharts: "^3.10.1",
   "date-fns": "^4.4.0",
   axios: "^1.20.0",
   "@tanstack/react-query": "^5.102.8",
+  "@hookform/resolvers": "5.2.2",
   "canvas-confetti": "^1.9.4",
   "usehooks-ts": "^3.1.1",
   "embla-carousel-react": "^8.6.0",
+  cmdk: "^1.1.1",
+  lodash: "^4.18.1",
+  "next-themes": "^0.4.6",
+  "react-day-picker": "^9.8.1",
   "@radix-ui/react-slot": "^1.2.3",
+  "@radix-ui/react-accordion": "^1.2.12",
+  "@radix-ui/react-alert-dialog": "^1.1.14",
+  "@radix-ui/react-avatar": "^1.1.10",
+  "@radix-ui/react-checkbox": "^1.3.2",
+  "@radix-ui/react-collapsible": "^1.1.11",
+  "@radix-ui/react-context-menu": "^2.2.15",
+  "@radix-ui/react-dialog": "^1.1.14",
+  "@radix-ui/react-dropdown-menu": "^2.1.15",
+  "@radix-ui/react-hover-card": "^1.1.14",
+  "@radix-ui/react-label": "^2.1.7",
+  "@radix-ui/react-menubar": "^1.1.15",
+  "@radix-ui/react-navigation-menu": "^1.2.13",
+  "@radix-ui/react-popover": "^1.1.14",
+  "@radix-ui/react-progress": "^1.1.7",
+  "@radix-ui/react-radio-group": "^1.3.7",
+  "@radix-ui/react-scroll-area": "^1.2.9",
+  "@radix-ui/react-select": "^2.2.5",
+  "@radix-ui/react-separator": "^1.1.7",
+  "@radix-ui/react-slider": "^1.3.5",
+  "@radix-ui/react-switch": "^1.2.5",
+  "@radix-ui/react-tabs": "^1.1.12",
+  "@radix-ui/react-toggle": "^1.1.9",
+  "@radix-ui/react-tooltip": "^1.2.7",
   "react-hook-form": "^7.62.0",
+  "react-router-dom": "7.18.4",
   sonner: "^2.0.7",
-  "@libsql/client": "^0.14.0",
+  zod: "4.1.12",
+  "@libsql/client": "^0.18.0",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
-  vite: "^5.4.21",
-  "@vitejs/plugin-react": "^4.7.0",
+  vite: "7.3.6",
+  "@vitejs/plugin-react": "5.2.0",
   typescript: "^5.8.0",
   "@types/node": "^22.0.0",
   "@types/react": "^19.0.0",
@@ -79,11 +111,10 @@ function readLayoutMetadata(
 }
 
 /**
- * Keep older generated Next workspaces previewable without rewriting the user's
- * page. Vite mounts the existing `src/app/page.tsx` directly and uses a fraction
- * of the memory required by `next dev` in the small E2B VM.
+ * Keep generated workspaces on a full-stack Next.js runtime without rewriting
+ * the user's page. This also upgrades older browser-only workspaces in place.
  */
-function ensureViteRuntime(dir: string, projectId: string): void {
+function ensureNextRuntime(dir: string, projectId: string): void {
   const pkgPath = path.join(dir, "package.json");
   let pkg: Record<string, unknown> = {};
   try {
@@ -103,9 +134,9 @@ function ensureViteRuntime(dir: string, projectId: string): void {
     private: true,
     scripts: {
       ...scripts,
-      dev: "vite --host 0.0.0.0",
-      build: "vite build",
-      preview: "vite preview --host 0.0.0.0",
+      dev: "next dev --webpack",
+      build: "next build --webpack",
+      start: "next start",
     },
     dependencies: {
       ...PREINSTALLED_DEPENDENCIES,
@@ -118,12 +149,7 @@ function ensureViteRuntime(dir: string, projectId: string): void {
   };
   write(dir, "package.json", JSON.stringify(pkg, null, 2));
 
-  const postcssConfig = `import tailwindcss from "@tailwindcss/postcss";
-
-export default {
-  plugins: [tailwindcss()],
-};
-`;
+  const postcssConfig = `const config = {\n  plugins: ["@tailwindcss/postcss"],\n};\n\nexport default config;\n`;
   const postcssPath = path.join(dir, "postcss.config.mjs");
   if (!fs.existsSync(postcssPath)) {
     write(dir, "postcss.config.mjs", postcssConfig);
@@ -137,12 +163,20 @@ export default {
       !currentPostcss.includes("@tailwindcss/postcss")
     ) {
       write(dir, "postcss.config.mjs", postcssConfig);
+    } else if (/plugins:\s*\[\s*tailwindcss\(\)\s*\]/.test(currentPostcss)) {
+      write(dir, "postcss.config.mjs", postcssConfig);
     }
   }
 
   writeIfMissing(dir, "src/app/globals.css", `@import "tailwindcss";\n`);
+  writeIfMissing(dir, "next-env.d.ts", `/// <reference types="next" />\n/// <reference types="next/image-types/global" />\n`);
+  writeIfMissing(dir, "next.config.ts", `import type { NextConfig } from "next";\nconst nextConfig: NextConfig = { reactStrictMode: true };\nexport default nextConfig;\n`);
+  writeIfMissing(dir, "src/app/layout.tsx", `import type { Metadata } from "next";\nimport type { ReactNode } from "react";\nimport "./globals.css";\nexport const metadata: Metadata = { title: ${JSON.stringify(projectId)}, description: "Built with BigBag" };\nexport default function RootLayout({ children }: { children: ReactNode }) { return <html lang="en"><body>{children}</body></html>; }\n`);
 
-  writeIfMissing(
+  // index.html and main.tsx are runtime-owned. Rewriting them upgrades existing
+  // generated projects to the same resilient preview/SEO shell without touching
+  // their page implementation.
+  write(
     dir,
     "index.html",
     `<!doctype html>
@@ -150,7 +184,11 @@ export default {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="${projectId}" />
     <meta name="theme-color" content="#09090b" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="manifest" href="/site.webmanifest" />
     <title>${projectId}</title>
   </head>
   <body>
@@ -181,20 +219,63 @@ export default defineConfig({
   const metadata = readLayoutMetadata(dir, projectId);
   writeIfMissing(
     dir,
+    "src/seo.ts",
+    `export type SeoConfig = {
+  title: string;
+  description: string;
+  keywords?: string[];
+  themeColor?: string;
+  canonicalUrl?: string;
+  language?: string;
+};
+
+export const seo: SeoConfig = {
+  title: ${JSON.stringify(metadata.title)},
+  description: ${JSON.stringify(metadata.description)},
+  keywords: [],
+  themeColor: "#09090b",
+  language: "en",
+};
+`
+  );
+
+  write(
+    dir,
     "src/main.tsx",
     `import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./app/page";
+import { seo } from "./seo";
 import "./app/globals.css";
 
-document.title = ${JSON.stringify(metadata.title)};
-let descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
-if (!descriptionMeta) {
-  descriptionMeta = document.createElement("meta");
-  descriptionMeta.name = "description";
-  document.head.appendChild(descriptionMeta);
+function setMeta(selector: string, attribute: "name" | "property", key: string, content: string) {
+  let element = document.head.querySelector<HTMLMetaElement>(selector);
+  if (!element) {
+    element = document.createElement("meta");
+    element.setAttribute(attribute, key);
+    document.head.appendChild(element);
+  }
+  element.content = content;
 }
-descriptionMeta.content = ${JSON.stringify(metadata.description)};
+
+document.title = seo.title;
+document.documentElement.lang = seo.language || "en";
+setMeta('meta[name="description"]', "name", "description", seo.description);
+setMeta('meta[property="og:title"]', "property", "og:title", seo.title);
+setMeta('meta[property="og:description"]', "property", "og:description", seo.description);
+setMeta('meta[name="twitter:title"]', "name", "twitter:title", seo.title);
+setMeta('meta[name="twitter:description"]', "name", "twitter:description", seo.description);
+if (seo.keywords?.length) setMeta('meta[name="keywords"]', "name", "keywords", seo.keywords.join(", "));
+if (seo.themeColor) setMeta('meta[name="theme-color"]', "name", "theme-color", seo.themeColor);
+if (seo.canonicalUrl) {
+  let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+  if (!canonical) {
+    canonical = document.createElement("link");
+    canonical.rel = "canonical";
+    document.head.appendChild(canonical);
+  }
+  canonical.href = seo.canonicalUrl;
+}
 
 const fallbackImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23dedbd4'/%3E%3Cstop offset='1' stop-color='%238b877f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='1000' fill='url(%23g)'/%3E%3Cpath d='M0 760L430 390l230 205 220-175 720 580H0Z' fill='%23181715' opacity='.28'/%3E%3C/svg%3E";
 
@@ -213,13 +294,53 @@ createRoot(document.getElementById("root")!).render(
 );
 `
   );
+
+  writeIfMissing(
+    dir,
+    ".gitignore",
+    `node_modules/
+.next/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
+coverage/
+`
+  );
+  writeIfMissing(dir, "public/robots.txt", "User-agent: *\nAllow: /\n");
+  writeIfMissing(
+    dir,
+    "public/site.webmanifest",
+    `${JSON.stringify(
+      {
+        name: projectId,
+        short_name: projectId.slice(0, 24),
+        start_url: "/",
+        display: "standalone",
+        background_color: "#09090b",
+        theme_color: "#09090b",
+      },
+      null,
+      2
+    )}\n`
+  );
+  // These files were owned by the former Vite compatibility shell. Keeping
+  // them would advertise two conflicting runtimes in exported projects.
+  for (const legacyRuntimeFile of ["index.html", "vite.config.ts", "src/main.tsx", "src/seo.ts"]) {
+    const fullPath = path.join(/* turbopackIgnore: true */ dir, legacyRuntimeFile);
+    if (fs.existsSync(/* turbopackIgnore: true */ fullPath)) fs.unlinkSync(/* turbopackIgnore: true */ fullPath);
+  }
 }
 
-/** Seed a Lovable-style Vite + React + Tailwind app. Idempotent. */
+/** Seed a Lovable-style full-stack Next.js + React + Tailwind app. Idempotent. */
 export function writeStarterTemplate(dir: string, projectId: string): void {
   const pkgPath = path.join(dir, "package.json");
   if (fs.existsSync(pkgPath)) {
-    ensureViteRuntime(dir, projectId);
+    ensureNextRuntime(dir, projectId);
     return;
   }
 
@@ -232,9 +353,9 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
         version: "0.1.0",
         private: true,
         scripts: {
-          dev: "vite --host 0.0.0.0",
-          build: "vite build",
-          preview: "vite preview --host 0.0.0.0",
+          dev: "next dev --webpack",
+          build: "next build --webpack",
+          start: "next start",
         },
         dependencies: PREINSTALLED_DEPENDENCIES,
         devDependencies: PREINSTALLED_DEV_DEPENDENCIES,
@@ -264,7 +385,7 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
           jsx: "react-jsx",
           paths: { "@/*": ["./src/*"] },
         },
-        include: ["src", "vite.config.ts"],
+        include: ["next-env.d.ts", ".next/types/**/*.ts", "**/*.ts", "**/*.tsx"],
         exclude: ["node_modules"],
       },
       null,
@@ -369,31 +490,6 @@ export function cn(...inputs: ClassValue[]) {
 
   write(
     dir,
-    "src/lib/db.ts",
-    `import { createClient } from "@libsql/client";
-import path from "path";
-import fs from "fs";
-
-const dataDir = path.join(process.cwd(), "data");
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const localDbPath = path.join(dataDir, "app.db").replace(/\\\\/g, "/");
-const url = process.env.TURSO_DATABASE_URL || \`file:\${localDbPath}\`;
-const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
-
-export const db = createClient({
-  url,
-  authToken,
-});
-
-export default db;
-`
-  );
-
-  write(
-    dir,
     "src/components/ui/button.tsx",
     `import * as React from "react";
 import { cn } from "@/lib/utils";
@@ -462,7 +558,20 @@ export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDiv
 `
   );
 
-  ensureViteRuntime(dir, projectId);
+  write(
+    dir,
+    "src/lib/db.ts",
+    `import "server-only";
+import { createClient } from "@libsql/client";
+
+export const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || "file:local.db",
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+`
+  );
+
+  ensureNextRuntime(dir, projectId);
 }
 
 /** True when a file is a JSX/TSX snippet, not a real HTML document. */

@@ -57,4 +57,4 @@ playwright-dev-server.log
 # local orchestrator runtime data
 /data/
 /workspaces/
-
+*.zip

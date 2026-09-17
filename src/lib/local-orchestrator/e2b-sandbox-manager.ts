@@ -8,7 +8,7 @@ import { purgeInvalidStaticHtml } from "./starter-template";
 const PREVIEW_PORT = 3000;
 const SANDBOX_TIMEOUT_MS = 3_600_000;
 const INSTALL_TIMEOUT_MS = 180_000;
-const BUILD_TIMEOUT_MS = 120_000;
+const BUILD_TIMEOUT_MS = 180_000;
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
@@ -17,25 +17,6 @@ const IGNORED_DIRECTORIES = new Set([
   "dist",
   "build",
 ]);
-const STATIC_SERVER_SCRIPT = `
-const http = require("node:http");
-const fs = require("node:fs");
-const path = require("node:path");
-const root = path.resolve("dist");
-const mime = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".woff2": "font/woff2" };
-http.createServer((request, response) => {
-  let pathname = "/";
-  try { pathname = decodeURIComponent(new URL(request.url, "http://preview").pathname); } catch {}
-  const requested = path.resolve(root, "." + pathname);
-  const safe = requested === root || requested.startsWith(root + path.sep);
-  const file = safe && fs.existsSync(requested) && fs.statSync(requested).isFile()
-    ? requested
-    : path.join(root, "index.html");
-  if (!safe || !fs.existsSync(file)) { response.writeHead(404); response.end("Not found"); return; }
-  response.writeHead(200, { "content-type": mime[path.extname(file).toLowerCase()] || "application/octet-stream", "cache-control": "no-store" });
-  fs.createReadStream(file).pipe(response);
-}).listen(3000, "0.0.0.0");
-`;
 
 type StartOptions = {
   /** Re-sync, compile, and restart even when the current preview is healthy. */
@@ -184,6 +165,9 @@ class E2BSandboxManager {
       // verified against this SDK because `secure` governs envd, not app ports.
       secure: true,
       metadata: { projectId },
+      envs: Object.fromEntries(
+        ["TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"].flatMap((key) => process.env[key] ? [[key, process.env[key] as string]] : [])
+      ),
     });
     this.activeSandboxes.set(projectId, sandbox);
     return sandbox;
@@ -210,12 +194,11 @@ class E2BSandboxManager {
     }
 
     await sandbox.commands.run(
-      "pkill -f '[v]ite.*--port 3000' || true; pkill -f '[p]ython3 -m http.server 3000' || true; pkill -f '[n]ode _bigbag-preview.cjs' || true",
+      "pkill -f '[n]ext.*start.*3000' || true; pkill -f '[n]ext-server' || true; pkill -f '[v]ite.*--port 3000' || true",
       { timeoutMs: 10_000 }
     );
-    await sandbox.files.write("_bigbag-preview.cjs", STATIC_SERVER_SCRIPT);
     await sandbox.commands.run(
-      "node _bigbag-preview.cjs > /tmp/bigbag-preview.log 2>&1",
+      "npm run start -- --hostname 0.0.0.0 --port 3000 > /tmp/bigbag-preview.log 2>&1",
       { background: true, timeoutMs: 0 }
     );
 
@@ -237,7 +220,7 @@ class E2BSandboxManager {
     localSandboxManager.ensureProjectTemplate(projectId);
 
     if (!this.isE2BEnabled()) {
-      return localSandboxManager.startDevServer(projectId);
+      return localSandboxManager.startDevServer(projectId, options);
     }
 
     const ongoing = this.initializing.get(projectId);

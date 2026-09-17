@@ -4,6 +4,7 @@ import fs from "fs";
 import { zip } from "fflate";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
+import { authFailed, enforceProjectScope, resolveVcaasContext } from "../../_shared";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
@@ -62,6 +63,10 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+  const auth = await resolveVcaasContext();
+  if (authFailed(auth)) return auth.response;
+  const outOfScope = enforceProjectScope(auth.team, "GET", ["projects", projectId]);
+  if (outOfScope) return outOfScope;
 
   if (!isRoutableProjectSlug(projectId)) {
     return NextResponse.json({ ok: false, error: "Invalid project id" }, { status: 400 });
