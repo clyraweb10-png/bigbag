@@ -5,6 +5,7 @@ import http from "http";
 import { spawn, spawnSync, ChildProcess } from "child_process";
 import { localProjectStore } from "./project-store";
 import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
+import { GeneratedAppBuildError } from "./sandbox-errors";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
@@ -27,6 +28,14 @@ function killProcessTree(proc: ChildProcess): void {
   } else {
     proc.kill("SIGTERM");
   }
+}
+
+async function waitForProcessExit(proc: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (proc.exitCode != null) return;
+  await Promise.race([
+    new Promise<void>((resolve) => proc.once("close", () => resolve())),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
 }
 
 /**
@@ -185,8 +194,13 @@ export const localSandboxManager = {
     }
     if (existing) {
       killProcessTree(existing);
-      activeProcesses.delete(projectId);
-      serverReadyPromises.delete(projectId);
+      // Wait before probing the stored port. Otherwise the old listener can
+      // still own the port—and can fire after the replacement starts.
+      await waitForProcessExit(existing);
+      if (activeProcesses.get(projectId) === existing) {
+        activeProcesses.delete(projectId);
+        serverReadyPromises.delete(projectId);
+      }
     }
 
     linkSharedNodeModules(dir, projectId);
@@ -219,7 +233,7 @@ export const localSandboxManager = {
     });
     if (build.error || build.status !== 0) {
       const details = `${build.stdout || ""}\n${build.stderr || ""}`.trim().slice(-12_000);
-      throw new Error(
+      throw new GeneratedAppBuildError(
         `Generated app failed to compile${build.error ? `: ${build.error.message}` : ""}${details ? `\n${details}` : ""}`
       );
     }
@@ -248,6 +262,7 @@ export const localSandboxManager = {
 
       devProc.on("close", (code) => {
         console.log(`[local-sandbox] Dev server for ${projectId} closed with code ${code}`);
+        if (activeProcesses.get(projectId) !== devProc) return;
         activeProcesses.delete(projectId);
         serverReadyPromises.delete(projectId);
         localProjectStore.update(projectId, { serverStatus: "Stopped" });
@@ -255,7 +270,9 @@ export const localSandboxManager = {
 
       devProc.on("error", (err) => {
         console.error(`[local-sandbox] Dev server error for ${projectId}:`, err);
+        if (activeProcesses.get(projectId) !== devProc) return;
         activeProcesses.delete(projectId);
+        serverReadyPromises.delete(projectId);
         localProjectStore.update(projectId, { serverStatus: "Error" });
       });
 

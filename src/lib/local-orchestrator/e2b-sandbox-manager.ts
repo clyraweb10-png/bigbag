@@ -1,14 +1,18 @@
 import fs from "fs";
 import path from "path";
+import { createHash } from "node:crypto";
 import { Sandbox } from "e2b";
 import { localProjectStore } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
+import { ensureWorkspaceDependencies } from "./dependency-scanner";
+import { GeneratedAppBuildError, SandboxSetupError } from "./sandbox-errors";
 
 const PREVIEW_PORT = 3000;
 const SANDBOX_TIMEOUT_MS = 3_600_000;
 const INSTALL_TIMEOUT_MS = 180_000;
 const BUILD_TIMEOUT_MS = 180_000;
+const WORKSPACE_SYNC_MANIFEST = ".bigbag-workspace-files.json";
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
@@ -92,6 +96,7 @@ class E2BSandboxManager {
     const walk = (current: string): void => {
       for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
         if (IGNORED_DIRECTORIES.has(entry.name) || entry.isSymbolicLink()) continue;
+        if (entry.name.startsWith(".env")) continue;
         const fullPath = path.join(current, entry.name);
         if (entry.isDirectory()) {
           walk(fullPath);
@@ -113,9 +118,53 @@ class E2BSandboxManager {
     const files = this.collectWorkspaceFiles(projectId);
     if (files.length === 0) throw new Error("Generated workspace contains no files");
 
-    for (const file of files) {
-      await sandbox.files.write(file.path, file.content);
+    // Mirror the workspace instead of only overwriting matching paths. Without
+    // this, a failed generation can leave broken TSX files in E2B after the
+    // local snapshot is restored, and Next.js continues to typecheck them.
+    const currentPaths = new Set(files.map((file) => file.path));
+    let previousPaths: string[] | null = null;
+    try {
+      const parsed: unknown = JSON.parse(await sandbox.files.read(WORKSPACE_SYNC_MANIFEST));
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+        previousPaths = parsed;
+      }
+    } catch {
+      // Sandboxes created before workspace manifests need a one-time migration.
     }
+
+    if (previousPaths) {
+      const stalePaths = previousPaths.filter((filePath) => !currentPaths.has(filePath));
+      for (let offset = 0; offset < stalePaths.length; offset += 20) {
+        await Promise.all(
+          stalePaths.slice(offset, offset + 20).map((filePath) =>
+            sandbox.files.remove(filePath).catch(() => undefined)
+          )
+        );
+      }
+    } else {
+      const sourceRoots = new Set([
+        "src", "app", "pages", "components", "lib", "hooks", "styles",
+        "public", "assets", "server", "prisma",
+      ]);
+      const projectFile = /^(?:\.env(?:\..*)?|\.gitignore|\.eslintrc.*|\.prettierrc.*|[^.].*\.(?:[cm]?[jt]sx?|json|css|scss|md|html|ya?ml))$/i;
+      const remoteEntries = await sandbox.files.list(".");
+      await Promise.all(
+        remoteEntries
+          .filter((entry) => sourceRoots.has(entry.name) || projectFile.test(entry.name))
+          .map((entry) => sandbox.files.remove(entry.path).catch(() => undefined))
+      );
+    }
+
+    // The SDK accepts batched writes. Chunking keeps requests bounded while
+    // avoiding one network round-trip per generated file.
+    for (let offset = 0; offset < files.length; offset += 40) {
+      const chunk = files.slice(offset, offset + 40).map((file) => ({
+        path: file.path,
+        data: file.content,
+      }));
+      await sandbox.files.write(chunk);
+    }
+    await sandbox.files.write(WORKSPACE_SYNC_MANIFEST, JSON.stringify([...currentPaths].sort()));
     console.log(`[E2B] Synced ${files.length} source files for ${projectId}`);
   }
 
@@ -174,15 +223,55 @@ class E2BSandboxManager {
   }
 
   private async compileAndStart(projectId: string, sandbox: Sandbox): Promise<string> {
+    // Old workspaces may still carry the former 61-package manifest. Rewrite it
+    // to the core runtime plus packages that source code actually imports before
+    // uploading, otherwise a fresh E2B sandbox can spend minutes downloading
+    // libraries the app never uses.
+    ensureWorkspaceDependencies([], localProjectStore.getWorkspaceDir(projectId));
     await this.syncAllWorkspaceFiles(projectId, sandbox);
 
-    try {
-      await sandbox.commands.run(
-        "npm install --legacy-peer-deps --no-audit --no-fund",
-        { timeoutMs: INSTALL_TIMEOUT_MS }
-      );
-    } catch (error) {
-      throw commandFailure("Dependency installation failed", error);
+    const packageJson = fs.readFileSync(
+      path.join(localProjectStore.getWorkspaceDir(projectId), "package.json"),
+      "utf8"
+    );
+    const dependencyFingerprint = createHash("sha256").update(packageJson).digest("hex");
+    const installedFingerprint = await sandbox.files
+      .read(".bigbag-dependencies.sha256")
+      .then((value) => value.trim())
+      .catch(() => "");
+    const runtimePresent = installedFingerprint === dependencyFingerprint && await sandbox.commands
+      .run("test -x node_modules/.bin/next && test -f node_modules/react/package.json", { timeoutMs: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!runtimePresent) {
+      let installError: unknown;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          await sandbox.commands.run(
+            "npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline --progress=false --loglevel=error",
+            { timeoutMs: INSTALL_TIMEOUT_MS }
+          );
+          installError = undefined;
+          break;
+        } catch (error) {
+          installError = error;
+          console.warn(`[E2B] Dependency installation attempt ${attempt} failed for ${projectId}; ${attempt === 1 ? "retrying with the warmed npm cache" : "giving up"}.`);
+          if (attempt === 1) {
+            await sandbox.commands
+              .run("pkill -f '[n]pm install' || true", { timeoutMs: 10_000 })
+              .catch(() => undefined);
+          }
+        }
+      }
+      if (installError) {
+        throw new SandboxSetupError(
+          commandFailure("Dependency installation failed after two attempts", installError).message
+        );
+      }
+      await sandbox.files.write(".bigbag-dependencies.sha256", dependencyFingerprint);
+    } else {
+      console.log(`[E2B] Reusing installed dependencies for ${projectId}`);
     }
 
     // A successful HTML response from Vite does not prove imported TSX compiles.
@@ -190,7 +279,7 @@ class E2BSandboxManager {
     try {
       await sandbox.commands.run("npm run build", { timeoutMs: BUILD_TIMEOUT_MS });
     } catch (error) {
-      throw commandFailure("Generated app failed to compile", error);
+      throw new GeneratedAppBuildError(commandFailure("Generated app failed to compile", error).message);
     }
 
     await sandbox.commands.run(
@@ -212,7 +301,7 @@ class E2BSandboxManager {
       .run("tail -n 120 /tmp/bigbag-preview.log 2>/dev/null || true", { timeoutMs: 10_000 })
       .then((result) => boundedLog(result.stdout || result.stderr))
       .catch(() => "No preview logs were available");
-    throw new Error(`Preview server did not become ready:\n${logs}`);
+    throw new GeneratedAppBuildError(`Preview server did not become ready:\n${logs}`);
   }
 
   public async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
@@ -264,15 +353,17 @@ class E2BSandboxManager {
         return previewUrl;
       } catch (error) {
         const sandbox = this.activeSandboxes.get(projectId);
-        if (sandbox) await sandbox.kill().catch(() => undefined);
-        this.activeSandboxes.delete(projectId);
+        const keepForRepair = error instanceof GeneratedAppBuildError;
+        if (!keepForRepair && sandbox) await sandbox.kill().catch(() => undefined);
+        if (!keepForRepair) this.activeSandboxes.delete(projectId);
         this.activeUrls.delete(projectId);
         localProjectStore.update(projectId, {
           serverStatus: "Error",
           previewUrl: undefined,
-          sandboxId: undefined,
+          sandboxId: keepForRepair ? sandbox?.sandboxId : undefined,
         });
-        throw error;
+        if (keepForRepair || error instanceof SandboxSetupError) throw error;
+        throw new SandboxSetupError(`Sandbox preparation failed: ${errorText(error)}`);
       }
     });
 

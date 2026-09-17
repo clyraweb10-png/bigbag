@@ -4,6 +4,7 @@ import { localProjectStore } from "./project-store";
 import { localFileManager } from "./file-manager";
 import { localSandboxManager } from "./sandbox-manager";
 import { e2bSandboxManager } from "./e2b-sandbox-manager";
+import { GeneratedAppBuildError, SandboxSetupError } from "./sandbox-errors";
 import { multiModelRouter } from "./multi-model-router";
 import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
@@ -112,6 +113,11 @@ function workspaceRepairContext(projectId: string): string {
     chunks.push(`### File: ${entry.path}\n\`\`\`\n${content}\n\`\`\``);
   }
   return chunks.join("\n\n");
+}
+
+function shortFailure(value: unknown, maxChars = 2_400): string {
+  const message = value instanceof Error ? value.message : String(value);
+  return message.length > maxChars ? `…${message.slice(-maxChars)}` : message;
 }
 
 
@@ -672,6 +678,9 @@ export const localAgentEngine = {
           });
         } catch (sandboxErr) {
           console.error(`[localAgentEngine] Sandbox startup failed:`, sandboxErr);
+          // Dependency downloads, E2B connectivity, and other sandbox setup
+          // failures cannot be fixed by asking the model to rewrite valid code.
+          if (!(sandboxErr instanceof GeneratedAppBuildError)) throw sandboxErr;
           const buildError = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
           newMessages.push({
             author: "agent",
@@ -722,6 +731,7 @@ export const localAgentEngine = {
             });
           } catch (repairError) {
             console.error(`[localAgentEngine] Automatic repair failed:`, repairError);
+            if (repairError instanceof SandboxSetupError) throw repairError;
             if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
 
             let restoredPreviewUrl: string | undefined;
@@ -734,8 +744,8 @@ export const localAgentEngine = {
             newMessages.push({
               author: "agent",
               message: restoredPreviewUrl
-                ? "The requested change could not be compiled safely, so the previous working version was restored. Please retry or adjust the prompt."
-                : `Generation failed validation and the preview could not be restored: ${repairError instanceof Error ? repairError.message : String(repairError)}`,
+                ? `The generated update did not compile and automatic repair was unavailable, so the previous working preview was restored. Please retry when a provider is available.\n\nBuild error:\n${shortFailure(buildError)}\n\nRepair service:\n${shortFailure(repairError)}`
+                : `Generation failed validation and the preview could not be restored.\n\nBuild error:\n${shortFailure(buildError)}\n\nRepair service:\n${shortFailure(repairError)}`,
               messageType: "error",
               createdAt: new Date().toISOString(),
             });
@@ -749,17 +759,22 @@ export const localAgentEngine = {
         }
       } catch (err: any) {
         console.error("[localAgentEngine error]", err);
-        if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
+        const sandboxSetupFailed = err instanceof SandboxSetupError;
+        if (!sandboxSetupFailed && previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
         let restoredPreviewUrl: string | undefined;
-        try {
-          restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
-        } catch (restoreError) {
-          console.error("[localAgentEngine] Could not restore previous preview:", restoreError);
+        if (!sandboxSetupFailed) {
+          try {
+            restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          } catch (restoreError) {
+            console.error("[localAgentEngine] Could not restore previous preview:", restoreError);
+          }
         }
         const current = localProjectStore.getRecord(projectId);
         const errorMsg: ConversationMessage = {
           author: "agent",
-          message: `Generation encountered an issue: ${err.message || String(err)}`,
+          message: sandboxSetupFailed
+            ? `The app files were generated, but the preview sandbox could not finish preparing after two attempts. Your generated code was preserved; retry the preview when the network is available. ${err.message || String(err)}`
+            : `Generation encountered an issue: ${err.message || String(err)}`,
           messageType: "error",
           createdAt: new Date().toISOString(),
         };

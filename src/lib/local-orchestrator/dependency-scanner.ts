@@ -1,7 +1,11 @@
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
-import { ALWAYS_AVAILABLE_PACKAGES } from "./starter-template";
+import {
+  GENERATED_CORE_DEPENDENCIES,
+  GENERATED_CORE_DEV_DEPENDENCIES,
+  PREINSTALLED_DEPENDENCIES,
+} from "./starter-template";
 
 /**
  * Node.js built-in modules that should never be npm-installed.
@@ -16,29 +20,23 @@ const NODE_BUILTINS = new Set([
 ]);
 
 /**
- * Packages that are always available because they ship with the workspace
- * Vite template or are peer-provided by React.
+ * Packages that every generated Next.js workspace installs before its first
+ * build. Everything else is added only when generated source imports it.
  */
-const ALWAYS_AVAILABLE = ALWAYS_AVAILABLE_PACKAGES;
+const ALWAYS_AVAILABLE = new Set([
+  ...Object.keys(GENERATED_CORE_DEPENDENCIES),
+  ...Object.keys(GENERATED_CORE_DEV_DEPENDENCIES),
+]);
 
 /**
- * Extra packages the model may request. Keep this deliberately small and pin
+ * Extra packages the model may request. Keep the catalog controlled and pin
  * every version so rebuilding the same generated workspace stays reproducible.
  * Unknown imports are left for the build/repair loop to reject instead of
  * installing arbitrary packages selected by model output.
  */
-const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>([
-  ["@hookform/resolvers", "5.2.2"],
-  ["@radix-ui/react-accordion", "1.2.12"],
-  ["@radix-ui/react-dialog", "1.1.15"],
-  ["@radix-ui/react-dropdown-menu", "2.1.16"],
-  ["@radix-ui/react-select", "2.2.6"],
-  ["@radix-ui/react-switch", "1.2.6"],
-  ["@radix-ui/react-tabs", "1.1.13"],
-  ["@radix-ui/react-tooltip", "1.2.8"],
-  ["react-router-dom", "7.18.4"],
-  ["zod", "4.1.12"],
-]);
+const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>(
+  Object.entries(PREINSTALLED_DEPENDENCIES)
+);
 
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
 
@@ -96,40 +94,57 @@ export function detectThirdPartyImports(
 export function ensureWorkspaceDependencies(
   files: Array<{ path: string; content: string }>,
   workspaceDir: string
-): { added: string[] } {
-  const requested = detectThirdPartyImports(files);
-  if (requested.length === 0) return { added: [] };
+): { added: string[]; removed: string[] } {
+  const workspaceFiles: Array<{ path: string; content: string }> = [];
+  const walk = (current: string): void => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (["node_modules", ".next", ".git", "dist", "build"].includes(entry.name) || entry.isSymbolicLink()) continue;
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(fullPath);
+      else if (entry.isFile() && /\.(?:tsx?|jsx?|mjs|cjs)$/.test(entry.name)) {
+        workspaceFiles.push({ path: path.relative(workspaceDir, fullPath), content: fs.readFileSync(fullPath, "utf8") });
+      }
+    }
+  };
+  walk(workspaceDir);
+  const requested = detectThirdPartyImports([...workspaceFiles, ...files]);
 
   const packagePath = path.join(workspaceDir, "package.json");
   let pkg: {
     dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    [key: string]: unknown;
   } = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("package.json must contain an object");
     }
-    pkg = parsed as { dependencies?: Record<string, string> };
+    pkg = parsed as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      [key: string]: unknown;
+    };
   } catch (error) {
     console.warn("[dependency-scanner] Repairing an unreadable generated package.json:", error);
   }
-  const dependencies =
+  const previousDependencies =
     pkg.dependencies && typeof pkg.dependencies === "object" && !Array.isArray(pkg.dependencies)
       ? { ...pkg.dependencies }
       : {};
-  const added = requested.filter(
-    (name) => ALLOWED_GENERATED_DEPENDENCIES.has(name) && !dependencies[name]
-  );
-  for (const name of added) {
-    dependencies[name] = ALLOWED_GENERATED_DEPENDENCIES.get(name)!;
+  const dependencies: Record<string, string> = { ...GENERATED_CORE_DEPENDENCIES };
+  for (const name of requested) {
+    const allowedVersion = ALLOWED_GENERATED_DEPENDENCIES.get(name);
+    if (allowedVersion) dependencies[name] = allowedVersion;
   }
+  const added = Object.keys(dependencies).filter((name) => !previousDependencies[name]);
+  const removed = Object.keys(previousDependencies).filter((name) => !dependencies[name]);
 
-  if (added.length > 0) {
-    pkg.dependencies = dependencies;
-    fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
-  }
+  pkg.dependencies = dependencies;
+  pkg.devDependencies = GENERATED_CORE_DEV_DEPENDENCIES;
+  fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
 
-  return { added };
+  return { added, removed };
 }
 
 /**

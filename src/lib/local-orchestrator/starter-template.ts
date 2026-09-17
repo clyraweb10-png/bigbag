@@ -73,6 +73,32 @@ export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
   postcss: "^8.5.6",
 };
 
+/**
+ * The generated package starts lean so a brand-new cloud sandbox does not
+ * download the entire component catalog before it can show a preview. The
+ * dependency scanner adds any other allow-listed package as soon as generated
+ * source imports it. Local workspaces still resolve the complete catalog from
+ * the builder's shared node_modules tree.
+ */
+export const GENERATED_CORE_DEPENDENCIES: Record<string, string> = {
+  next: PREINSTALLED_DEPENDENCIES.next,
+  react: PREINSTALLED_DEPENDENCIES.react,
+  "react-dom": PREINSTALLED_DEPENDENCIES["react-dom"],
+  clsx: PREINSTALLED_DEPENDENCIES.clsx,
+  "tailwind-merge": PREINSTALLED_DEPENDENCIES["tailwind-merge"],
+  "@libsql/client": PREINSTALLED_DEPENDENCIES["@libsql/client"],
+};
+
+export const GENERATED_CORE_DEV_DEPENDENCIES: Record<string, string> = {
+  typescript: PREINSTALLED_DEV_DEPENDENCIES.typescript,
+  "@types/node": PREINSTALLED_DEV_DEPENDENCIES["@types/node"],
+  "@types/react": PREINSTALLED_DEV_DEPENDENCIES["@types/react"],
+  "@types/react-dom": PREINSTALLED_DEV_DEPENDENCIES["@types/react-dom"],
+  tailwindcss: PREINSTALLED_DEV_DEPENDENCIES.tailwindcss,
+  "@tailwindcss/postcss": PREINSTALLED_DEV_DEPENDENCIES["@tailwindcss/postcss"],
+  postcss: PREINSTALLED_DEV_DEPENDENCIES.postcss,
+};
+
 export const ALWAYS_AVAILABLE_PACKAGES = new Set([
   ...Object.keys(PREINSTALLED_DEPENDENCIES),
   ...Object.keys(PREINSTALLED_DEV_DEPENDENCIES),
@@ -139,11 +165,11 @@ function ensureNextRuntime(dir: string, projectId: string): void {
       start: "next start",
     },
     dependencies: {
-      ...PREINSTALLED_DEPENDENCIES,
+      ...GENERATED_CORE_DEPENDENCIES,
       ...dependencies,
     },
     devDependencies: {
-      ...PREINSTALLED_DEV_DEPENDENCIES,
+      ...GENERATED_CORE_DEV_DEPENDENCIES,
       ...devDependencies,
     },
   };
@@ -357,8 +383,8 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
           build: "next build --webpack",
           start: "next start",
         },
-        dependencies: PREINSTALLED_DEPENDENCIES,
-        devDependencies: PREINSTALLED_DEV_DEPENDENCIES,
+        dependencies: GENERATED_CORE_DEPENDENCIES,
+        devDependencies: GENERATED_CORE_DEV_DEPENDENCIES,
       },
       null,
       2

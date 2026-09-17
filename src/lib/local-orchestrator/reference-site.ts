@@ -5,6 +5,8 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_REFERENCE_URLS = 1;
 const MAX_MARKDOWN_CHARS = 14_000;
 const MAX_BRANDING_CHARS = 12_000;
+const MAX_DIRECT_HTML_CHARS = 1_500_000;
+const MAX_DIRECT_VISIBLE_ITEMS = 80;
 
 type FirecrawlData = {
   markdown?: unknown;
@@ -90,6 +92,93 @@ function safeJson(value: unknown, maxChars: number): string {
   }
 }
 
+function decodeHtml(value: string): string {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function metaContent(html: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const forward = new RegExp(`<meta[^>]+(?:name|property)=["']${escaped}["'][^>]+content=["']([^"']+)["']`, "i").exec(html)?.[1];
+  const reverse = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["']${escaped}["']`, "i").exec(html)?.[1];
+  const value = forward || reverse;
+  return value ? decodeHtml(value) : undefined;
+}
+
+function directHtmlData(url: string, html: string): FirecrawlData {
+  const title = decodeHtml(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] || "") || new URL(url).hostname;
+  const description = metaContent(html, "description") || metaContent(html, "og:description") || "";
+  const items: string[] = [];
+  const seen = new Set<string>();
+  const visiblePattern = /<(h1|h2|h3|p|a|button|nav)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let visibleMatch: RegExpExecArray | null;
+  while ((visibleMatch = visiblePattern.exec(html)) && items.length < MAX_DIRECT_VISIBLE_ITEMS) {
+    const text = decodeHtml(visibleMatch[2]);
+    if (text.length < 2 || text.length > 500 || seen.has(text)) continue;
+    seen.add(text);
+    items.push(`${visibleMatch[1].toUpperCase()}: ${text}`);
+  }
+
+  const cssEvidence = [
+    ...Array.from(html.matchAll(/style=["']([^"']+)["']/gi), (match) => match[1]),
+    ...Array.from(html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi), (match) => match[1]),
+  ].join("\n").slice(0, 150_000);
+  const colors = [...new Set(cssEvidence.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]{3,60}\)/gi) || [])].slice(0, 24);
+  const fonts = [...new Set(Array.from(cssEvidence.matchAll(/font-family\s*:\s*([^;}]+)/gi), (match) => match[1].trim()))].slice(0, 12);
+  const images: string[] = [];
+  const imageCandidates = [
+    metaContent(html, "og:image") || "",
+    ...Array.from(html.matchAll(/<img\b[^>]+src=["']([^"']+)["']/gi), (match) => match[1]),
+  ];
+  for (const candidate of imageCandidates) {
+    if (!candidate || candidate.startsWith("data:")) continue;
+    try { images.push(new URL(candidate, url).toString()); } catch { /* Ignore malformed assets. */ }
+    if (images.length >= 12) break;
+  }
+
+  return {
+    metadata: { title, description },
+    markdown: items.length > 0 ? items.join("\n") : `Reference page for ${title} at ${url}`,
+    images,
+    branding: { colors, fonts, source: "safe direct HTML fallback" },
+  };
+}
+
+async function scrapeDirectReference(url: string): Promise<string> {
+  let current = url;
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    const rejection = await publicUrlRejectionReason(current);
+    if (rejection) throw new Error(rejection);
+    const response = await fetch(current, {
+      redirect: "manual",
+      cache: "no-store",
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 (compatible; BigBagReferenceBot/1.0; +https://bigbag.app)",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location || redirects === 3) throw new Error("reference redirected too many times");
+      current = new URL(location, current).toString();
+      continue;
+    }
+    if (!response.ok) throw new Error(`reference returned HTTP ${response.status}`);
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().includes("text/html")) throw new Error("reference is not an HTML page");
+    const html = (await response.text()).slice(0, MAX_DIRECT_HTML_CHARS);
+    return formatReferenceContext(current, directHtmlData(current, html));
+  }
+  throw new Error("reference could not be loaded");
+}
+
 function formatReferenceContext(url: string, data: FirecrawlData): string {
   const metadata =
     data.metadata && typeof data.metadata === "object"
@@ -147,15 +236,16 @@ async function scrapeReference(url: string, apiKey: string): Promise<string> {
     },
     body: JSON.stringify({
       url,
-      formats: ["markdown", "branding", "images", "screenshot"],
+      formats: ["markdown", "branding", "images"],
       onlyMainContent: false,
       removeBase64Images: true,
       blockAds: true,
-      maxAge: 86_400_000,
+      maxAge: 172_800_000,
       storeInCache: true,
       timeout: 30_000,
+      proxy: "auto",
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(38_000),
   });
 
   if (!response.ok) {
@@ -191,12 +281,6 @@ export async function buildReferenceSiteContext(
   const urls = extractReferenceUrls(prompt);
   if (urls.length === 0) return "";
 
-  const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
-  if (!apiKey) {
-    onStatus?.("Reference URL detected. Add FIRECRAWL_API_KEY to enable visual matching; continuing from the written prompt.");
-    return "";
-  }
-
   const url = urls[0];
   const rejection = await publicUrlRejectionReason(url);
   if (rejection) {
@@ -204,13 +288,33 @@ export async function buildReferenceSiteContext(
     return "";
   }
 
+  const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
+  if (!apiKey) {
+    onStatus?.("Analyzing the reference URL with the safe built-in fallback...");
+    try {
+      const context = await scrapeDirectReference(url);
+      onStatus?.("Reference content captured. Translating its visual system into the new app...");
+      return context;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "reference analysis failed";
+      onStatus?.(`Reference analysis was unavailable (${reason}); continuing with the requested design direction.`);
+      return "";
+    }
+  }
+
   onStatus?.("Analyzing the reference site's layout, colors, typography, and content structure...");
+  const directFallback = scrapeDirectReference(url).catch(() => "");
   try {
     const context = await scrapeReference(url, apiKey);
     onStatus?.("Reference design captured. Translating its visual system into the new app...");
     return context;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "reference analysis failed";
+    const fallback = await directFallback;
+    if (fallback) {
+      onStatus?.(`Firecrawl was delayed (${reason}); the safe fallback captured the reference instead.`);
+      return fallback;
+    }
     onStatus?.(`Reference analysis was unavailable (${reason}); continuing with the requested design direction.`);
     return "";
   }
