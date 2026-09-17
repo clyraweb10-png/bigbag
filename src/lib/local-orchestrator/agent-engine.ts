@@ -419,6 +419,41 @@ export default function Page() {
 
     file.content = content;
   }
+
+  // --- Tailwind CSS safeguards ---
+  // Weaker models frequently omit `@import "tailwindcss"` from globals.css or
+  // forget to import globals.css in layout.tsx, producing completely unstyled
+  // previews. Patch both after all other processing so the preview always loads
+  // Tailwind's base reset and utility classes.
+
+  const globalsCss = files.find(
+    (f) => f.path.endsWith("globals.css") || f.path.endsWith("global.css")
+  );
+  if (globalsCss) {
+    if (!globalsCss.content.includes('@import "tailwindcss"') && !globalsCss.content.includes("@import 'tailwindcss'")) {
+      globalsCss.content = `@import "tailwindcss";\n${globalsCss.content}`;
+      console.log("[localAgentEngine] Auto-injected @import \"tailwindcss\" into globals.css");
+    }
+  }
+
+  const layoutFile = files.find(
+    (f) => f.path.endsWith("layout.tsx") || f.path.endsWith("layout.jsx")
+  );
+  if (layoutFile) {
+    if (!layoutFile.content.includes("globals.css") && !layoutFile.content.includes("global.css")) {
+      // Insert the import after other imports or at the top of the file
+      const importLine = `import "./globals.css";\n`;
+      const lastImportIdx = layoutFile.content.lastIndexOf("\nimport ");
+      if (lastImportIdx >= 0) {
+        const lineEnd = layoutFile.content.indexOf("\n", lastImportIdx + 1);
+        layoutFile.content =
+          layoutFile.content.slice(0, lineEnd + 1) + importLine + layoutFile.content.slice(lineEnd + 1);
+      } else {
+        layoutFile.content = importLine + layoutFile.content;
+      }
+      console.log("[localAgentEngine] Auto-injected globals.css import into layout.tsx");
+    }
+  }
 }
 
 export const localAgentEngine = {
@@ -709,6 +744,35 @@ export const localAgentEngine = {
             }
           } catch (depErr: any) {
             console.error("[localAgentEngine] Dependency auto-install error:", depErr);
+          }
+        }
+
+        // On-disk Tailwind safeguard: if the model did not generate globals.css
+        // or layout.tsx, the starter-template versions are still on disk. Ensure
+        // they carry the Tailwind import so the preview is never unstyled.
+        const wsDir = localProjectStore.getWorkspaceDir(projectId);
+        const globalsCssPath = path.join(wsDir, "src/app/globals.css");
+        if (fs.existsSync(globalsCssPath)) {
+          const cssOnDisk = fs.readFileSync(globalsCssPath, "utf-8");
+          if (!cssOnDisk.includes('@import "tailwindcss"') && !cssOnDisk.includes("@import 'tailwindcss'")) {
+            fs.writeFileSync(globalsCssPath, `@import "tailwindcss";\n${cssOnDisk}`, "utf-8");
+            console.log("[localAgentEngine] Patched on-disk globals.css with @import \"tailwindcss\"");
+          }
+        }
+        const layoutPath = path.join(wsDir, "src/app/layout.tsx");
+        if (fs.existsSync(layoutPath)) {
+          const layoutOnDisk = fs.readFileSync(layoutPath, "utf-8");
+          if (!layoutOnDisk.includes("globals.css") && !layoutOnDisk.includes("global.css")) {
+            const importLine = `import "./globals.css";\n`;
+            const lastImport = layoutOnDisk.lastIndexOf("\nimport ");
+            if (lastImport >= 0) {
+              const lineEnd = layoutOnDisk.indexOf("\n", lastImport + 1);
+              const patched = layoutOnDisk.slice(0, lineEnd + 1) + importLine + layoutOnDisk.slice(lineEnd + 1);
+              fs.writeFileSync(layoutPath, patched, "utf-8");
+            } else {
+              fs.writeFileSync(layoutPath, importLine + layoutOnDisk, "utf-8");
+            }
+            console.log("[localAgentEngine] Patched on-disk layout.tsx with globals.css import");
           }
         }
 
