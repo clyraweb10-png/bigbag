@@ -1,16 +1,9 @@
-import type {
-  VcaasProject,
-  VcaasProjectSummary,
-  AgentStatus,
-  ConversationMessage,
-  FileTree,
-  FileTreeEntry,
-  FileContent,
-  FileWriteResult,
-} from "@/lib/vcaas-types";
+import type { ConversationMessage } from "@/lib/vcaas-types";
 
 export interface LocalProjectRecord {
   projectId: string;
+  /** Opaque server-issued tenant id. Never accepted from a request body. */
+  tenantId: string;
   label?: string;
   description: string;
   createdAt: string;
@@ -23,6 +16,13 @@ export interface LocalProjectRecord {
   rebuildStartedAt?: string;
   rebuildOperationId?: string;
   previewUrl?: string;
+  productionProjectUrl?: string;
   sandboxId?: string;
+  deployment?: {
+    status: "deploying" | "success" | "error";
+    createdAt: string;
+    versionId?: string;
+    errorMessage?: string;
+  };
   conversation: ConversationMessage[];
 }

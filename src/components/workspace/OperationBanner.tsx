@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { DownloadIcon, HammerIcon, HistoryIcon, RocketIcon, ServerIcon, UploadIcon } from "lucide-react";
 import { useT } from "@/i18n";
 import { formatDuration } from "@/lib/agent-progress";

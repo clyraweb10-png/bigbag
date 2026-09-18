@@ -95,11 +95,16 @@ Create a `.env.local` file in the project root:
 
 ```bash
 ORCHESTRATOR_MODE=local
-SANDBOX_PROVIDER=local
+SANDBOX_PROVIDER=e2b
 
-# Provide your preferred model key:
+# Gemini is primary; Telnyx GLM-5.3-Flash is the automatic fallback:
 GEMINI_API_KEY=your_gemini_api_key
-# or TELNYX_API_KEY=your_telnyx_api_key
+TELNYX_API_KEY=your_telnyx_api_key
+
+E2B_API_KEY=your_e2b_api_key
+FIRECRAWL_API_KEY=your_firecrawl_api_key
+TURSO_DATABASE_URL=libsql://your-database.turso.io
+TURSO_AUTH_TOKEN=your_turso_database_token
 ```
 
 ### 3. Run it
@@ -110,7 +115,7 @@ npm run dev
 
 Open **[http://localhost:3000](http://localhost:3000)**, type what you want to build, and watch it happen. 🎉
 
-**Requirements:** [Node.js](https://nodejs.org) 20+ and npm.
+**Requirements:** [Node.js](https://nodejs.org) 20.19+ and npm.
 
 ---
 
@@ -122,7 +127,18 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
 | `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
 | `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
+| `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
+| `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
+| `TURSO_DATABASE_URL` | ✅ Local orchestrator | Durable metadata, complete generated source, and compiled preview artifacts. |
+| `TURSO_AUTH_TOKEN` | ✅ Local orchestrator | Server-only token for the Turso database. |
+| `TENANT_COOKIE_SECRET` | ✅ Production | Dedicated random secret used only to sign anonymous tenant cookies. |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
+
+### E2B and persistent Render previews
+
+E2B is a disposable build worker, not a host. Before a sandbox is created, the complete generated project is saved to Turso. A successful build is health-checked inside E2B, copied back to Turso, and served by this existing Render web service at the stable path `/api/preview/<projectId>/`; the E2B sandbox is then destroyed. Returning later restores the saved source into a fresh sandbox, rebuilds it, and replaces the deployed artifact without changing the preview URL.
+
+Prompts containing a public website URL are analyzed by Firecrawl first. Only design facts are supplied to the generator, with instructions to create original React code and avoid copying proprietary source or unnecessary content.
 
 To start from the example file:
 
@@ -366,3 +382,5 @@ Released under the **MIT License**. Free for personal and commercial use. See [`
 Built with ❤️ on the [BigBag AI Engine](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api) · [Docs](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [Get your free API key](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api)
 
 </div>
+
+# vibecode

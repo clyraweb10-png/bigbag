@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +9,9 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    console.error("Unhandled application error:", error);
+  }, [error]);
   // Must include html and body tags as per Next.js docs
   // Show user-friendly error message for critical errors
   return (
@@ -64,11 +69,11 @@ export default function GlobalError({
             marginBottom: '24px',
             lineHeight: '1.5'
           }}>
-            An error occurred. The error has been logged to the console. Please refresh the page to continue.
+            An error occurred. The error has been logged to the console. Select Try Again to continue.
           </p>
 
           <button
-            onClick={() => window.location.reload()}
+            onClick={reset}
             style={{
               background: '#3b82f6',
               color: 'white',
@@ -84,7 +89,7 @@ export default function GlobalError({
             onMouseOver={(e) => (e.currentTarget.style.background = '#2563eb')}
             onMouseOut={(e) => (e.currentTarget.style.background = '#3b82f6')}
           >
-            Refresh Page
+            Try Again
           </button>
         </div>
       </body>

@@ -48,7 +48,6 @@ import type {
   AgentInputFile,
   AgentRunOptions,
   ConversationHistory,
-  ConversationMessage,
   ProjectVersion,
   FileTree,
   FileContent,

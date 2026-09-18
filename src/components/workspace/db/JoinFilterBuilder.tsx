@@ -28,7 +28,6 @@ import {
     removeNode,
     updateNode,
     type JoinGroup,
-    type JoinNode,
     type JoinOperator,
     type JoinRule,
 } from "@/lib/join-filter";

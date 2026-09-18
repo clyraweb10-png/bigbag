@@ -6,6 +6,23 @@ import type { FileTree, FileTreeEntry, FileContent, FileWriteResult } from "@/li
 
 const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 
+function projectFilePath(rootDir: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (
+    !normalized ||
+    normalized.startsWith("/") ||
+    normalized.split("/").includes("..") ||
+    normalized.includes("\0")
+  ) {
+    throw new Error("Invalid project file path");
+  }
+  const fullPath = path.resolve(rootDir, normalized);
+  if (!fullPath.startsWith(`${path.resolve(rootDir)}${path.sep}`)) {
+    throw new Error("Invalid project file path");
+  }
+  return fullPath;
+}
+
 export const localFileManager = {
   getTree(projectId: string): FileTree {
     const rootDir = localProjectStore.getWorkspaceDir(projectId);
@@ -66,8 +83,12 @@ export const localFileManager = {
 
   getContent(projectId: string, relativePath: string): FileContent | null {
     const rootDir = localProjectStore.getWorkspaceDir(projectId);
-    const safePath = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, "");
-    const fullPath = path.join(rootDir, safePath);
+    let fullPath: string;
+    try {
+      fullPath = projectFilePath(rootDir, relativePath);
+    } catch {
+      return null;
+    }
 
     if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
       return null;
@@ -101,8 +122,7 @@ export const localFileManager = {
     encoding: "utf8" | "base64" = "utf8"
   ): FileWriteResult {
     const rootDir = localProjectStore.getWorkspaceDir(projectId);
-    const safePath = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, "");
-    const fullPath = path.join(rootDir, safePath);
+    const fullPath = projectFilePath(rootDir, relativePath);
     const parentDir = path.dirname(fullPath);
 
     if (!fs.existsSync(parentDir)) {

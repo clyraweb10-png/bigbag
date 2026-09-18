@@ -160,13 +160,6 @@ const BINARY_EXTS = new Set([
   "exe", "dll", "so", "dylib", "bin", "wasm",
 ]);
 
-const TEXT_EXTS = new Set([
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "less",
-  "html", "htm", "md", "mdx", "py", "sh", "bash", "yml", "yaml", "sql",
-  "xml", "svg", "toml", "env", "txt", "gitignore", "npmrc", "prettierrc",
-  "eslintrc", "editorconfig", "lock", "map", "d", "cts", "mts",
-]);
-
 // ── Archive decompression ────────────────────────────────────────────────────
 // The VCaaS source-code archive is a gzipped TAR (git archive format). We also
 // transparently support a plain ZIP in case the backend ever changes format.
@@ -492,7 +485,6 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
     return m;
   }, [projectId]);
 
-  const dirtyPaths = useMemo(() => Object.keys(drafts), [drafts]);
   const isDirty = (path: string | null) => !!path && drafts[path] !== undefined;
 
   /**

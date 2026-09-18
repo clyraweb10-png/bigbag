@@ -1,9 +1,15 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import { Sandbox } from "e2b";
-import { localProjectStore } from "./project-store";
+import { localProjectStore, persistentPreviewPath, persistentPreviewUrl } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
+import {
+  durableProjectStore,
+  requireDurablePersistence,
+  type PersistedFile,
+} from "./durable-project-store";
 
 const PREVIEW_PORT = 3000;
 const SANDBOX_TIMEOUT_MS = 3_600_000;
@@ -89,7 +95,8 @@ class E2BSandboxManager {
   }
 
   public getPreviewUrl(projectId: string): string | null {
-    return this.activeUrls.get(projectId) || null;
+    const record = localProjectStore.getRecord(projectId);
+    return record?.deployment?.status === "success" ? persistentPreviewPath(projectId) : null;
   }
 
   public async syncFile(projectId: string, relativePath: string, content: string): Promise<void> {
@@ -150,32 +157,15 @@ class E2BSandboxManager {
     }
   }
 
-  private async connectOrCreate(projectId: string, apiKey: string): Promise<Sandbox> {
+  private async createSandbox(projectId: string, apiKey: string): Promise<Sandbox> {
     const active = this.activeSandboxes.get(projectId);
     if (active && (await active.isRunning().catch(() => false))) return active;
 
     this.activeSandboxes.delete(projectId);
     this.activeUrls.delete(projectId);
 
-    const savedId = localProjectStore.getRecord(projectId)?.sandboxId;
-    if (savedId) {
-      try {
-        const resumed = await Sandbox.connect(savedId, { apiKey, timeoutMs: SANDBOX_TIMEOUT_MS });
-        // Restricted preview traffic from older sandboxes cannot be reached by
-        // the current same-origin proxy, so replace those instances once.
-        if (resumed.trafficAccessToken) {
-          await resumed.kill().catch(() => undefined);
-        } else {
-          await resumed.setTimeout(SANDBOX_TIMEOUT_MS);
-          this.activeSandboxes.set(projectId, resumed);
-          return resumed;
-        }
-      } catch (error) {
-        console.warn(`[E2B] Could not resume ${savedId}: ${errorText(error)}`);
-      }
-      localProjectStore.update(projectId, { sandboxId: undefined, previewUrl: undefined });
-    }
-
+    // Every build gets a disposable sandbox. Project state is restored from the
+    // durable store, so Hobby's one-hour lifetime is sufficient and expected.
     const sandbox = await Sandbox.create({
       apiKey,
       timeoutMs: SANDBOX_TIMEOUT_MS,
@@ -189,7 +179,31 @@ class E2BSandboxManager {
     return sandbox;
   }
 
-  private async compileAndStart(projectId: string, sandbox: Sandbox): Promise<string> {
+  private async downloadBuild(sandbox: Sandbox): Promise<PersistedFile[]> {
+    const files: PersistedFile[] = [];
+    const walk = async (directory: string): Promise<void> => {
+      const entries = await sandbox.files.list(directory);
+      for (const entry of entries) {
+        if (entry.type === "dir") await walk(entry.path);
+        else if (entry.type === "file") {
+          const content = await sandbox.files.read(entry.path, { format: "bytes" });
+          const normalized = entry.path.replace(/\\/g, "/");
+          const marker = normalized.lastIndexOf("/dist/");
+          const relativePath = marker >= 0
+            ? normalized.slice(marker + "/dist/".length)
+            : normalized.replace(/^\.?\/?dist\//, "");
+          files.push({
+            path: relativePath,
+            content,
+          });
+        }
+      }
+    };
+    await walk("dist");
+    return files;
+  }
+
+  private async compileAndStart(projectId: string, sandbox: Sandbox): Promise<{ previewUrl: string; files: PersistedFile[] }> {
     await this.syncAllWorkspaceFiles(projectId, sandbox);
 
     try {
@@ -221,7 +235,9 @@ class E2BSandboxManager {
 
     const previewUrl = `https://${sandbox.getHost(PREVIEW_PORT)}`;
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      if (await this.previewIsReady(previewUrl)) return previewUrl;
+      if (await this.previewIsReady(previewUrl)) {
+        return { previewUrl, files: await this.downloadBuild(sandbox) };
+      }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
 
@@ -237,8 +253,33 @@ class E2BSandboxManager {
     localSandboxManager.ensureProjectTemplate(projectId);
 
     if (!this.isE2BEnabled()) {
-      return localSandboxManager.startDevServer(projectId);
+      localProjectStore.update(projectId, {
+        deployment: { status: "deploying", createdAt: new Date().toISOString() },
+      });
+      try {
+        const previewUrl = await localSandboxManager.startDevServer(projectId);
+        localProjectStore.update(projectId, {
+          previewUrl,
+          deployment: {
+            status: "success",
+            createdAt: new Date().toISOString(),
+            versionId: randomUUID(),
+          },
+        });
+        return previewUrl;
+      } catch (error) {
+        localProjectStore.update(projectId, {
+          deployment: {
+            status: "error",
+            createdAt: new Date().toISOString(),
+            errorMessage: errorText(error),
+          },
+        });
+        throw error;
+      }
     }
+
+    requireDurablePersistence();
 
     const ongoing = this.initializing.get(projectId);
     if (ongoing) {
@@ -260,25 +301,37 @@ class E2BSandboxManager {
     // before even the first readiness probe can yield to another request.
     const initialization = Promise.resolve().then(async () => {
       try {
-        const existingUrl = this.activeUrls.get(projectId);
-        if (!options.rebuild && existingUrl && (await this.previewIsReady(existingUrl))) {
-          return existingUrl;
-        }
-
         const apiKey = process.env.E2B_API_KEY;
         if (!apiKey) throw new Error("E2B_API_KEY is not configured");
 
-        localProjectStore.update(projectId, { serverStatus: "Starting" });
-        const sandbox = await this.connectOrCreate(projectId, apiKey);
-        const previewUrl = await this.compileAndStart(projectId, sandbox);
-        this.activeUrls.set(projectId, previewUrl);
         localProjectStore.update(projectId, {
-          serverStatus: "Active",
-          previewUrl,
-          sandboxId: sandbox.sandboxId,
+          serverStatus: "Starting",
+          deployment: { status: "deploying", createdAt: new Date().toISOString() },
         });
-        console.log(`[E2B] Preview ready for ${projectId}`);
-        return previewUrl;
+        // This is the durability boundary: the complete source is outside E2B
+        // before any disposable build worker is created.
+        await localProjectStore.persistSource(projectId);
+        const sandbox = await this.createSandbox(projectId, apiKey);
+        const build = await this.compileAndStart(projectId, sandbox);
+        const deployment = {
+          status: "success" as const,
+          createdAt: new Date().toISOString(),
+          versionId: randomUUID(),
+        };
+        const updated = localProjectStore.update(projectId, {
+          serverStatus: "Active",
+          previewUrl: persistentPreviewPath(projectId),
+          productionProjectUrl: persistentPreviewUrl(projectId),
+          sandboxId: undefined,
+          deployment,
+        });
+        if (!updated) throw new Error(`Project ${projectId} disappeared during deployment`);
+        await durableProjectStore.saveDeployment(updated, build.files);
+        await sandbox.kill().catch(() => undefined);
+        this.activeSandboxes.delete(projectId);
+        this.activeUrls.delete(projectId);
+        console.log(`[E2B] Build verified and deployed persistently for ${projectId}`);
+        return persistentPreviewPath(projectId);
       } catch (error) {
         const sandbox = this.activeSandboxes.get(projectId);
         if (sandbox) await sandbox.kill().catch(() => undefined);
@@ -286,8 +339,12 @@ class E2BSandboxManager {
         this.activeUrls.delete(projectId);
         localProjectStore.update(projectId, {
           serverStatus: "Error",
-          previewUrl: undefined,
           sandboxId: undefined,
+          deployment: {
+            status: "error",
+            createdAt: new Date().toISOString(),
+            errorMessage: errorText(error),
+          },
         });
         throw error;
       }
@@ -314,7 +371,6 @@ class E2BSandboxManager {
     localSandboxManager.stopDevServer(projectId);
     localProjectStore.update(projectId, {
       serverStatus: "Stopped",
-      previewUrl: undefined,
       sandboxId: undefined,
     });
   }

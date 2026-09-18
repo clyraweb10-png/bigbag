@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyRound, Server, Database, Sparkles, Globe, Github, Box, ArrowRight } from "lucide-react";
+import { KeyRound, Server, Database, Sparkles, Globe, Github, Box } from "lucide-react";
 
 // Shown on the dashboard when no LLM API key or orchestrator is configured.
 export function SetupBanners() {
@@ -34,7 +34,13 @@ export function SetupBanners() {
             </p>
             <div className="mt-2.5 rounded-lg bg-gray-950 text-white font-mono text-xs p-3.5 space-y-1 overflow-x-auto ring-1 ring-white/10">
               <div><span className="text-emerald-400">ORCHESTRATOR_MODE</span>=<span className="text-gray-400">local</span></div>
-              <div><span className="text-emerald-400">GEMINI_API_KEY</span>=<span className="text-gray-400">your_gemini_key</span> <span className="text-gray-500"># or TELNYX_API_KEY</span></div>
+              <div><span className="text-emerald-400">GEMINI_API_KEY</span>=<span className="text-gray-400">your_gemini_key</span> <span className="text-gray-500"># primary</span></div>
+              <div><span className="text-emerald-400">TELNYX_API_KEY</span>=<span className="text-gray-400">your_telnyx_key</span> <span className="text-gray-500"># fallback</span></div>
+              <div><span className="text-emerald-400">E2B_API_KEY</span>=<span className="text-gray-400">your_e2b_key</span></div>
+              <div><span className="text-emerald-400">FIRECRAWL_API_KEY</span>=<span className="text-gray-400">your_firecrawl_key</span></div>
+              <div><span className="text-emerald-400">TURSO_DATABASE_URL</span>=<span className="text-gray-400">libsql://...</span></div>
+              <div><span className="text-emerald-400">TURSO_AUTH_TOKEN</span>=<span className="text-gray-400">your_turso_token</span></div>
+              <div><span className="text-emerald-400">TENANT_COOKIE_SECRET</span>=<span className="text-gray-400">a_dedicated_random_secret</span></div>
             </div>
             <p className="text-[13px] text-muted-foreground mt-3 leading-relaxed">
               BigBag runs self-hosted with support for multiple AI models, automatic dependency scanning, and sandbox live previews.

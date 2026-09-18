@@ -248,6 +248,13 @@ export async function POST(
     if (IS_LOCAL_MODE) {
         const { localFileManager } = await import("@/lib/local-orchestrator/file-manager");
         const { e2bSandboxManager } = await import("@/lib/local-orchestrator/e2b-sandbox-manager");
+        const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
+        const { isPreviewInitiatedRequest, resolveLocalTenant } = await import("@/lib/local-orchestrator/tenant-context");
+        if (isPreviewInitiatedRequest(request)) return fail("PROJECT_NOT_FOUND", 404);
+        const tenant = resolveLocalTenant(request);
+        if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
+            return fail("PROJECT_NOT_FOUND", 404);
+        }
 
         let body: { changes?: VisualChange[] };
         try {

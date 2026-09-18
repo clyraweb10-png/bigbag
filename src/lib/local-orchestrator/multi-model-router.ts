@@ -92,25 +92,7 @@ class MultiModelRouter {
   public getProviders(): ModelProviderConfig[] {
     const providers: ModelProviderConfig[] = [];
 
-    // 1. Telnyx AI (zai-org/GLM-5.3-Flash) — Primary Model (most reliable)
-    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
-    if (telnyxKey) {
-      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
-      providers.push({
-        id: "telnyx-glm",
-        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
-        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
-        apiKey: telnyxKey,
-        model: telnyxModel,
-        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "32768", 10),
-        // GLM-5.3-Flash defaults to max reasoning, which can exhaust a 16K
-        // completion before it emits the requested code. Low still reasons but
-        // leaves enough of the provider budget for a complete application.
-        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
-      });
-    }
-
-    // 2. Google Gemini (gemini-2.5-flash) — Fallback (occasionally returns 503)
+    // 1. Google Gemini — primary by product policy.
     const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
     if (geminiKey) {
       let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
@@ -125,6 +107,21 @@ class MultiModelRouter {
         apiKey: geminiKey,
         model: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
         maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
+      });
+    }
+
+    // 2. Telnyx GLM-5.3-Flash — fallback when Gemini is unavailable.
+    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (telnyxKey) {
+      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
+      providers.push({
+        id: "telnyx-glm",
+        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
+        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
+        apiKey: telnyxKey,
+        model: telnyxModel,
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
       });
     }
 

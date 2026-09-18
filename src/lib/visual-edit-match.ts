@@ -620,7 +620,6 @@ function camel(name: string): string {
  * very projects it was built for. Only a positive contradiction refuses.
  */
 function tagAgreesWithSignature(
-    index: ProjectIndex,
     element: SourceElement,
     signature: ElementSignature
 ): boolean {
@@ -797,7 +796,7 @@ export function locateElement(
      */
     if (
         tagged &&
-        tagAgreesWithSignature(index, tagged, signature) &&
+        tagAgreesWithSignature(tagged, signature) &&
         !(kind === "class" && !componentForwardsClassName(index, tagged))
     ) {
         return {

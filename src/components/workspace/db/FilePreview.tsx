@@ -253,7 +253,6 @@ export function FilePreviewStrip({
     onRemove?: (file: StoredFile) => void;
     className?: string;
 }) {
-    const t = useT();
     const [galleryOpen, setGalleryOpen] = React.useState(false);
 
     if (files.length === 0) return null;

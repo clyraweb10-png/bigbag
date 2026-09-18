@@ -9,6 +9,7 @@ import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "@/lib/vcaas-types";
 import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
+import { analyzeWebsiteDesign, extractWebsiteUrl } from "./firecrawl-design";
 import {
   containsGenerationPlaceholder,
   generationValidationIssues,
@@ -537,6 +538,41 @@ export const localAgentEngine = {
           userPromptContent = `Current page:\n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nCurrent global styles:\n\`\`\`css\n${styles}\n\`\`\`\n\nUser Request: ${prompt}\n\nUpdate the application completely enough to fulfill this request while preserving working features.`;
         }
 
+        const referenceUrl = extractWebsiteUrl(prompt);
+        if (referenceUrl) {
+          const current = localProjectStore.getRecord(projectId);
+          localProjectStore.update(projectId, {
+            conversation: [
+              ...(current?.conversation || []),
+              {
+                author: "agent",
+                message: "Analyzing the reference website's design with Firecrawl...",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+              },
+            ],
+          });
+          try {
+            const design = await analyzeWebsiteDesign(referenceUrl);
+            userPromptContent = `${userPromptContent}\n\n${design.context}`;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[Firecrawl] Design analysis failed for ${referenceUrl}: ${message}`);
+            const currentAfterFailure = localProjectStore.getRecord(projectId);
+            localProjectStore.update(projectId, {
+              conversation: [
+                ...(currentAfterFailure?.conversation || []),
+                {
+                  author: "agent",
+                  message: "Firecrawl could not analyze that reference, so generation is continuing from your prompt.",
+                  messageType: "building",
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+            });
+          }
+        }
+
         // MotionSites-style prompts carry precise layout, motion and art direction.
         // Keep them intact and apply our quality constraints at the model boundary,
         // not to the conversation stored and shown to the user.
@@ -689,11 +725,11 @@ export const localAgentEngine = {
         // prevents a model response from becoming a broken user-facing preview.
         try {
           const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
-          console.log(`[localAgentEngine] Sandbox confirmed ready for ${projectId}, preview: ${previewUrl}`);
+          console.log(`[localAgentEngine] Disposable build passed and persistent preview deployed for ${projectId}`);
 
           newMessages.push({
             author: "agent",
-            message: `Application generated successfully with ${usedModel}! Generated ${files.length || 1} files and verified the live preview.`,
+            message: `Application generated successfully with ${usedModel}! Generated ${files.length || 1} files, verified the disposable build, and deployed the persistent preview.`,
             messageType: "finished",
             createdAt: new Date().toISOString(),
           });
@@ -815,6 +851,9 @@ export const localAgentEngine = {
       if (sharedAgentRunState.runs.get(projectId) === run) {
         sharedAgentRunState.runs.delete(projectId);
       }
+      void localProjectStore.flush(projectId).catch((error) => {
+        console.error(`[localAgentEngine] Final project persistence failed for ${projectId}:`, error);
+      });
     };
     void run.then(clearRun, clearRun);
   },

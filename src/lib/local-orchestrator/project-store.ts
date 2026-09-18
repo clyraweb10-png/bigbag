@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { VcaasProject, VcaasProjectSummary } from "@/lib/vcaas-types";
 import type { LocalProjectRecord } from "./types";
+import { durableProjectStore, durablePersistenceConfigured } from "./durable-project-store";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
@@ -32,8 +33,6 @@ function saveProjects(projects: Record<string, LocalProjectRecord>): void {
   fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), "utf-8");
 }
 
-let nextPort = 3001;
-
 function allocatePort(existing: Record<string, LocalProjectRecord>): number {
   const usedPorts = new Set(Object.values(existing).map((p) => p.port));
   let port = 3001;
@@ -43,9 +42,17 @@ function allocatePort(existing: Record<string, LocalProjectRecord>): number {
   return port;
 }
 
+export function persistentPreviewPath(projectId: string): string {
+  return `/api/preview/${encodeURIComponent(projectId)}/`;
+}
+
+export function persistentPreviewUrl(projectId: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  return base ? `${base}${persistentPreviewPath(projectId)}` : persistentPreviewPath(projectId);
+}
+
 export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
-  // Compiled Next.js apps always go through the same-origin preview proxy.
-  const previewUrl = `/api/preview/${record.projectId}`;
+  const previewUrl = persistentPreviewPath(record.projectId);
   
   // Map local server status to VCaaS expected status
   let serverStatus: "Active" | "Starting" | "Creating" | "Archived" | "Unarchiving" | "Archiving";
@@ -65,16 +72,69 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
     agentProcessStatus: record.status,
     agentServerStatus: serverStatus,
     createdAt: record.createdAt,
+    deployment: record.deployment
+      ? {
+          status: record.deployment.status,
+          createdAt: record.deployment.createdAt,
+          versionId: record.deployment.versionId,
+        }
+      : null,
     secrets: [],
     temporalDevelopmentProjectUrl: previewUrl,
     cachedDevelopmentUrl: previewUrl,
     developmentUrlFieldToUse: "temporalDevelopmentProjectUrl",
+    productionProjectUrl: record.productionProjectUrl,
     totalCreditsSpent: 0,
   };
 }
 
+type SharedPersistenceState = {
+  hydratedProjects: Set<string>;
+  recordWrites: Map<string, Promise<void>>;
+};
+
+const persistenceStateKey = Symbol.for("bigbag.local-orchestrator.persistence-state");
+const persistenceGlobal = globalThis as typeof globalThis & {
+  [persistenceStateKey]?: SharedPersistenceState;
+};
+const persistenceState = persistenceGlobal[persistenceStateKey] || {
+  hydratedProjects: new Set<string>(),
+  recordWrites: new Map<string, Promise<void>>(),
+};
+persistenceGlobal[persistenceStateKey] = persistenceState;
+
+function queueRecordWrite(record: LocalProjectRecord): Promise<void> {
+  if (!durablePersistenceConfigured()) return Promise.resolve();
+  const snapshot = structuredClone(record);
+  const previous = persistenceState.recordWrites.get(record.projectId) || Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => durableProjectStore.saveRecord(snapshot));
+  persistenceState.recordWrites.set(record.projectId, next);
+  void next.finally(() => {
+    if (persistenceState.recordWrites.get(record.projectId) === next) {
+      persistenceState.recordWrites.delete(record.projectId);
+    }
+  }).catch(() => undefined);
+  return next;
+}
+
+function replaceCachedRecord(record: LocalProjectRecord): void {
+  const projects = readProjects();
+  projects[record.projectId] = record;
+  saveProjects(projects);
+}
+
+function modifiedTime(record: LocalProjectRecord): number {
+  const parsed = Date.parse(record.lastModifiedAt || record.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export const localProjectStore = {
   getWorkspaceDir(projectId: string): string {
+    if (!/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(projectId)) {
+      throw new Error("Invalid project id");
+    }
     const dir = path.join(WORKSPACES_DIR, projectId);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -82,14 +142,15 @@ export const localProjectStore = {
     return dir;
   },
 
-  list(): VcaasProjectSummary[] {
+  list(tenantId: string): VcaasProjectSummary[] {
     const projects = readProjects();
-    return Object.values(projects).map((p) => ({
+    return Object.values(projects).filter((p) => p.tenantId === tenantId).map((p) => ({
       projectId: p.projectId,
       label: p.label || p.projectId,
       description: p.description,
       plan: "Local",
       createdAt: p.createdAt,
+      lastModifiedAt: p.lastModifiedAt,
     }));
   },
 
@@ -105,7 +166,7 @@ export const localProjectStore = {
     return projects[projectId] || null;
   },
 
-  create(body: { projectId: string; description: string; label?: string }): VcaasProject {
+  create(body: { projectId: string; description: string; label?: string; tenantId: string }): VcaasProject {
     const projects = readProjects();
     let id = body.projectId.toLowerCase().replace(/[^a-z0-9-]/g, "-");
     if (!id || id === "-") id = `app-${Date.now()}`;
@@ -121,6 +182,7 @@ export const localProjectStore = {
     const now = new Date().toISOString();
     const record: LocalProjectRecord = {
       projectId: uniqueId,
+      tenantId: body.tenantId,
       label: body.label || body.description.slice(0, 30) || uniqueId,
       description: body.description,
       createdAt: now,
@@ -134,6 +196,9 @@ export const localProjectStore = {
 
     projects[uniqueId] = record;
     saveProjects(projects);
+    void queueRecordWrite(record).catch((error) => {
+      console.error(`[project-store] Could not persist ${uniqueId}:`, error);
+    });
 
     // Prepare workspace directory
     this.getWorkspaceDir(uniqueId);
@@ -149,6 +214,9 @@ export const localProjectStore = {
     Object.assign(record, patch, { lastModifiedAt: new Date().toISOString() });
     projects[projectId] = record;
     saveProjects(projects);
+    void queueRecordWrite(record).catch((error) => {
+      console.error(`[project-store] Could not persist ${projectId}:`, error);
+    });
     return record;
   },
 
@@ -168,5 +236,73 @@ export const localProjectStore = {
       console.warn("Could not delete directory:", dir, e);
     }
     return true;
+  },
+
+  owns(projectId: string, tenantId: string): boolean {
+    return readProjects()[projectId]?.tenantId === tenantId;
+  },
+
+  async hydrateTenant(tenantId: string): Promise<void> {
+    if (!durablePersistenceConfigured()) return;
+    const records = await durableProjectStore.listRecords(tenantId);
+    const projects = readProjects();
+    for (const record of records) {
+      if (persistenceState.recordWrites.has(record.projectId)) continue;
+      const cached = projects[record.projectId];
+      if (cached && modifiedTime(cached) > modifiedTime(record)) continue;
+      projects[record.projectId] = record;
+    }
+    saveProjects(projects);
+  },
+
+  async hydrateProject(projectId: string, tenantId: string): Promise<boolean> {
+    const hydrationKey = `${tenantId}:${projectId}`;
+    if (persistenceState.hydratedProjects.has(hydrationKey)) {
+      const owned = this.owns(projectId, tenantId);
+      if (!owned) return false;
+      const workspaceDir = this.getWorkspaceDir(projectId);
+      if (!fs.existsSync(path.join(workspaceDir, "package.json")) && durablePersistenceConfigured()) {
+        await durableProjectStore.restoreSource(projectId, tenantId, workspaceDir);
+      }
+      return true;
+    }
+
+    if (!durablePersistenceConfigured()) {
+      const owned = this.owns(projectId, tenantId);
+      if (owned) persistenceState.hydratedProjects.add(hydrationKey);
+      return owned;
+    }
+
+    const cached = this.getRecord(projectId);
+    if (cached?.tenantId === tenantId && persistenceState.recordWrites.has(projectId)) {
+      persistenceState.hydratedProjects.add(hydrationKey);
+      return true;
+    }
+
+    const record = await durableProjectStore.loadRecord(projectId, tenantId);
+    if (!record) return false;
+    const workspaceDir = this.getWorkspaceDir(projectId);
+    const useRemoteRecord = !cached || modifiedTime(record) >= modifiedTime(cached);
+    if (useRemoteRecord) {
+      replaceCachedRecord(record);
+      await durableProjectStore.restoreSource(projectId, tenantId, workspaceDir);
+    } else if (!fs.existsSync(path.join(workspaceDir, "package.json"))) {
+      // Metadata can be newer than the last source snapshot when the process died
+      // mid-flush. Restoring that snapshot is still preferable to an empty sandbox.
+      await durableProjectStore.restoreSource(projectId, tenantId, workspaceDir);
+    }
+    persistenceState.hydratedProjects.add(hydrationKey);
+    return true;
+  },
+
+  async persistSource(projectId: string): Promise<void> {
+    const record = this.getRecord(projectId);
+    if (!record) throw new Error(`Project ${projectId} not found`);
+    await this.flush(projectId);
+    await durableProjectStore.saveSource(record, this.getWorkspaceDir(projectId));
+  },
+
+  async flush(projectId: string): Promise<void> {
+    await persistenceState.recordWrites.get(projectId);
   },
 };

@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { useT } from "@/i18n";
 import { labelForRecord, type LinkedEntry } from "@/lib/totalum-schema";
 import type { DbTable } from "@/lib/vcaas-types";

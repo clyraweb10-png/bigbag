@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { RefObject } from "react";
 import { Monitor, Loader2, Archive } from "lucide-react";
 
@@ -12,28 +12,33 @@ interface PreviewPanelProps {
   iframePath?: string;
   cached?: boolean;
   /**
-   * ═══⭐⭐ THE SAME-ORIGIN PREVIEW, AND WHY IT EXISTS ═══════════════════════
+   * ═══⭐⭐ THE SANDBOXED PREVIEW, AND WHY IT EXISTS ════════════════════════
    *
-   * ⚠️ THE VISUAL EDITOR CANNOT WORK ON A CROSS-ORIGIN FRAME. It selects elements,
-   * reads computed styles and applies live text edits by SCRIPTING the previewed
-   * document, and the browser forbids all of that across origins — no amount of
-   * `sandbox` flags changes it. `/api/preview/{projectId}` re-serves the project
-   * through this app, so the document becomes same-origin and scriptable.
+   * The injected in-page agent selects elements, reads computed styles and applies
+   * live edits. The parent communicates with it through a random postMessage
+   * channel and never receives same-origin DOM access.
    *
-   * ⚠️ IT IS USED ONLY WHILE THE EDITOR IS OPEN. Normal viewing keeps the direct
-   * URL: the proxy costs a round trip per asset and rewrites the HTML, and neither
-   * is worth paying for a preview nobody is editing.
+   * In local-orchestrator mode this is also the stable persistent preview route.
+   * Normal and editor documents both remain browser-sandboxed; `editor=1` only
+   * selects the owner-gated editor flow.
    */
   proxiedSrc?: string | null;
   /** The editor needs the element to `postMessage` to its injected agent. */
   frameRef?: RefObject<HTMLIFrameElement | null>;
+  /** Request the owner-gated visual-editor document while editing. */
+  trustedEditor?: boolean;
 }
 
-export function PreviewPanel({ previewUrl, onRefresh, loading, mobilePreview = false, iframePath = "/", cached = false, proxiedSrc, frameRef }: PreviewPanelProps) {
+export function PreviewPanel({ previewUrl, loading, mobilePreview = false, iframePath = "/", cached = false, proxiedSrc, frameRef, trustedEditor = false }: PreviewPanelProps) {
   const [iframeLoading, setIframeLoading] = useState(true);
+  const [editorChannel, setEditorChannel] = useState("");
+  useEffect(() => setEditorChannel(crypto.randomUUID()), []);
   /** ⚠️ The proxy wins when present — see `proxiedSrc`. */
   const base = (proxiedSrc || previewUrl || "").replace(/\/$/, "");
-  const fullIframeUrl = base ? (iframePath === "/" ? `${base}/` : `${base}${iframePath}`) : null;
+  const iframeRoute = base ? (iframePath === "/" ? `${base}/` : `${base}${iframePath}`) : null;
+  const fullIframeUrl = iframeRoute && trustedEditor
+    ? `${iframeRoute}${iframeRoute.includes("?") ? "&" : "?"}editor=1`
+    : iframeRoute;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -78,8 +83,11 @@ export function PreviewPanel({ previewUrl, onRefresh, loading, mobilePreview = f
                  injected agent, or lack of one) in place. */
               key={proxiedSrc ? "proxy" : "direct"}
               ref={frameRef}
-              src={fullIframeUrl || undefined}
+              name={editorChannel}
+              data-editor-channel={editorChannel}
+              src={editorChannel ? fullIframeUrl || undefined : undefined}
               className="w-full h-full border-0"
+              sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
               title="Preview"
               onLoad={() => setIframeLoading(false)}
             />

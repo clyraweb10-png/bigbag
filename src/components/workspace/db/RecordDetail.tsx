@@ -24,7 +24,6 @@ import {
     linkedIdsOf,
     relatedViewsFor,
     scalarFieldsOf,
-    SYSTEM_FIELDS,
     type RelatedView,
 } from "@/lib/totalum-schema";
 import type { DbTable } from "@/lib/vcaas-types";
@@ -408,7 +407,6 @@ function FieldValue({
     property: { name: string; label: string; propertyType: string; typeExtras?: Record<string, unknown> | null };
     value: unknown;
 }) {
-    const t = useT();
     const { locale } = useLocale();
     const kind = fieldKindOf(property as never);
 

@@ -10,10 +10,10 @@ import type { ElementSignature, VisualChange, VisualChangeKind } from "@/lib/vis
  *
  * Owns the conversation with the in-page agent and the list of unsaved changes.
  *
- * ⚠️ EVERY MESSAGE IS ORIGIN-CHECKED. The agent runs inside a document the preview
- * proxy serves from THIS origin, so `event.origin === window.location.origin` is the
- * whole test — and it is checked on the way in as well as pinned on the way out. No
- * `postMessage(..., "*")` anywhere.
+ * The preview has an opaque sandbox origin. Messages are pinned to the exact iframe
+ * window and a per-frame correlation id, then treated as untrusted input. The child
+ * cannot invoke the parent-only Apply closure; persistence still requires that user
+ * action plus the server's signed tenant authorization and source matching.
  *
  * ⚠️ CHANGES ARE PREVIEW-ONLY UNTIL APPLY. Each one is pushed to the agent
  * immediately (so the user sees it at once) AND kept here with its `before` value,
@@ -64,6 +64,25 @@ function readPalette(payload: unknown): string[] {
     return raw
         .filter((value): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value))
         .slice(0, 12);
+}
+
+function readSelected(payload: unknown): SelectedElement | null {
+    const value = payload as Partial<SelectedElement> | null;
+    const signature = value?.signature as Partial<ElementSignature> | undefined;
+    if (
+        !value || !signature ||
+        typeof signature.route !== "string" ||
+        typeof signature.tag !== "string" ||
+        typeof signature.breadcrumb !== "string" ||
+        typeof signature.selectionId !== "string" ||
+        typeof signature.nthOfType !== "number" ||
+        typeof value.editable?.text !== "boolean" ||
+        typeof value.editable?.media !== "boolean" ||
+        typeof value.computed?.color !== "string" ||
+        typeof value.computed?.backgroundColor !== "string" ||
+        typeof value.computed?.fontSize !== "string"
+    ) return null;
+    return value as SelectedElement;
 }
 
 /**
@@ -123,8 +142,9 @@ export function useVisualEditor({
         (type: string, payload?: unknown) => {
             const frame = iframeRef.current;
             if (!frame?.contentWindow) return;
-            // ⚠️ EXPLICIT ORIGIN, NEVER "*" — the frame is same-origin by construction.
-            frame.contentWindow.postMessage({ type, payload }, window.location.origin);
+            const channel = frame.dataset.editorChannel;
+            if (!channel) return;
+            frame.contentWindow.postMessage({ type, payload, channel }, "*");
         },
         [iframeRef]
     );
@@ -136,16 +156,10 @@ export function useVisualEditor({
     // ── Listen to the agent ───────────────────────────────────────────────
     React.useEffect(() => {
         function onMessage(event: MessageEvent) {
-            if (event.origin !== window.location.origin) return;
-            /**
-             * ⚠️ THE SOURCE, NOT ONLY THE ORIGIN. Same-origin is already fully
-             * trusted, so this is hardening rather than a fix for a live hole: it pins
-             * the conversation to the preview frame so no other window on this origin
-             * (another iframe, an opener, a stray widget) can drive the editor. A top-window
-             * script could once drive the entire store by posting messages; it cannot now.
-             */
-            if (iframeRef.current && event.source !== iframeRef.current.contentWindow) return;
-            const data = event.data as { type?: string; payload?: unknown };
+            const frame = iframeRef.current;
+            if (!frame?.contentWindow || event.source !== frame.contentWindow) return;
+            const data = event.data as { type?: string; payload?: unknown; channel?: unknown };
+            if (!frame.dataset.editorChannel || data.channel !== frame.dataset.editorChannel) return;
             if (!data?.type?.startsWith("totalum:ve:")) return;
 
             switch (data.type) {
@@ -174,7 +188,7 @@ export function useVisualEditor({
                     setPalette(readPalette(data.payload));
                     break;
                 case VISUAL_EDIT_MESSAGE.selected:
-                    setSelected(data.payload as SelectedElement);
+                    setSelected(readSelected(data.payload));
                     break;
                 /**
                  * ⭐ THE USER TYPED IN THE PAGE, NOT IN THE PANEL.
@@ -335,7 +349,10 @@ export function useVisualEditor({
         setSelected(null);
     }, [changes, post]);
 
-    /** Resolve, write, rebuild. The editor stays locked until this settles. */
+    /**
+     * Resolve, write, rebuild. Only the parent UI owns this closure; iframe
+     * messages can propose validated preview state but cannot call the server.
+     */
     const apply = React.useCallback(async () => {
         if (changes.length === 0) return;
         /**

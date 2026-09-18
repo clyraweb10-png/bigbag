@@ -24,12 +24,6 @@ import type { ApplyOutcome, ApplyPhase } from "./use-visual-editor";
  * applied" goes unnoticed. Everything about this batch happens in one place.
  */
 
-const KIND_LABEL: Record<VisualChange["kind"], TranslationKey> = {
-    text: "workspace.visualEditor.kindText",
-    class: "workspace.visualEditor.kindStyle",
-    src: "workspace.visualEditor.kindMedia",
-};
-
 const UNMAPPED_REASON: Record<string, TranslationKey> = {
     "not-found": "workspace.visualEditor.unmappedNotFound",
     ambiguous: "workspace.visualEditor.unmappedAmbiguous",

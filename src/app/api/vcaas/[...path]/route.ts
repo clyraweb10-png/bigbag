@@ -8,24 +8,41 @@ import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
 import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { isPromptEndpoint, injectDesignPrompt } from "@/lib/design-system-prompt";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
-import { isRoutableProjectSlug } from "@/lib/project-slug";
+import { isRoutableProjectSlug, slugify } from "@/lib/project-slug";
+import { durableProjectStore, requireDurablePersistence } from "@/lib/local-orchestrator/durable-project-store";
+import {
+  attachLocalTenantCookie,
+  isPreviewInitiatedRequest,
+  resolveLocalTenant,
+} from "@/lib/local-orchestrator/tenant-context";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 const LOCAL_REBUILD_TIMEOUT_MS = 10 * 60_000;
 
-async function handleLocalRequest(req: NextRequest, path: string[]) {
+async function availableProjectId(requested: string): Promise<string> {
+  let base = slugify(requested);
+  if (!base) base = `app-${Date.now().toString().slice(-6)}`;
+  if (!(await durableProjectStore.projectIdExists(base))) return base;
+  return `${base.slice(0, 26).replace(/-+$/, "")}-${randomUUID().slice(0, 8)}`;
+}
+
+async function handleLocalRequest(req: NextRequest, path: string[], tenantId: string) {
   const method = req.method.toUpperCase();
   const url = new URL(req.url);
+  requireDurablePersistence();
 
   // 1. Projects collection: /projects or /projects/launch
   if (path[0] === "projects" && path.length === 1) {
     if (method === "GET") {
-      const list = localProjectStore.list();
+      await localProjectStore.hydrateTenant(tenantId);
+      const list = localProjectStore.list(tenantId);
       return NextResponse.json({ ok: true, data: list }, { status: 200 });
     }
     if (method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const proj = localProjectStore.create(body);
+      const projectId = await availableProjectId(body.projectId || body.label || "app");
+      const proj = localProjectStore.create({ ...body, projectId, tenantId });
+      await localProjectStore.flush(proj.projectId);
       return NextResponse.json({ ok: true, data: proj }, { status: 200 });
     }
   }
@@ -33,11 +50,14 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
   // 2. Launch: /projects/launch
   if (path[0] === "projects" && path[1] === "launch" && method === "POST") {
     const body = await req.json().catch(() => ({}));
+    const projectId = await availableProjectId(body.projectId || `app-${Date.now().toString().slice(-4)}`);
     const proj = localProjectStore.create({
-      projectId: body.projectId || `app-${Date.now().toString().slice(-4)}`,
+      projectId,
       description: body.prompt || body.description || "Web Application",
       label: body.label || body.projectId,
+      tenantId,
     });
+    await localProjectStore.flush(proj.projectId);
 
     // Start background agent run & dev sandbox
     void localAgentEngine
@@ -68,6 +88,9 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
       );
     }
     const subRoute = path.slice(2).join("/");
+    if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
+      return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+    }
 
     // /projects/:id
     if (!subRoute) {
@@ -87,6 +110,7 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
       if (method === "DELETE") {
         await e2bSandboxManager.stopDevServer(projectId);
         localProjectStore.remove(projectId);
+        await durableProjectStore.remove(projectId, tenantId);
         return NextResponse.json({ ok: true, data: { deleted: true } }, { status: 200 });
       }
     }
@@ -172,13 +196,30 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
       if (method === "PUT") {
         const body = await req.json().catch(() => ({}));
         const res = localFileManager.writeContent(projectId, body.path, body.content, body.encoding);
+        await localProjectStore.persistSource(projectId);
         return NextResponse.json({ ok: true, data: res }, { status: 200 });
       }
     }
 
     // /projects/:id/deployments/status
-    if (subRoute === "deployments/status") {
-      return NextResponse.json({ ok: true, data: { status: null, createdAt: null } }, { status: 200 });
+    if (subRoute === "deployments/status" && method === "GET") {
+      const deployment = localProjectStore.getRecord(projectId)?.deployment;
+      return NextResponse.json(
+        {
+          ok: true,
+          data: deployment
+            ? { status: deployment.status, createdAt: deployment.createdAt, versionId: deployment.versionId }
+            : { status: null, createdAt: null },
+        },
+        { status: 200 }
+      );
+    }
+    if (subRoute === "deployments/deploy" && method === "POST") {
+      const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+      return NextResponse.json(
+        { ok: true, data: { started: true, status: "success", previewUrl } },
+        { status: 200 }
+      );
     }
 
     // /projects/:id/database/tables-structure
@@ -270,7 +311,12 @@ async function handleRequest(
 
     // Route to local orchestrator when in local mode
     if (IS_LOCAL_MODE) {
-      return await handleLocalRequest(req, path);
+      if (isPreviewInitiatedRequest(req)) {
+        return NextResponse.json({ ok: false, error: "Preview applications cannot access builder APIs" }, { status: 403 });
+      }
+      const tenant = resolveLocalTenant(req);
+      const response = await handleLocalRequest(req, path, tenant.tenantId);
+      return attachLocalTenantCookie(response, tenant);
     }
 
     // Upstream Totalum fallback

@@ -10,7 +10,6 @@ import {
     FilterIcon,
     LoaderIcon,
     MaximizeIcon,
-    PencilIcon,
     PlusIcon,
     RefreshCwIcon,
     SearchIcon,

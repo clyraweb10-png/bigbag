@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { ExternalLinkIcon, GlobeIcon, PartyPopperIcon } from "lucide-react";
 import { CopyButton, Modal, StatusPill } from "@/components/primitives";
 import { Button } from "@/components/ui/button";

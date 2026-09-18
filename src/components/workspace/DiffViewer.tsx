@@ -17,7 +17,6 @@ import { useServerWake } from "./use-server-wake";
 import type { TranslationKey } from "@/i18n";
 import { diffTotals, parseDiff, segmentLine, type DiffFile, type DiffLine, type LineKind } from "@/lib/diff-parse";
 import { vcaasApi } from "@/lib/vcaas";
-import { cn } from "@/lib/utils";
 
 /**
  * THE DIFF VIEWER — what the agent actually changed.

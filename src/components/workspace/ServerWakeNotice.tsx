@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { LoaderIcon, TriangleAlertIcon } from "lucide-react";
 
 import { useT } from "@/i18n";

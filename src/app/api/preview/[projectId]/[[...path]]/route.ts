@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import net from "net";
-import http from "http";
 
 import {
     authFailed,
@@ -15,17 +13,18 @@ import type { VcaasProject } from "@/lib/vcaas-types";
 import { AGENT_PATH, AGENT_SOURCE, PREVIEW_RUNTIME_SHIM } from "@/lib/visual-edit-agent";
 import { injectAgent, rewriteCss, rewriteHtml, rewriteJavaScript } from "@/lib/preview-proxy";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
+import { durableProjectStore } from "@/lib/local-orchestrator/durable-project-store";
 
 export const dynamic = "force-dynamic";
 
 /**
- * ═══ THE SAME-ORIGIN PREVIEW PROXY (the visual editor) ════════════════════════════
+ * ═══ THE SANDBOXED PREVIEW PROXY (the visual editor) ═════════════════════════════
  *
  * ⚠️⚠️ WHY THIS EXISTS — THE FINDING THAT DECIDED THE WHOLE FEATURE.
  *
- * A visual editor needs to read the DOM of the previewed app: hit-test a click,
- * outline an element, read its classes, change its text live. The preview is an
- * iframe on ANOTHER ORIGIN, so none of that is possible from the workspace.
+ * A visual editor needs code inside the previewed app to hit-test clicks, outline
+ * elements, read classes and apply temporary edits. The workspace must not access
+ * that untrusted DOM directly.
  *
  * The obvious way out is the one the legacy Angular editor used: the generated
  * projects ship a `ScriptExecutor` component that accepts an `inject-editor-script`
@@ -40,9 +39,9 @@ export const dynamic = "force-dynamic";
  * The alternative — writing an agent into the user's own project — would modify
  * their code and cost a 1-4 minute rebuild before the editor could be used at all.
  *
- * So the preview is proxied through OUR origin. Same origin ⇒ we own the document,
- * inject the agent into the HTML we serve, and nothing about the user's project
- * changes.
+ * So this route injects a small agent into the HTML it serves. The iframe remains
+ * an opaque-origin browser sandbox and communicates through a per-frame correlation
+ * channel; nothing about the user's project changes.
  *
  * ── THE SECURITY BOUNDARY ───────────────────────────────────────────────────
  *
@@ -56,15 +55,14 @@ export const dynamic = "force-dynamic";
  *    404s for a project they do not own, and we return 404 unchanged.
  * 4. **Only the resolved origin is fetched.** Redirects are followed manually and
  *    refused if they leave that origin.
- * 5. **The agent is served from our origin** and talks to the workspace over
- *    `postMessage` with an explicit same-origin check on both ends.
+ * 5. **The agent is served by this route** and talks to the workspace over
+ *    `postMessage`, pinned to the exact iframe window and a random channel.
  * 6. **`set-cookie` is dropped.** The previewed app's cookies must not be written
  *    onto the platform's origin, where they would sit next to the session cookie.
  *
- * ⚠️ THE PROXY IS FOR EDITING, NOT FOR VIEWING. The normal preview iframe still
- * points straight at the sandbox; this route is used only while the visual editor is
- * open. That keeps the blast radius small and means a proxy failure degrades to
- * "the visual editor is unavailable", never to "the preview is broken".
+ * In local-orchestrator mode this route is also the permanent Render preview
+ * host. Every preview document remains sandboxed without same-origin privileges;
+ * `editor=1` only enables the owner-gated editor agent flow.
  */
 
 function previewBootPage(): NextResponse {
@@ -96,26 +94,73 @@ function previewBootPage(): NextResponse {
     });
 }
 
-async function originIsLive(origin: string): Promise<boolean> {
-    try {
-        const url = new URL(origin);
-        const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
-        const host = url.hostname;
-        return await new Promise<boolean>((resolve) => {
-            const socket = net.connect(port, host);
-            const done = (ok: boolean) => {
-                socket.destroy();
-                resolve(ok);
-            };
-            socket.setTimeout(600);
-            socket.once("connect", () => done(true));
-            socket.once("error", () => done(false));
-            socket.once("timeout", () => done(false));
-        });
-    } catch {
-        return false;
+const STATIC_CONTENT_TYPES: Record<string, string> = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+};
+
+async function servePersistentDeployment(
+    request: NextRequest,
+    projectId: string,
+    segments: string[]
+): Promise<NextResponse> {
+    const requestedPath = segments.length > 0 ? segments.join("/") : "index.html";
+    let file = await durableProjectStore.readDeploymentFile(projectId, requestedPath);
+    if (!file && requestedPath.startsWith("uploads/")) {
+        file = await durableProjectStore.readPublicSourceFile(projectId, `public/${requestedPath}`);
     }
+    if (!file && !requestedPath.split("/").at(-1)?.includes(".")) {
+        file = await durableProjectStore.readDeploymentFile(projectId, "index.html");
+    }
+    if (!file) {
+        return NextResponse.json(
+            { ok: false, error: "This project has no persistent deployment yet", code: "NO_PREVIEW" },
+            { status: 404, headers: { "cache-control": "no-store" } }
+        );
+    }
+
+    const extension = file.path.slice(file.path.lastIndexOf(".")).toLowerCase();
+    const contentType = STATIC_CONTENT_TYPES[extension] || "application/octet-stream";
+    const base = `/api/preview/${encodeURIComponent(projectId)}`;
+    const isHtml = contentType.includes("text/html");
+    const isHashedAsset = /^assets\/.+-[a-z0-9_-]{8,}\.[^/]+$/i.test(file.path);
+    const headers = new Headers({
+        "content-type": contentType,
+        "cache-control": isHtml
+            ? "no-store"
+            : isHashedAsset
+              ? "public, max-age=31536000, immutable"
+              : "public, max-age=300, must-revalidate",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "frame-ancestors *; sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
+    });
+    if (request.method === "HEAD") return new NextResponse(null, { status: 200, headers });
+
+    if (isHtml) {
+        const html = Buffer.from(file.content).toString("utf8");
+        return new NextResponse(injectAgent(rewriteHtml(html, base), base), { status: 200, headers });
+    }
+    if (contentType.includes("text/css")) {
+        return new NextResponse(rewriteCss(Buffer.from(file.content).toString("utf8"), base), { status: 200, headers });
+    }
+    if (contentType.includes("javascript")) {
+        return new NextResponse(rewriteJavaScript(Buffer.from(file.content).toString("utf8"), base), { status: 200, headers });
+    }
+    return new NextResponse(file.content, { status: 200, headers });
 }
+
 const STRIPPED_REQUEST_HEADERS = new Set([
     "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade", "cookie", "origin", "referer",
@@ -184,91 +229,8 @@ function rememberOrigin(key: string, origin: string): void {
 
 async function resolvePreviewOrigin(
     projectId: string,
-    ctx: Parameters<typeof vcaasRequest>[2],
-    opts: { isDocument: boolean }
+    ctx: Parameters<typeof vcaasRequest>[2]
 ): Promise<{ origin: string } | { error: NextResponse }> {
-    if (isLocalOrchestratorEnabled()) {
-        const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
-        const { localSandboxManager } = await import("@/lib/local-orchestrator/sandbox-manager");
-        const { e2bSandboxManager } = await import("@/lib/local-orchestrator/e2b-sandbox-manager");
-        
-        const rec = localProjectStore.getRecord(projectId);
-        if (!rec) {
-            console.error(`[preview] Project ${projectId} not found`);
-            return { error: NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 }) };
-        }
-
-        console.log(`[preview] Resolving preview for ${projectId}, server status: ${rec.serverStatus}`);
-
-        const e2bPreviewUrl = e2bSandboxManager.getPreviewUrl(projectId);
-        if (e2bPreviewUrl) {
-            try {
-                const url = new URL(e2bPreviewUrl);
-                console.log(`[preview] Using E2B preview URL: ${url.origin}`);
-                return { origin: url.origin };
-            } catch (err) {
-                console.warn(`[preview] Invalid E2B URL: ${e2bPreviewUrl}`, err);
-            }
-        }
-
-        if (e2bSandboxManager.isE2BEnabled()) {
-            console.log(`[preview] Starting E2B sandbox for ${projectId}`);
-            const start = e2bSandboxManager.startDevServer(projectId).then((previewUrl) => {
-                const origin = new URL(previewUrl).origin;
-                console.log(`[preview] E2B sandbox ready at ${origin}`);
-                return origin;
-            });
-
-            start.catch((err) => console.error(`[preview] E2B start failed for ${projectId}:`, err));
-            if (opts.isDocument) return { error: previewBootPage() };
-
-            // A stale document may request assets while the sandbox is waking.
-            // Do not hold that server request through a multi-minute install;
-            // the boot document refreshes and retries the complete page.
-            return {
-                error: NextResponse.json(
-                    { ok: false, error: "Preview is starting", code: "PREVIEW_STARTING" },
-                    { status: 503, headers: { "Retry-After": "2", "Cache-Control": "no-store" } }
-                ),
-            };
-        }
-
-        const localCacheKey = `local:${projectId}`;
-        const cached = cachedOrigin(localCacheKey);
-        if (cached && await originIsLive(cached)) return { origin: cached };
-        if (cached) originCache.delete(localCacheKey);
-
-        const live = localSandboxManager.getRunningOrigin(projectId);
-        if (live && await originIsLive(live)) {
-            rememberOrigin(localCacheKey, live);
-            return { origin: live };
-        }
-
-        const isDocument = opts.isDocument;
-        console.log(`[preview] Starting local sandbox for ${projectId}`);
-        const start = localSandboxManager.startDevServer(projectId).then(() => {
-            const updatedRec = localProjectStore.getRecord(projectId);
-            const port = updatedRec?.port || rec.port;
-            const origin = `http://127.0.0.1:${port}`;
-            rememberOrigin(localCacheKey, origin);
-            return origin;
-        });
-
-        if (isDocument) {
-            start.catch((err) => console.error(`[preview] Sandbox start failed for ${projectId}:`, err));
-            return { error: previewBootPage() };
-        }
-
-        try {
-            const origin = await start;
-            console.log(`[preview] Local sandbox ready at ${origin}`);
-            return { origin };
-        } catch (err) {
-            console.error(`[preview] Failed to start local sandbox for ${projectId}:`, err);
-            return { error: NextResponse.json({ ok: false, error: "Preview server failed to start", code: "SANDBOX_START_FAILED" }, { status: 503 }) };
-        }
-    }
-
     const cacheKey = `${ctx?.accountUserId ?? ""}:${projectId}`;
     const hit = cachedOrigin(cacheKey);
     if (hit) return { origin: hit };
@@ -346,7 +308,8 @@ async function handle(
     /**
      * ⭐ THE AGENT IS SERVED BY US, NOT PROXIED. It never touches the user's
      * project, and because it comes from this origin the previewed document can be
-     * scripted by the workspace at all. Session-gated like everything else here.
+     * scripted by the workspace at all. In local mode the editor document itself
+     * is owner-gated; the static agent contains no tenant data or API capability.
      */
     if ((path ?? []).length === 1 && path![0] === AGENT_PATH) {
         /**
@@ -368,11 +331,6 @@ async function handle(
         });
     }
 
-    const resolved = await resolvePreviewOrigin(projectId, auth?.ctx, {
-        isDocument: (!path || path.length === 0) && request.method === "GET",
-    });
-    if ("error" in resolved) return resolved.error;
-
     const targetSegments = path ?? [];
     if (targetSegments.some((segment) =>
         segment === "." ||
@@ -383,6 +341,26 @@ async function handle(
     )) {
         return NextResponse.json({ ok: false, error: "Invalid preview path" }, { status: 400 });
     }
+
+    // Local-orchestrator previews are immutable build artifacts stored outside
+    // E2B and served by this existing Render application. Viewing never creates,
+    // resumes, or contacts a sandbox.
+    if (IS_LOCAL) {
+        const trustedEditor = request.nextUrl.searchParams.get("editor") === "1";
+        if (trustedEditor) {
+            const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
+            const { resolveLocalTenant } = await import("@/lib/local-orchestrator/tenant-context");
+            const tenant = resolveLocalTenant(request);
+            if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
+                return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+            }
+        }
+        return servePersistentDeployment(request, projectId, targetSegments);
+    }
+
+    const resolved = await resolvePreviewOrigin(projectId, auth?.ctx);
+    if ("error" in resolved) return resolved.error;
+
     // Assigning pathname lets the URL implementation escape unsafe characters
     // while preserving Vite's meaningful `@` paths. encodeURIComponent turned
     // `/@vite/client` into `/%40vite/client`, which Vite correctly answered 404.

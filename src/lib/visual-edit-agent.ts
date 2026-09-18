@@ -5,15 +5,15 @@
  * workspace cannot do from outside an iframe: hit-test a click, outline what is
  * under the cursor, describe the selected element, and apply a preview-only change.
  *
- * ⚠️ IT IS SERVED FROM OUR ORIGIN by the preview proxy, so it is same-origin with
- * the workspace and needs no privilege from the user's project. The project is not
- * modified in any way — see the proxy route for why that matters and for the
- * evidence that the template's own `ScriptExecutor` is dead code in production.
+ * It runs inside an opaque-origin sandbox and needs no privilege from the user's
+ * project. The project is not modified in any way — see the proxy route for why
+ * that matters and for the evidence that the template's own `ScriptExecutor` is
+ * dead code in production.
  *
- * ⚠️ EVERY MESSAGE IS ORIGIN-CHECKED IN BOTH DIRECTIONS. The agent only accepts
- * messages whose `event.origin` equals its own, and only posts to
- * `window.parent` with that same explicit origin — never `"*"`. An embedded page
- * cannot drive the editor, and the editor cannot leak into another frame.
+ * Messages carry a per-frame correlation id. It is intentionally not treated as
+ * authentication because project code shares this realm; the parent validates all
+ * payloads, requires a user-owned Apply action, and authorizes persistence server-side.
+ * The opaque sandbox origin is what isolates the generated app from the builder.
  *
  * ⚠️ IT IS A STRING, NOT A MODULE, on purpose: it has to be delivered as a
  * standalone classic script into a document we do not own the build of. Keeping it
@@ -113,17 +113,12 @@ export const VISUAL_EDIT_MESSAGE = {
  *
  * ── THE SECURITY HALF, WHICH MATTERS AS MUCH AS THE FUNCTIONAL ONE ──────────
  *
- * ⚠️ The proxied document runs on the PLATFORM's origin with `allow-same-origin`, so
- * before this shim the previewed app's own JavaScript could `fetch('/api/credits/…')`
- * or any other platform route **with the user's session cookie attached**. The app is
- * generated from a prompt, so that is a prompt-injection exfiltration path to the
- * owner's own account data.
+ * The proxied document is kept in an opaque-origin iframe sandbox. This shim still
+ * routes root-relative application requests back into the project preview, while
+ * the sandbox and builder API request checks provide the actual containment.
  *
- * Rewriting every root-absolute request to the proxy base closes the ordinary path:
- * the app's calls now reach the app. This is a strong mitigation, NOT a sandbox — code
- * running in the same realm can always undo a monkey-patch. The real containment is
- * that the proxy is only mounted while the editor is open; a dedicated preview origin
- * would be the better long-term answer.
+ * Rewriting every root-absolute request to the proxy base also keeps the app's own
+ * navigation and assets inside its stable project path.
  */
 export const PREVIEW_RUNTIME_SHIM = (base: string) => String.raw`
 (function () {
@@ -266,9 +261,8 @@ export const PREVIEW_RUNTIME_SHIM = (base: string) => String.raw`
    * ⚠️⚠️ THIS IS WHY THE PLATFORM'S OWN WEBSITE COULD APPEAR INSIDE THE PREVIEW.
    * rewriteHtml() fixes the anchors in the FIRST document; every anchor React creates
    * afterwards — which is all of them, after any client-side render — kept its raw
-   * "/some-path". The proxied document is same-origin with the workspace, so following
-   * one loaded platform.totalum.app/some-path INTO the preview frame: the user's app
-   * replaced by ours, inside their own preview.
+   * "/some-path". Following one would load a builder path INTO the preview frame: the
+   * user's app replaced by ours, inside their own preview.
    *
    * Everything else in this list loads a subresource; these two replace the document,
    * which is why their absence was so much louder than a 404 for a chunk.
@@ -409,7 +403,7 @@ export const PREVIEW_RUNTIME_SHIM = (base: string) => String.raw`
    * ── 5 · ⭐⭐⭐ THE LAST LINE OF DEFENCE, AND IT IS ALWAYS ARMED ────────────
    *
    * ⚠️⚠️ EVERYTHING ABOVE REWRITES A URL AT THE MOMENT IT IS WRITTEN. This catches the
-   * one that got away, at the moment it would be FOLLOWED: any same-origin link whose
+   * one that got away, at the moment it would be FOLLOWED: any same-host link whose
    * path is not under this preview's base is, by definition, a platform page about to
    * render inside the user's preview. There is no legitimate case — the app has nothing
    * on our origin outside its own base.
@@ -457,7 +451,7 @@ export const AGENT_SOURCE = String.raw`
 (function () {
   if (window.__totalumVisualEditor) return;
 
-  var ORIGIN = window.location.origin;
+  var CHANNEL = window.name;
   /**
    * The proxy base this document is served under, e.g. "/api/preview/my-app".
    * Derived from our own <script src>, so the agent never has to be told.
@@ -685,7 +679,7 @@ export const AGENT_SOURCE = String.raw`
   }
 
   function post(type, payload) {
-    try { window.parent.postMessage({ type: type, payload: payload || null }, ORIGIN); } catch (e) {}
+    try { window.parent.postMessage({ type: type, payload: payload || null, channel: CHANNEL }, '*'); } catch (e) {}
   }
 
   function clean(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
@@ -1510,10 +1504,8 @@ export const AGENT_SOURCE = String.raw`
 
   // ── Messages ──────────────────────────────────────────────────────────────
   window.addEventListener('message', function (event) {
-    // ⚠️ THE ORIGIN CHECK. Same-origin only: the proxy serves this document from
-    // the workspace's own origin, so anything else is not the editor.
-    if (event.origin !== ORIGIN) return;
     var data = event.data || {};
+    if (event.source !== window.parent || !CHANNEL || data.channel !== CHANNEL) return;
 
     if (data.type === M.setActive) {
       active = !!data.payload;

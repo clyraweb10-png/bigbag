@@ -5,11 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { vcaasApi } from "@/lib/vcaas";
 import { Button } from "@/components/ui/button";
 import {
-  Rocket, Loader2, Key, Globe, Terminal,
+  Rocket, Loader2, Globe, Terminal,
   Server, PanelLeftClose, PanelLeft, Laptop, Smartphone,
   ExternalLink, ChevronDown, FolderOpen, Plus,
   Github, ArrowLeft, Figma, Copy,
-  RotateCw, Compass, HardDrive, Braces, History, KeyRound, Boxes,
+  RotateCw, Compass, HardDrive, Braces, History, KeyRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -1469,7 +1469,7 @@ export default function WorkspacePage() {
               </div>
             )}
             <div className={`flex-1 overflow-hidden ${activeTab === "preview" ? "rounded-none" : "m-2 sm:m-3 rounded-xl shadow-sm"}`} style={{ background: cardBg }}>
-              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} proxiedSrc={`/api/preview/${encodeURIComponent(projectId)}`} />}
+              {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={mobilePreview} iframePath={iframePath} frameRef={previewFrameRef} proxiedSrc={`/api/preview/${encodeURIComponent(projectId)}`} trustedEditor={visualEditorOpen || visualLocked} />}
               {activeTab === "code" && <CodePanel projectId={projectId} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
             </div>

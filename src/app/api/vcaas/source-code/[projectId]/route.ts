@@ -7,7 +7,6 @@ import { isRoutableProjectSlug } from "@/lib/project-slug";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 
-const WORKSPACES_DIR = path.join(process.cwd(), "workspaces");
 const IGNORED_DIRS = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 
 /**
@@ -69,13 +68,19 @@ export async function GET(
 
   if (IS_LOCAL_MODE) {
     try {
-      const workspaceDir = path.join(WORKSPACES_DIR, projectId);
-      if (!fs.existsSync(workspaceDir)) {
+      const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
+      const { isPreviewInitiatedRequest, resolveLocalTenant } = await import("@/lib/local-orchestrator/tenant-context");
+      if (isPreviewInitiatedRequest(req)) {
+        return NextResponse.json({ ok: false, error: "Preview applications cannot access project source" }, { status: 403 });
+      }
+      const tenant = resolveLocalTenant(req);
+      if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
         return NextResponse.json(
           { ok: false, error: "Project not found" },
           { status: 404 }
         );
       }
+      const workspaceDir = localProjectStore.getWorkspaceDir(projectId);
 
       const { buffer, filesCount } = await buildLocalZip(workspaceDir);
 

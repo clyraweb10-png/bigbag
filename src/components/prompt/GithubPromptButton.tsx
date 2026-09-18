@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useT } from "@/i18n";
-import { toast } from "@/lib/toast";
 import { vcaasApi } from "@/lib/vcaas";
 import type { GithubStatus } from "@/lib/vcaas-types";
 import { cn } from "@/lib/utils";

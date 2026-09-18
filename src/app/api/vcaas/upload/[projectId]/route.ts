@@ -101,7 +101,18 @@ export async function POST(
   }
 
   if (IS_LOCAL_MODE) {
-    return handleLocalUpload(req, projectId);
+    const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
+    const { isPreviewInitiatedRequest, resolveLocalTenant } = await import("@/lib/local-orchestrator/tenant-context");
+    if (isPreviewInitiatedRequest(req)) {
+      return NextResponse.json({ ok: false, error: "Preview applications cannot upload project files" }, { status: 403 });
+    }
+    const tenant = resolveLocalTenant(req);
+    if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
+      return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+    }
+    const response = await handleLocalUpload(req, projectId);
+    if (response.ok) await localProjectStore.persistSource(projectId);
+    return response;
   }
 
   try {

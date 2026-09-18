@@ -43,9 +43,11 @@ function addCorsHeaders(response: NextResponse, request: NextRequest) {
   return response;
 }
 
-// Set CSP to allow iframe embedding from any domain and remove X-Frame-Options
-function addCspHeaders(response: NextResponse) {
-  response.headers.set("Content-Security-Policy", "frame-ancestors *");
+// Generated previews set their CSP after the route has authenticated any editor
+// capability. A request query parameter alone must never grant privileges here.
+function addCspHeaders(response: NextResponse, request: NextRequest) {
+  const isPreview = request.nextUrl.pathname.startsWith("/api/preview/");
+  if (!isPreview) response.headers.set("Content-Security-Policy", "frame-ancestors *");
   response.headers.delete("X-Frame-Options");
   return response;
 }
@@ -58,14 +60,14 @@ export async function proxy(request: NextRequest) {
   if (request.method === "OPTIONS") {
     const response = new NextResponse(null, { status: 204 });
     addCorsHeaders(response, request);
-    addCspHeaders(response);
+    addCspHeaders(response, request);
     return response;
   }
 
   // Every route is public — just attach CORS + CSP headers and continue.
   const response = NextResponse.next();
   addCorsHeaders(response, request);
-  addCspHeaders(response);
+  addCspHeaders(response, request);
   return response;
 }
 
