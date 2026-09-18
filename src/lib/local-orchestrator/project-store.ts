@@ -128,6 +128,7 @@ export const localProjectStore = {
       port,
       status: "idle",
       serverStatus: "Starting",
+      rebuildStatus: "idle",
       conversation: [],
     };
 

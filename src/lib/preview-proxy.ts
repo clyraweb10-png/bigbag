@@ -27,7 +27,7 @@ import { AGENT_SCRIPT_TAG } from "@/lib/visual-edit-agent";
  * `injectAgent` below — see the long note on it in `visual-edit-agent.ts`.
  */
 export function rewriteHtml(html: string, base: string): string {
-    return html
+    const rewritten = html
         // ⚠️ Strip <link rel="preload" as="font"> tags that point at /_next/static/media/
         // fonts — those are baked into the parent app's layout and leak into proxied child
         // workspace HTML. The child never serves those font files so the browser fires a
@@ -44,6 +44,21 @@ export function rewriteHtml(html: string, base: string): string {
             return `${prefix}${next}"`;
         })
         .replace(/"\/_next\//g, `"${base}/_next/`);
+
+    // Vite places its React-refresh imports in an inline module script in the
+    // HTML document. Rewrite only those script bodies: applying JavaScript
+    // patterns to the whole document could alter visible copy or JSON data.
+    return rewritten.replace(
+        /(<script\b([^>]*)>)([\s\S]*?)(<\/script>)/gi,
+        (full, opening: string, attributes: string, body: string, closing: string) => {
+            const isInlineModule =
+                !/\bsrc\s*=/i.test(attributes) &&
+                /\btype\s*=\s*(["'])module\1/i.test(attributes);
+            return isInlineModule
+                ? `${opening}${rewriteJavaScript(body, base)}${closing}`
+                : full;
+        }
+    );
 }
 
 /**
@@ -75,6 +90,24 @@ export function rewriteCss(css: string, base: string): string {
         /url\(\s*(['"]?)\/(?!\/)/g,
         (_full, quote: string) => `url(${quote}${base}/`
     );
+}
+
+/**
+ * Keep root-absolute ESM dependencies inside the same-origin preview proxy.
+ * Vite emits imports such as `/@vite/client` and `/node_modules/.vite/...` in
+ * JavaScript responses; HTML and DOM-runtime rewriting cannot see those static
+ * module specifiers, so without this pass the browser requests the builder root.
+ */
+export function rewriteJavaScript(source: string, base: string): string {
+    return source
+        .replace(
+            /(\b(?:from|import)\s*(?:\(\s*)?["'])\/(?!\/)/g,
+            `$1${base}/`
+        )
+        .replace(
+            /(\bnew\s+URL\s*\(\s*["'`])\/(?!\/)/g,
+            `$1${base}/`
+        );
 }
 
 /**

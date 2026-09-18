@@ -13,7 +13,7 @@ import { vcaasRequest } from "@/lib/vcaas-server";
 import { getPreviewUrl } from "@/lib/project-status";
 import type { VcaasProject } from "@/lib/vcaas-types";
 import { AGENT_PATH, AGENT_SOURCE, PREVIEW_RUNTIME_SHIM } from "@/lib/visual-edit-agent";
-import { injectAgent, rewriteCss, rewriteHtml } from "@/lib/preview-proxy";
+import { injectAgent, rewriteCss, rewriteHtml, rewriteJavaScript } from "@/lib/preview-proxy";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 
 export const dynamic = "force-dynamic";
@@ -373,8 +373,21 @@ async function handle(
     });
     if ("error" in resolved) return resolved.error;
 
-    const suffix = (path ?? []).map(encodeURIComponent).join("/");
-    const target = new URL(`${resolved.origin}/${suffix}`);
+    const targetSegments = path ?? [];
+    if (targetSegments.some((segment) =>
+        segment === "." ||
+        segment === ".." ||
+        segment.includes("/") ||
+        segment.includes("\\") ||
+        segment.includes("\0")
+    )) {
+        return NextResponse.json({ ok: false, error: "Invalid preview path" }, { status: 400 });
+    }
+    // Assigning pathname lets the URL implementation escape unsafe characters
+    // while preserving Vite's meaningful `@` paths. encodeURIComponent turned
+    // `/@vite/client` into `/%40vite/client`, which Vite correctly answered 404.
+    const target = new URL(resolved.origin);
+    target.pathname = `/${targetSegments.join("/")}`;
     target.search = request.nextUrl.search;
 
     // Forward the request, minus the headers that would confuse the upstream or
@@ -463,7 +476,22 @@ async function handle(
         return new NextResponse(rewriteCss(css, base), { status: upstream.status, headers: responseHeaders });
     }
 
-    // Everything else (JS, images, JSON) is streamed through untouched.
+    // ── JavaScript: Vite's root-absolute static imports need the proxy base ──
+    if (
+        contentType.includes("javascript") ||
+        contentType.includes("ecmascript") ||
+        contentType.includes("typescript")
+    ) {
+        const source = await upstream.text();
+        responseHeaders.set("content-type", contentType);
+        responseHeaders.set("cache-control", "no-store");
+        return new NextResponse(rewriteJavaScript(source, base), {
+            status: upstream.status,
+            headers: responseHeaders,
+        });
+    }
+
+    // Everything else (images, JSON, fonts) is streamed through untouched.
     return new NextResponse(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
