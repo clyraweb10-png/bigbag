@@ -15,10 +15,9 @@ function remoteApiKey(): string {
 
 export function hasConfiguredLocalModel(): boolean {
   return Boolean(
-    process.env.GLM_API_KEY?.trim() ||
-      process.env.GLM_API_KEY_2?.trim() ||
-      process.env.GROQ_API_KEY?.trim() ||
-      process.env.OPENROUTER_API_KEY?.trim()
+    process.env.GEMINI_API_KEY?.trim() ||
+      process.env.TELNYX_API_KEY?.trim() ||
+      process.env.CUSTOM_OPENAI_API_KEY?.trim()
   );
 }
 

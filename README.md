@@ -98,8 +98,8 @@ ORCHESTRATOR_MODE=local
 SANDBOX_PROVIDER=local
 
 # Provide your preferred model key:
-GLM_API_KEY=your_glm_api_key
-# or GROQ_API_KEY / OPENROUTER_API_KEY
+GEMINI_API_KEY=your_gemini_api_key
+# or TELNYX_API_KEY=your_telnyx_api_key
 ```
 
 ### 3. Run it
@@ -120,9 +120,8 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | --- | :---: | --- |
 | `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
-| `GLM_API_KEY` | ⬜ Optional | Zhipu AI GLM key for code generation. |
-| `GROQ_API_KEY` | ⬜ Optional | Groq API key for fast inference. |
-| `OPENROUTER_API_KEY` | ⬜ Optional | OpenRouter API key for multi-model access. |
+| `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
+| `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 To start from the example file:

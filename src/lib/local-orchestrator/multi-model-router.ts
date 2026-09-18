@@ -6,7 +6,6 @@ export interface ModelProviderConfig {
   model: string;
   maxTokens: number;
   extraHeaders?: Record<string, string>;
-  isZhipu?: boolean;
 }
 
 export interface RouterCompletionResult {
@@ -18,7 +17,7 @@ export interface RouterCompletionResult {
 export type StatusCallback = (statusMessage: string) => void;
 
 class MultiModelRouter {
-  // Provider-level concurrency locks (mutex) to avoid concurrent calls on single free keys
+  // Provider-level concurrency locks (mutex) to avoid concurrent calls on single keys
   private providerQueues: Map<string, Promise<void>> = new Map();
 
   private enqueue(providerId: string, task: () => Promise<any>): Promise<any> {
@@ -36,62 +35,35 @@ class MultiModelRouter {
   public getProviders(): ModelProviderConfig[] {
     const providers: ModelProviderConfig[] = [];
 
-    // Prefer the newer account/model. In real generation tests it completed a
-    // complex design prompt while the older flash endpoint timed out.
-    const zhipuKey2 = process.env.GLM_API_KEY_2 || "";
-    if (zhipuKey2) {
+    // 1. Google Gemini (gemini-2.5-flash) - Primary Model
+    const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
+    if (geminiKey) {
+      let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
+      // Normalize Google endpoint to OpenAI-compatible base URL if needed
+      if (geminiBase.includes("generativelanguage.googleapis.com") && !geminiBase.includes("/openai")) {
+        geminiBase = "https://generativelanguage.googleapis.com/v1beta/openai";
+      }
+
       providers.push({
-        id: "zhipu-acc-2",
-        name: "Zhipu AI (GLM-4.7-Flash / Acc 2)",
-        baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
-        apiKey: zhipuKey2,
-        model: process.env.GLM_MODEL_2 || "glm-4.7-flash",
-        maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
-        isZhipu: true,
+        id: "gemini-flash",
+        name: "Google Gemini (gemini-2.5-flash)",
+        baseUrl: geminiBase,
+        apiKey: geminiKey,
+        model: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
+        maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
       });
     }
 
-    // Fallback Zhipu account/model.
-    const zhipuKey1 = process.env.GLM_API_KEY || "";
-    if (zhipuKey1) {
+    // 2. Telnyx AI / Custom OpenAI (zai-org/GLM-5.3-Flash) - Secondary / Fallback Model
+    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (telnyxKey) {
       providers.push({
-        id: "zhipu-acc-1",
-        name: "Zhipu AI (GLM-4.5-Flash)",
-        baseUrl: process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4",
-        apiKey: zhipuKey1,
-        model: process.env.GLM_MODEL || "glm-4.5-flash",
-        maxTokens: parseInt(process.env.GLM_MAX_TOKENS || "16384", 10),
-        isZhipu: true,
-      });
-    }
-
-    // 3. Groq Cloud (Qwen 3.8-27B: 300+ tokens/sec hyper-speed)
-    const groqKey = process.env.GROQ_API_KEY || "";
-    if (groqKey) {
-      providers.push({
-        id: "groq-qwen",
-        name: "Groq Cloud (Qwen 3.8-27B)",
-        baseUrl: "https://api.groq.com/openai/v1",
-        apiKey: groqKey,
-        model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
-        maxTokens: 8192,
-      });
-    }
-
-    // 4. OpenRouter (inclusionai/ling-3.0-flash-vl:free)
-    const openRouterKey = process.env.OPENROUTER_API_KEY || "";
-    if (openRouterKey) {
-      providers.push({
-        id: "openrouter-ling",
-        name: "OpenRouter (Ling 3.0 Flash VL)",
-        baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: openRouterKey,
-        model: process.env.OPENROUTER_MODEL || "inclusionai/ling-3.0-flash-vl:free",
-        maxTokens: 8192,
-        extraHeaders: {
-          "HTTP-Referer": "http://localhost:3000",
-          "X-Title": "BigBag AI App Builder",
-        },
+        id: "telnyx-glm",
+        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
+        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
+        apiKey: telnyxKey,
+        model: (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim(),
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
       });
     }
 
@@ -106,7 +78,7 @@ class MultiModelRouter {
 
     if (providers.length === 0) {
       throw new Error(
-        "No AI API keys configured. Please configure GLM_API_KEY, GROQ_API_KEY, or OPENROUTER_API_KEY."
+        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
       );
     }
 
@@ -126,10 +98,6 @@ class MultiModelRouter {
           max_tokens: provider.maxTokens,
         };
 
-        if (provider.isZhipu) {
-          payload.thinking = { type: "disabled" };
-        }
-
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
           Authorization: `Bearer ${provider.apiKey}`,
@@ -147,7 +115,8 @@ class MultiModelRouter {
 
         if (res.ok) {
           const json = await res.json();
-          const text = json.choices?.[0]?.message?.content || "";
+          const choice = json.choices?.[0];
+          const text = choice?.message?.content || choice?.message?.reasoning_content || "";
           if (!text || text.trim().length === 0) {
             throw new Error("Received empty response body from provider");
           }
@@ -171,12 +140,12 @@ class MultiModelRouter {
           const code = String(parsed.error?.code || "");
           const msg = String(parsed.error?.message || "");
 
-          if (code === "1305" || msg.includes("访问量过大") || res.status === 503) {
+          if (code === "1305" || res.status === 503) {
             isTrafficSpike = true;
-            errMsg = `Traffic spike on ${provider.model} (1305: 该模型当前访问量过大)`;
+            errMsg = `Service unavailable/busy on ${provider.model} (503)`;
           } else if (code === "1302" || res.status === 429) {
             isRateLimit = true;
-            errMsg = `Rate limit reached on ${provider.model} (429/1302)`;
+            errMsg = `Rate limit reached on ${provider.model} (429)`;
           } else if (parsed.error?.message) {
             errMsg = parsed.error.message;
           }
@@ -189,7 +158,7 @@ class MultiModelRouter {
         if (!isLast) {
           const nextProvider = providers[i + 1];
           const reason = isTrafficSpike
-            ? "traffic spike"
+            ? "traffic spike / busy"
             : isRateLimit
             ? "rate limit"
             : "busy server";
