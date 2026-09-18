@@ -9,6 +9,12 @@ import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "@/lib/vcaas-types";
 import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
+import {
+  containsGenerationPlaceholder,
+  generationValidationIssues,
+  normalizeGeneratedPath,
+  type GeneratedSourceFile,
+} from "./generation-validator";
 
 const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer. Build complete web apps using Vite, React 19, TypeScript, and Tailwind CSS 4.
 
@@ -25,13 +31,13 @@ import { useState } from 'react';
 // code
 \`\`\`
 
-The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Put optional components after those required entry files so a token limit can never leave the app disconnected.
+The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Keep the complete implementation self-contained in src/app/page.tsx by default. Do not import a custom local component unless you also output its complete file in the same response. Put optional components after those required entry files so a token limit can never leave the app disconnected.
 
 3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, and @/lib/utils (cn) — they already exist.
 
 4. Styling — Use Tailwind utilities and src/app/globals.css for tokens, keyframes, and special effects. NO styled-jsx, CSS modules, or @apply rules. Keep @import "tailwindcss" as the first non-comment rule in globals.css. All CSS properties MUST be inside a selector.
 
-5. Structure — src/app/page.tsx is the main app, src/app/globals.css contains global styles, and reusable sections belong in src/components/*.tsx. The runtime entrypoint already exists; do not output src/main.tsx.
+5. Structure — src/app/page.tsx is the main app and src/app/globals.css contains global styles. Prefer small helper components in page.tsx so the response cannot be truncated between files. Use src/components/*.tsx only when the complete page and every imported component fit in this response. The runtime entrypoint already exists; do not output src/main.tsx.
 
 6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, or TODOs. Use semantic HTML, accessible labels, keyboard focus states, and responsive layouts at mobile/tablet/desktop sizes.
 
@@ -47,7 +53,7 @@ const RETRY_PROMPT = `Your previous response did not contain valid code files. Y
 // complete code here
 \`\`\`
 
-Start your response with a COMPLETE src/app/page.tsx file, then src/app/globals.css, then any supporting files. The page must import and render its supporting components. Generate the complete application now.`;
+Return one complete, self-contained src/app/page.tsx with all custom sections defined in that file. You may import installed packages and the existing @/components/ui/button, @/components/ui/card, and @/lib/utils modules, but do not import any other local component. Then output src/app/globals.css if needed. Do not abbreviate code with ellipses. Generate the complete application now.`;
 
 const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 
@@ -208,40 +214,39 @@ function extractFilesFromMarkdown(text: string): Array<{ path: string; content: 
   return files;
 }
 
-function hasRequiredEntrypoint(files: Array<{ path: string; content: string }>): boolean {
-  return files.some((file) => file.path.replace(/^\.\//, "") === "src/app/page.tsx");
-}
-
-function hasGenerationPlaceholder(files: Array<{ path: string; content: string }>): boolean {
-  return files.some(
-    (file) =>
-      file.content.includes("Generation Issue") &&
-      file.content.includes("Awaiting Retry")
-  );
-}
-
 function assertUsableGeneratedFiles(
-  files: Array<{ path: string; content: string }>,
-  phase: "generation" | "repair"
+  files: GeneratedSourceFile[],
+  phase: "generation" | "repair",
+  existingPaths: Iterable<string>
 ): void {
-  if (files.length === 0) {
-    throw new Error(`The AI ${phase} returned no valid source files`);
-  }
-  if (!hasRequiredEntrypoint(files)) {
-    throw new Error(`The AI ${phase} omitted the required src/app/page.tsx entrypoint`);
-  }
-  if (hasGenerationPlaceholder(files)) {
-    throw new Error(`The AI ${phase} still contained placeholder source files`);
-  }
+  const existing = [...existingPaths];
+  const hasExistingEntrypoint = existing
+    .map(normalizeGeneratedPath)
+    .includes("src/app/page.tsx");
+  const issues = generationValidationIssues(files, existing, {
+    requireEntrypoint: phase === "generation" || !hasExistingEntrypoint,
+  });
+  if (issues.length > 0) throw new Error(`The AI ${phase} was incomplete: ${issues.join("; ")}`);
 }
 
 function mergeGeneratedFiles(
   original: Array<{ path: string; content: string }>,
   retry: Array<{ path: string; content: string }>
 ): Array<{ path: string; content: string }> {
-  const merged = new Map(original.map((file) => [file.path.replace(/^\.\//, ""), file]));
-  for (const file of retry) merged.set(file.path.replace(/^\.\//, ""), file);
+  const merged = new Map(original.map((file) => [normalizeGeneratedPath(file.path), file]));
+  for (const file of retry) merged.set(normalizeGeneratedPath(file.path), file);
   return [...merged.values()];
+}
+
+function availableWorkspacePaths(projectId: string): string[] {
+  return localFileManager
+    .getTree(projectId)
+    .entries.filter((entry) => entry.type === "file")
+    .filter((entry) => {
+      const file = localFileManager.getContent(projectId, entry.path);
+      return Boolean(file && file.encoding === "utf8" && !containsGenerationPlaceholder(file.content));
+    })
+    .map((entry) => normalizeGeneratedPath(entry.path));
 }
 
 function fixCssImportOrder(css: string): string {
@@ -403,67 +408,6 @@ export default function Page() {
   }
 }
 
-function autoHealMissingImports(projectId: string, newMessages: ConversationMessage[]): void {
-  const pageFile = localFileManager.getContent(projectId, "src/app/page.tsx");
-  if (!pageFile?.content) return;
-
-  const content = pageFile.content;
-  const importRegex = /import\s+(?:\{([^}]+)\}|([a-zA-Z0-9_$]+))\s+from\s+['"](?:@\/components\/|\.\/components\/|\.\.\/components\/)([^'"]+)['"]/g;
-  let match;
-
-  while ((match = importRegex.exec(content)) !== null) {
-    const namedImports = match[1]
-      ? match[1].split(",").map((s: string) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean)
-      : [];
-    const defaultImport = match[2] ? match[2].trim() : null;
-    const componentPath = match[3];
-
-    let targetRelPath = `src/components/${componentPath}`;
-    if (!targetRelPath.endsWith(".tsx") && !targetRelPath.endsWith(".ts")) {
-      targetRelPath += ".tsx";
-    }
-
-    const existing = localFileManager.getContent(projectId, targetRelPath);
-    if (!existing) {
-      console.log(`[localAgentEngine] Auto-healing missing component: ${targetRelPath}`);
-      const componentNames = defaultImport ? [defaultImport, ...namedImports] : namedImports;
-      const primaryName = componentNames[0] || "Section";
-
-      let stubExports = "";
-      for (const name of componentNames) {
-        stubExports += `
-export function ${name}() {
-  return (
-    <section className="py-16 px-6 max-w-7xl mx-auto text-center border-t border-slate-800/60">
-      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-medium mb-4">
-        ${name}
-      </div>
-      <h3 className="text-2xl font-bold text-white mb-2">${name}</h3>
-      <p className="text-slate-400 max-w-lg mx-auto text-sm">
-        Customizable component ready for additional features.
-      </p>
-    </section>
-  );
-}
-`;
-      }
-
-      const fileContent = `'use client';
-import React from 'react';
-${stubExports}
-export default ${primaryName};
-`;
-      localFileManager.writeContent(projectId, targetRelPath, fileContent, "utf8");
-      newMessages.push({
-        author: "agent",
-        message: `Created component \`${targetRelPath}\``,
-        messageType: "building",
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-}
-
 export const localAgentEngine = {
   async runPrompt(projectId: string, prompt: string): Promise<void> {
     const record = localProjectStore.getRecord(projectId);
@@ -489,6 +433,7 @@ export const localAgentEngine = {
     const conversation = [...(record.conversation || []), userMsg, startMsg];
     localProjectStore.update(projectId, {
       status: "init",
+      agentStartedAt: now,
       conversation,
     });
 
@@ -561,32 +506,37 @@ export const localAgentEngine = {
           { role: "user", content: userPromptContent },
         ];
 
-        const routerResult = await multiModelRouter.complete(messages, (statusMsg) => {
-          const currentRec = localProjectStore.getRecord(projectId);
-          const switchMsg: ConversationMessage = {
-            author: "agent",
-            message: statusMsg,
-            messageType: "building",
-            createdAt: new Date().toISOString(),
-          };
-          localProjectStore.update(projectId, {
-            conversation: [...(currentRec?.conversation || []), switchMsg],
-          });
-        });
+        const routerResult = await multiModelRouter.complete(
+          messages,
+          (statusMsg) => {
+            const currentRec = localProjectStore.getRecord(projectId);
+            const switchMsg: ConversationMessage = {
+              author: "agent",
+              message: statusMsg,
+              messageType: "building",
+              createdAt: new Date().toISOString(),
+            };
+            localProjectStore.update(projectId, {
+              conversation: [...(currentRec?.conversation || []), switchMsg],
+            });
+          },
+          { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000 }
+        );
 
         const content = routerResult.text;
-        const usedModel = routerResult.usedModel;
+        let usedModel = routerResult.usedModel;
+        let usedProviderId = routerResult.providerId;
 
         // Extract files from generated markdown, with auto-retry on failure
         let files = extractFilesFromMarkdown(content);
         postProcessGeneratedFiles(files);
 
-        // Check if any file is a placeholder (non-code detected)
-        const hasPlaceholder = hasGenerationPlaceholder(files);
+        const existingPaths = availableWorkspacePaths(projectId);
+        let validationIssues = generationValidationIssues(files, existingPaths);
 
-        // Auto-retry if no files extracted or all files are placeholders
-        if (files.length === 0 || hasPlaceholder || !hasRequiredEntrypoint(files)) {
-          console.log(`[localAgentEngine] Generation was incomplete, auto-retrying...`);
+        // Auto-retry incomplete or disconnected output before it touches the workspace.
+        if (validationIssues.length > 0) {
+          console.log(`[localAgentEngine] Generation was incomplete: ${validationIssues.join("; ")}`);
 
           const retryStatusMsg: ConversationMessage = {
             author: "agent",
@@ -603,29 +553,36 @@ export const localAgentEngine = {
             { role: "system", content: SYSTEM_PROMPT },
             { role: "user", content: userPromptContent },
             { role: "assistant", content: content.substring(0, 500) },
-            { role: "user", content: RETRY_PROMPT },
+            {
+              role: "user",
+              content: `${RETRY_PROMPT}\n\nThe previous output failed these checks:\n- ${validationIssues.join("\n- ")}`,
+            },
           ];
 
           try {
-            const retryResult = await multiModelRouter.complete(retryMessages, () => {});
+            const retryResult = await multiModelRouter.complete(retryMessages, () => {}, {
+              deprioritizeProviderId: routerResult.providerId,
+              perProviderTimeoutMs: 120_000,
+              totalTimeoutMs: 210_000,
+            });
             const retryFiles = extractFilesFromMarkdown(retryResult.text);
             postProcessGeneratedFiles(retryFiles);
-
-            const retryHasPlaceholder = hasGenerationPlaceholder(retryFiles);
-
-            if (retryFiles.length > 0 && !retryHasPlaceholder) {
-              files = mergeGeneratedFiles(files, retryFiles);
-              postProcessGeneratedFiles(files);
-              console.log(`[localAgentEngine] Retry succeeded: ${retryFiles.length} files extracted`);
-            } else {
-              console.warn(`[localAgentEngine] Retry also failed, using placeholder`);
+            const mergedFiles = mergeGeneratedFiles(files, retryFiles);
+            postProcessGeneratedFiles(mergedFiles);
+            validationIssues = generationValidationIssues(mergedFiles, existingPaths);
+            if (validationIssues.length > 0) {
+              throw new Error(`Retry remained incomplete: ${validationIssues.join("; ")}`);
             }
+            files = mergedFiles;
+            usedModel = retryResult.usedModel;
+            usedProviderId = retryResult.providerId;
+            console.log(`[localAgentEngine] Retry succeeded: ${retryFiles.length} files extracted`);
           } catch (retryErr: any) {
             console.error(`[localAgentEngine] Retry failed:`, retryErr.message || retryErr);
           }
         }
 
-        assertUsableGeneratedFiles(files, "generation");
+        assertUsableGeneratedFiles(files, "generation", existingPaths);
 
         const currentRec = localProjectStore.getRecord(projectId);
         const newMessages: ConversationMessage[] = [...(currentRec?.conversation || [])];
@@ -651,9 +608,6 @@ export const localAgentEngine = {
             createdAt: new Date().toISOString(),
           });
         }
-
-        // Auto-heal any components imported in page.tsx that were omitted by the AI
-        autoHealMissingImports(projectId, newMessages);
 
         purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
 
@@ -728,11 +682,16 @@ export const localAgentEngine = {
                   content: `The generated app for this request failed its production build. Fix the implementation without weakening the requested design or removing working features. Return ONLY complete corrected file blocks. Never use @apply in CSS.\n\nOriginal request:\n${prompt}\n\nBuild error:\n${buildError}\n\nCurrent source:\n${workspaceRepairContext(projectId)}`,
                 },
               ],
-              () => undefined
+              () => undefined,
+              {
+                deprioritizeProviderId: usedProviderId,
+                perProviderTimeoutMs: 120_000,
+                totalTimeoutMs: 210_000,
+              }
             );
             const repairFiles = extractFilesFromMarkdown(repairResult.text);
             postProcessGeneratedFiles(repairFiles);
-            assertUsableGeneratedFiles(repairFiles, "repair");
+            assertUsableGeneratedFiles(repairFiles, "repair", availableWorkspacePaths(projectId));
 
             for (const file of repairFiles) {
               let fileContent = file.content;
@@ -742,7 +701,6 @@ export const localAgentEngine = {
               }
               localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
             }
-            autoHealMissingImports(projectId, newMessages);
             purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
             ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));
 

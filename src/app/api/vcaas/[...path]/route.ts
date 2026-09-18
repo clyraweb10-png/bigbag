@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { localFileManager } from "@/lib/local-orchestrator/file-manager";
 import { e2bSandboxManager } from "@/lib/local-orchestrator/e2b-sandbox-manager";
@@ -10,6 +11,7 @@ import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug } from "@/lib/project-slug";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
+const LOCAL_REBUILD_TIMEOUT_MS = 10 * 60_000;
 
 async function handleLocalRequest(req: NextRequest, path: string[]) {
   const method = req.method.toUpperCase();
@@ -99,7 +101,7 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
           data: {
             projectId,
             status: rec.status,
-            startedAt: rec.createdAt,
+            startedAt: rec.agentStartedAt || rec.createdAt,
             realtimeConversation: rec.conversation || [],
             creditsSpent: 0,
             expectedMinutes: 1,
@@ -192,13 +194,33 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
     // /projects/:id/rebuild and /projects/:id/rebuild/status
     if (subRoute === "rebuild" && method === "POST") {
       const startedAt = new Date().toISOString();
+      const rebuildOperationId = randomUUID();
+      localProjectStore.update(projectId, {
+        rebuildStatus: "rebuilding",
+        rebuildStartedAt: startedAt,
+        rebuildOperationId,
+      });
       try {
         await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+        if (localProjectStore.getRecord(projectId)?.rebuildOperationId === rebuildOperationId) {
+          localProjectStore.update(projectId, {
+            rebuildStatus: "success",
+            rebuildStartedAt: undefined,
+            rebuildOperationId: undefined,
+          });
+        }
         return NextResponse.json(
           { ok: true, data: { status: "success", startedAt } },
           { status: 200 }
         );
       } catch (error) {
+        if (localProjectStore.getRecord(projectId)?.rebuildOperationId === rebuildOperationId) {
+          localProjectStore.update(projectId, {
+            rebuildStatus: "error",
+            rebuildStartedAt: undefined,
+            rebuildOperationId: undefined,
+          });
+        }
         return NextResponse.json(
           {
             ok: false,
@@ -211,7 +233,18 @@ async function handleLocalRequest(req: NextRequest, path: string[]) {
     }
     if (subRoute === "rebuild/status" && method === "GET") {
       const rec = localProjectStore.getRecord(projectId);
-      const status = rec?.serverStatus === "Error" ? "error" : rec?.serverStatus === "Starting" ? "rebuilding" : "success";
+      let status = rec?.rebuildStatus || "idle";
+      if (status === "rebuilding") {
+        const startedAt = Date.parse(rec?.rebuildStartedAt || "");
+        if (!Number.isFinite(startedAt) || Date.now() - startedAt > LOCAL_REBUILD_TIMEOUT_MS) {
+          status = "idle";
+          localProjectStore.update(projectId, {
+            rebuildStatus: "idle",
+            rebuildStartedAt: undefined,
+            rebuildOperationId: undefined,
+          });
+        }
+      }
       return NextResponse.json({ ok: true, data: { status } }, { status: 200 });
     }
 

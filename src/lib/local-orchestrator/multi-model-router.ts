@@ -12,9 +12,17 @@ export interface RouterCompletionResult {
   text: string;
   usedModel: string;
   providerName: string;
+  providerId: string;
 }
 
 export type StatusCallback = (statusMessage: string) => void;
+
+export interface RouterCompletionOptions {
+  perProviderTimeoutMs?: number;
+  totalTimeoutMs?: number;
+  deprioritizeProviderId?: string;
+  maxTokens?: number;
+}
 
 /** How many times to retry a single provider on transient errors (503, 429, timeout). */
 const MAX_RETRIES = 2;
@@ -29,16 +37,41 @@ class MultiModelRouter {
   // Provider-level concurrency locks (mutex) to avoid concurrent calls on single keys
   private providerQueues: Map<string, Promise<void>> = new Map();
 
-  private enqueue(providerId: string, task: () => Promise<any>): Promise<any> {
+  private enqueue<T>(
+    providerId: string,
+    task: () => Promise<T>,
+    maxQueueWaitMs?: number
+  ): Promise<T> {
     const prev = this.providerQueues.get(providerId) || Promise.resolve();
-    let res: any;
+    let cancelled = false;
+    let queueTimer: ReturnType<typeof setTimeout> | undefined;
+    let resolveResult!: (value: T) => void;
+    let rejectResult!: (reason: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+
+    if (maxQueueWaitMs !== undefined) {
+      queueTimer = setTimeout(() => {
+        cancelled = true;
+        rejectResult(new Error("Provider queue wait exceeded the completion deadline"));
+      }, Math.max(1, maxQueueWaitMs));
+    }
+
     const next = prev
-      .catch(() => {})
+      .catch(() => undefined)
       .then(async () => {
-        res = await task();
+        if (cancelled) return;
+        if (queueTimer) clearTimeout(queueTimer);
+        try {
+          resolveResult(await task());
+        } catch (error) {
+          rejectResult(error);
+        }
       });
     this.providerQueues.set(providerId, next);
-    return next.then(() => res);
+    return result;
   }
 
   public getProviders(): ModelProviderConfig[] {
@@ -85,13 +118,21 @@ class MultiModelRouter {
   private async tryProvider(
     provider: ModelProviderConfig,
     messages: Array<{ role: string; content: string }>,
-    onStatus?: StatusCallback
+    onStatus: StatusCallback | undefined,
+    options: {
+      deadlineAt?: number;
+      perProviderTimeoutMs: number;
+      maxTokens?: number;
+    }
   ): Promise<RouterCompletionResult> {
+    const configuredMaxTokens = Number.isFinite(provider.maxTokens) && provider.maxTokens > 0
+      ? provider.maxTokens
+      : 16_384;
     const payload: Record<string, any> = {
       model: provider.model,
       messages,
       temperature: 0.2,
-      max_tokens: provider.maxTokens,
+      max_tokens: Math.min(configuredMaxTokens, options.maxTokens ?? configuredMaxTokens),
     };
 
     const headers: Record<string, string> = {
@@ -103,22 +144,48 @@ class MultiModelRouter {
     let lastError = "";
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let remainingMs = options.deadlineAt === undefined
+        ? undefined
+        : options.deadlineAt - Date.now();
+      if (remainingMs !== undefined && remainingMs <= 0) {
+        throw new Error("completion deadline exceeded");
+      }
+
       if (attempt > 0) {
         const retryMsg = `🔄 Retrying ${provider.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`;
         console.log(`[MultiModelRouter] ${retryMsg}`);
         onStatus?.(retryMsg);
         await sleep(RETRY_DELAY_MS);
+        remainingMs = options.deadlineAt === undefined
+          ? undefined
+          : options.deadlineAt - Date.now();
+        if (remainingMs !== undefined && remainingMs <= 0) {
+          throw new Error("completion deadline exceeded");
+        }
       }
 
       try {
-        const res: Response = await this.enqueue(provider.id, () =>
-          fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        const res: Response = await this.enqueue(provider.id, () => {
+          const remainingAtFetchMs = options.deadlineAt === undefined
+            ? undefined
+            : options.deadlineAt - Date.now();
+          if (remainingAtFetchMs !== undefined && remainingAtFetchMs <= 0) {
+            throw new Error("completion deadline exceeded");
+          }
+          const attemptTimeoutMs = Math.max(
+            1,
+            Math.min(
+              options.perProviderTimeoutMs,
+              remainingAtFetchMs ?? options.perProviderTimeoutMs
+            )
+          );
+          return fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
             method: "POST",
             headers,
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(180_000),
-          })
-        );
+            signal: AbortSignal.timeout(attemptTimeoutMs),
+          });
+        }, remainingMs);
 
         if (res.ok) {
           const json = await res.json();
@@ -133,6 +200,7 @@ class MultiModelRouter {
             text,
             usedModel: provider.model,
             providerName: provider.name,
+            providerId: provider.id,
           };
         }
 
@@ -167,8 +235,8 @@ class MultiModelRouter {
         lastError = `exception: ${err.message || String(err)}`;
         console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
 
-        // Only retry on timeouts / network errors
-        if (!isTimeout && !err.message?.includes("fetch")) break;
+        // A timed-out model already consumed the provider budget; fail over now.
+        if (isTimeout || !err.message?.includes("fetch")) break;
       }
     }
 
@@ -177,26 +245,43 @@ class MultiModelRouter {
 
   public async complete(
     messages: Array<{ role: string; content: string }>,
-    onStatus?: StatusCallback
+    onStatus?: StatusCallback,
+    options: RouterCompletionOptions = {}
   ): Promise<RouterCompletionResult> {
-    const providers = this.getProviders();
+    const configuredProviders = this.getProviders();
 
-    if (providers.length === 0) {
+    if (configuredProviders.length === 0) {
       throw new Error(
         "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
       );
     }
 
+    const providers = options.deprioritizeProviderId
+      ? [
+          ...configuredProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
+          ...configuredProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
+        ]
+      : configuredProviders;
     const errors: string[] = [];
+    const startedAt = Date.now();
+    const deadlineAt = options.totalTimeoutMs === undefined
+      ? undefined
+      : startedAt + options.totalTimeoutMs;
+    const perProviderTimeoutMs = options.perProviderTimeoutMs ?? 120_000;
 
     for (let i = 0; i < providers.length; i++) {
       const provider = providers[i];
       const isLast = i === providers.length - 1;
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
+      onStatus?.(`Generating with ${provider.name}...`);
 
       try {
-        return await this.tryProvider(provider, messages, onStatus);
+        return await this.tryProvider(provider, messages, onStatus, {
+          deadlineAt,
+          perProviderTimeoutMs,
+          maxTokens: options.maxTokens,
+        });
       } catch (err: any) {
         const errMsg = err.message || String(err);
         errors.push(errMsg);
