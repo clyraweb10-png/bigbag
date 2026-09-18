@@ -117,7 +117,7 @@ function workspaceRepairContext(projectId: string): string {
 }
 
 
-function extractFilesFromMarkdown(text: string): Array<{ path: string; content: string }> {
+export function extractFilesFromMarkdown(text: string): Array<{ path: string; content: string }> {
   const files: Array<{ path: string; content: string }> = [];
 
   // Pattern 1: Any markdown heading or line declaring a file path
@@ -128,7 +128,7 @@ function extractFilesFromMarkdown(text: string): Array<{ path: string; content: 
   // **File: src/app/page.tsx**
   // File: src/app/page.tsx
   // followed by a code block, whether closed by ``` or unclosed at the end of string
-  const fileHeaderRegex = /(?:^|[\r\n])\s*(?:#{1,4}\s*(?:File:\s*)?|\*{1,2}File:\s*\*?\*?|File:\s*)\s*([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)\s*[\r\n]+\s*```[a-zA-Z0-9_-]*\s*[\r\n]/gi;
+  const fileHeaderRegex = /(?:^|[\r\n])\s*(?:#{1,4}\s*(?:File:\s*)?|\*{1,2}File:\s*\*?\*?|File:\s*)\s*`?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)`?\s*[\r\n]+\s*```[a-zA-Z0-9_-]*\s*[\r\n]/gi;
 
   const matches: Array<{ path: string; contentStart: number; matchIndex: number }> = [];
   let m: RegExpExecArray | null;
@@ -164,14 +164,18 @@ function extractFilesFromMarkdown(text: string): Array<{ path: string; content: 
     }
   }
 
-  // Pattern 2: ```tsx file="src/app/page.tsx" or ```tsx path="src/app/page.tsx"
+  // Pattern 2: file metadata carried on the opening code fence.
   if (files.length === 0) {
-    const p2 = /```[a-zA-Z0-9_-]*\s+(?:file|path)=["']?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)["']?\s*[\r\n]([\s\S]*?)(?:```|$)/gi;
-    while ((m = p2.exec(text)) !== null) {
-      const content = m[2].trim();
-      if (content.length > 0) {
-        files.push({ path: m[1].trim(), content });
+    const metadataFences = [
+      /```[a-zA-Z0-9_-]*\s+(?:file|path|title)=["']?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)["']?\s*[\r\n]([\s\S]*?)(?:```|$)/gi,
+      /```[a-zA-Z0-9_-]*:([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)\s*[\r\n]([\s\S]*?)(?:```|$)/gi,
+    ];
+    for (const pattern of metadataFences) {
+      while ((m = pattern.exec(text)) !== null) {
+        const content = m[2].trim();
+        if (content.length > 0) files.push({ path: m[1].trim(), content });
       }
+      if (files.length > 0) break;
     }
   }
 
@@ -186,7 +190,44 @@ function extractFilesFromMarkdown(text: string): Array<{ path: string; content: 
     }
   }
 
-  // Pattern 4: Single raw TSX/JSX code fence without file annotations.
+  // Pattern 4: common coding-agent XML file actions.
+  if (files.length === 0) {
+    const xmlFile = /<(?:boltAction|file)\b[^>]*(?:filePath|path)=["']([a-zA-Z0-9_\-\.\/\[\]]+\.[a-zA-Z0-9]+)["'][^>]*>([\s\S]*?)<\/(?:boltAction|file)>/gi;
+    while ((m = xmlFile.exec(text)) !== null) {
+      const content = m[2].trim().replace(/^```[a-zA-Z0-9_-]*\s*[\r\n]/, "").replace(/[\r\n]\s*```$/, "").trim();
+      if (content.length > 0) files.push({ path: m[1].trim(), content });
+    }
+  }
+
+  // Pattern 5: structured JSON responses such as
+  // {"files":[{"path":"src/app/page.tsx","content":"..."}]}.
+  if (files.length === 0) {
+    const fencedJson = /```json\s*[\r\n]([\s\S]*?)(?:```|$)/i.exec(text)?.[1];
+    const candidate = (fencedJson || text).trim();
+    const jsonStart = Math.min(
+      ...[candidate.indexOf("{"), candidate.indexOf("[")].filter((index) => index >= 0)
+    );
+    const jsonEnd = Math.max(candidate.lastIndexOf("}"), candidate.lastIndexOf("]"));
+    if (Number.isFinite(jsonStart) && jsonEnd > jsonStart) {
+      try {
+        const parsed = JSON.parse(candidate.slice(jsonStart, jsonEnd + 1));
+        const entries = Array.isArray(parsed) ? parsed : parsed?.files;
+        if (Array.isArray(entries)) {
+          for (const entry of entries) {
+            const filePath = entry?.path || entry?.file || entry?.filePath;
+            const content = entry?.content || entry?.code;
+            if (typeof filePath === "string" && typeof content === "string" && content.trim()) {
+              files.push({ path: filePath.trim(), content: content.trim() });
+            }
+          }
+        }
+      } catch {
+        // A malformed JSON-looking response may still be a raw code fence below.
+      }
+    }
+  }
+
+  // Pattern 6: Single raw TSX/JSX code fence without file annotations.
   // Raw HTML is intentionally rejected: the generated app always enters through
   // src/app/page.tsx and the runtime owns the root index.html document.
   if (files.length === 0) {
