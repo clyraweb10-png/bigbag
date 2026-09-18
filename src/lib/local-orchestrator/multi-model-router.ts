@@ -5,6 +5,7 @@ export interface ModelProviderConfig {
   apiKey: string;
   model: string;
   maxTokens: number;
+  reasoningEffort?: "low" | "high" | "max";
   extraHeaders?: Record<string, string>;
 }
 
@@ -31,6 +32,20 @@ const RETRY_DELAY_MS = 3_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function completionText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+      const record = part as { type?: unknown; text?: unknown };
+      return (record.type === undefined || record.type === "text") && typeof record.text === "string"
+        ? record.text
+        : "";
+    })
+    .join("");
 }
 
 class MultiModelRouter {
@@ -80,13 +95,18 @@ class MultiModelRouter {
     // 1. Telnyx AI (zai-org/GLM-5.3-Flash) — Primary Model (most reliable)
     const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
     if (telnyxKey) {
+      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
       providers.push({
         id: "telnyx-glm",
         name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
         baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
         apiKey: telnyxKey,
-        model: (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim(),
+        model: telnyxModel,
         maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "32768", 10),
+        // GLM-5.3-Flash defaults to max reasoning, which can exhaust a 16K
+        // completion before it emits the requested code. Low still reasons but
+        // leaves enough of the provider budget for a complete application.
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
       });
     }
 
@@ -134,6 +154,7 @@ class MultiModelRouter {
       temperature: 0.2,
       max_tokens: Math.min(configuredMaxTokens, options.maxTokens ?? configuredMaxTokens),
     };
+    if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -190,9 +211,21 @@ class MultiModelRouter {
         if (res.ok) {
           const json = await res.json();
           const choice = json.choices?.[0];
-          const text = choice?.message?.content || choice?.message?.reasoning_content || "";
+          const finishReason = typeof choice?.finish_reason === "string"
+            ? choice.finish_reason.toLowerCase()
+            : "";
+          if (["length", "max_tokens", "max_output_tokens"].includes(finishReason)) {
+            throw new Error(`Provider stopped before completing the response (${finishReason})`);
+          }
+
+          const text = completionText(choice?.message?.content);
           if (!text || text.trim().length === 0) {
-            throw new Error("Received empty response body from provider");
+            const hasReasoning = completionText(choice?.message?.reasoning_content).trim().length > 0;
+            throw new Error(
+              hasReasoning
+                ? "Provider returned reasoning without a final answer"
+                : "Received empty response body from provider"
+            );
           }
 
           console.log(`[MultiModelRouter] Provider [${provider.name}] succeeded! Generated ${text.length} chars.`);

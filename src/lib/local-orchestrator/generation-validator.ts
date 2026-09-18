@@ -116,6 +116,16 @@ function sourceFileFor(filePath: string, content: string): ts.SourceFile {
   return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, scriptKind);
 }
 
+function sourceSyntaxIssue(filePath: string, content: string): string | null {
+  const sourceFile = sourceFileFor(filePath, content) as ts.SourceFile & {
+    parseDiagnostics?: readonly ts.Diagnostic[];
+  };
+  const diagnostic = sourceFile.parseDiagnostics?.find(
+    (entry) => entry.category === ts.DiagnosticCategory.Error
+  );
+  return diagnostic ? ts.flattenDiagnosticMessageText(diagnostic.messageText, " ") : null;
+}
+
 function importSpecifiers(filePath: string, content: string): string[] {
   if (filePath.endsWith(".css")) return cssImportSpecifiers(content);
 
@@ -220,6 +230,10 @@ export function generationValidationIssues(
     generatedPaths.add(file.path);
     if (FORBIDDEN_OUTPUTS.has(file.path)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
+    if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
+      const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
+      if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);
+    }
   }
 
   const page = normalizedFiles.find((file) => file.path === "src/app/page.tsx");
