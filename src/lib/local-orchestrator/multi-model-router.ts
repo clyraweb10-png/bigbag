@@ -63,7 +63,7 @@ class MultiModelRouter {
         baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
         apiKey: telnyxKey,
         model: (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim(),
-        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "32768", 10),
       });
     }
 
@@ -109,7 +109,7 @@ class MultiModelRouter {
             method: "POST",
             headers,
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(120_000),
+            signal: AbortSignal.timeout(180_000),
           })
         );
 
