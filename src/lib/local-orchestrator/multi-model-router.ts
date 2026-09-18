@@ -16,6 +16,15 @@ export interface RouterCompletionResult {
 
 export type StatusCallback = (statusMessage: string) => void;
 
+/** How many times to retry a single provider on transient errors (503, 429, timeout). */
+const MAX_RETRIES = 2;
+/** Delay in ms between retries. */
+const RETRY_DELAY_MS = 3_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class MultiModelRouter {
   // Provider-level concurrency locks (mutex) to avoid concurrent calls on single keys
   private providerQueues: Map<string, Promise<void>> = new Map();
@@ -35,11 +44,23 @@ class MultiModelRouter {
   public getProviders(): ModelProviderConfig[] {
     const providers: ModelProviderConfig[] = [];
 
-    // 1. Google Gemini (gemini-2.5-flash) - Primary Model
+    // 1. Telnyx AI (zai-org/GLM-5.3-Flash) — Primary Model (most reliable)
+    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (telnyxKey) {
+      providers.push({
+        id: "telnyx-glm",
+        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
+        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
+        apiKey: telnyxKey,
+        model: (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim(),
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "32768", 10),
+      });
+    }
+
+    // 2. Google Gemini (gemini-2.5-flash) — Fallback (occasionally returns 503)
     const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
     if (geminiKey) {
       let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
-      // Normalize Google endpoint to OpenAI-compatible base URL if needed
       if (geminiBase.includes("generativelanguage.googleapis.com") && !geminiBase.includes("/openai")) {
         geminiBase = "https://generativelanguage.googleapis.com/v1beta/openai";
       }
@@ -54,56 +75,42 @@ class MultiModelRouter {
       });
     }
 
-    // 2. Telnyx AI / Custom OpenAI (zai-org/GLM-5.3-Flash) - Secondary / Fallback Model
-    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
-    if (telnyxKey) {
-      providers.push({
-        id: "telnyx-glm",
-        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
-        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
-        apiKey: telnyxKey,
-        model: (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim(),
-        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "32768", 10),
-      });
-    }
-
     return providers;
   }
 
-  public async complete(
+  /**
+   * Try a single provider with automatic retries on transient errors
+   * (503, 429, network timeouts). Returns the result or throws.
+   */
+  private async tryProvider(
+    provider: ModelProviderConfig,
     messages: Array<{ role: string; content: string }>,
     onStatus?: StatusCallback
   ): Promise<RouterCompletionResult> {
-    const providers = this.getProviders();
+    const payload: Record<string, any> = {
+      model: provider.model,
+      messages,
+      temperature: 0.2,
+      max_tokens: provider.maxTokens,
+    };
 
-    if (providers.length === 0) {
-      throw new Error(
-        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
-      );
-    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${provider.apiKey}`,
+      ...(provider.extraHeaders || {}),
+    };
 
-    const errors: string[] = [];
+    let lastError = "";
 
-    for (let i = 0; i < providers.length; i++) {
-      const provider = providers[i];
-      const isLast = i === providers.length - 1;
-
-      console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const retryMsg = `🔄 Retrying ${provider.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`;
+        console.log(`[MultiModelRouter] ${retryMsg}`);
+        onStatus?.(retryMsg);
+        await sleep(RETRY_DELAY_MS);
+      }
 
       try {
-        const payload: Record<string, any> = {
-          model: provider.model,
-          messages,
-          temperature: 0.2,
-          max_tokens: provider.maxTokens,
-        };
-
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${provider.apiKey}`,
-          ...(provider.extraHeaders || {}),
-        };
-
         const res: Response = await this.enqueue(provider.id, () =>
           fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
             method: "POST",
@@ -129,52 +136,74 @@ class MultiModelRouter {
           };
         }
 
-        // Handle error responses
+        // Parse the error
         const rawErr = await res.text();
         let errMsg = rawErr;
-        let isTrafficSpike = false;
-        let isRateLimit = false;
+        let isRetryable = false;
 
         try {
           const parsed = JSON.parse(rawErr);
           const code = String(parsed.error?.code || "");
-          const msg = String(parsed.error?.message || "");
 
-          if (code === "1305" || res.status === 503) {
-            isTrafficSpike = true;
+          if (res.status === 503 || code === "1305") {
+            isRetryable = true;
             errMsg = `Service unavailable/busy on ${provider.model} (503)`;
-          } else if (code === "1302" || res.status === 429) {
-            isRateLimit = true;
+          } else if (res.status === 429 || code === "1302") {
+            isRetryable = true;
             errMsg = `Rate limit reached on ${provider.model} (429)`;
           } else if (parsed.error?.message) {
             errMsg = parsed.error.message;
           }
         } catch {}
 
-        const errSummary = `Provider [${provider.name}] HTTP ${res.status}: ${errMsg}`;
-        console.warn(`[MultiModelRouter] ${errSummary}`);
-        errors.push(errSummary);
+        lastError = `HTTP ${res.status}: ${errMsg}`;
+        console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
 
-        if (!isLast) {
-          const nextProvider = providers[i + 1];
-          const reason = isTrafficSpike
-            ? "traffic spike / busy"
-            : isRateLimit
-            ? "rate limit"
-            : "busy server";
+        // If NOT retryable (e.g. 401, 400), don't waste time retrying
+        if (!isRetryable) break;
 
-          const failoverMsg = `⚡ Switched from ${provider.name} (${reason}) to ${nextProvider.name}...`;
-          console.log(`[MultiModelRouter] ${failoverMsg}`);
-          onStatus?.(failoverMsg);
-        }
       } catch (err: any) {
-        const netErr = `Provider [${provider.name}] exception: ${err.message || String(err)}`;
-        console.warn(`[MultiModelRouter] ${netErr}`);
-        errors.push(netErr);
+        const isTimeout = err.name === "TimeoutError" || err.message?.includes("aborted") || err.message?.includes("timeout");
+        lastError = `exception: ${err.message || String(err)}`;
+        console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
+
+        // Only retry on timeouts / network errors
+        if (!isTimeout && !err.message?.includes("fetch")) break;
+      }
+    }
+
+    throw new Error(`Provider [${provider.name}] ${lastError}`);
+  }
+
+  public async complete(
+    messages: Array<{ role: string; content: string }>,
+    onStatus?: StatusCallback
+  ): Promise<RouterCompletionResult> {
+    const providers = this.getProviders();
+
+    if (providers.length === 0) {
+      throw new Error(
+        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
+      );
+    }
+
+    const errors: string[] = [];
+
+    for (let i = 0; i < providers.length; i++) {
+      const provider = providers[i];
+      const isLast = i === providers.length - 1;
+
+      console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
+
+      try {
+        return await this.tryProvider(provider, messages, onStatus);
+      } catch (err: any) {
+        const errMsg = err.message || String(err);
+        errors.push(errMsg);
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
-          const failoverMsg = `⚡ Network retry: connecting to ${nextProvider.name}...`;
+          const failoverMsg = `⚡ Switching to ${nextProvider.name} after ${provider.name} failed...`;
           console.log(`[MultiModelRouter] ${failoverMsg}`);
           onStatus?.(failoverMsg);
         }
