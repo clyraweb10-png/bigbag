@@ -63,12 +63,19 @@ function firebaseAuth() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<AuthStatus>(configured ? "loading" : "misconfigured");
+  const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!configured) {
+      setStatus("misconfigured");
+      return;
+    }
     const auth = firebaseAuth();
-    if (!auth) return;
+    if (!auth) {
+      setStatus("misconfigured");
+      return;
+    }
     let active = true;
     let unsubscribe = () => undefined;
 
