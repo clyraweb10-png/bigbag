@@ -12,7 +12,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { AlertTriangle, Figma, Github, Loader2, LogOut, PencilRuler, Rocket } from "lucide-react";
+import { AlertTriangle, Loader2, LogOut, Mail, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -200,83 +200,165 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: string | null; onSignIn: () => Promise<void> }) {
   return (
-    <main className="studio-auth relative min-h-[100dvh] overflow-hidden bg-background text-foreground">
-      <div className="studio-grid pointer-events-none absolute inset-0 opacity-55 dark:opacity-25" />
+    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#000000] text-white flex flex-col justify-between select-none">
+      {/* ═══ AMBIENT BACKDROP & FLOATING CARDS ═══ */}
+      <div className="pointer-events-none absolute inset-0 bg-[#000000]" />
 
-      <header className="relative z-10 mx-auto flex h-20 w-full max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-12">
-        <BigBagLogo size="lg" />
+      {/* Floating mockup backdrop */}
+      <div
+        className="pointer-events-none absolute inset-0 bg-center bg-cover bg-no-repeat opacity-40 mix-blend-screen"
+        style={{ backgroundImage: 'url("/landing-backdrop.png")' }}
+      />
+
+      {/* Floating Mockup Cards around edges */}
+      {/* Top Left Card - Dark Dashboard */}
+      <div className="pointer-events-none absolute -top-4 left-[16%] hidden sm:block w-[180px] lg:w-[220px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[10deg] opacity-85 transition-transform hover:scale-105">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-dash.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Top Right Card - Unicorns Landing */}
+      <div className="pointer-events-none absolute -top-2 right-[8%] hidden sm:block w-[240px] lg:w-[280px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 rotate-[14deg] opacity-85 transition-transform hover:scale-105">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-unicorns.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Mid Left Card - Agency */}
+      <div className="pointer-events-none absolute top-[28%] left-[3%] hidden md:block w-[170px] lg:w-[200px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[14deg] opacity-85">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-agency.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Far Left Card */}
+      <div className="pointer-events-none absolute top-[10%] left-[-2%] hidden xl:block w-[120px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[6deg] opacity-70">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-community.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Bottom Left Card */}
+      <div className="pointer-events-none absolute bottom-[10%] left-[2%] hidden xl:block w-[130px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[8deg] opacity-75">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-botleft.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Bottom Right Card - Mobile Phone UI */}
+      <div className="pointer-events-none absolute bottom-[6%] right-[10%] hidden sm:block w-[200px] lg:w-[240px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[22deg] opacity-90">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-mobile.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Far Right Card - Analytics */}
+      <div className="pointer-events-none absolute bottom-[10%] right-[-1%] hidden lg:block w-[150px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 rotate-[12deg] opacity-75">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/card-analytics.png" alt="" className="w-full h-auto object-cover" />
+      </div>
+
+      {/* Center soft vignette gradient for maximum text contrast */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_50%,rgba(0,0,0,0.88)_0%,rgba(0,0,0,0.4)_50%,transparent_80%)]" />
+
+      {/* ═══ TOP HEADER ═══ */}
+      <header className="relative z-30 flex h-16 sm:h-20 w-full items-center justify-between px-6 sm:px-10">
+        <div className="flex items-center gap-2">
+          <BigBagLogo size="md" href={null} className="text-white" />
+        </div>
         <ThemeToggle />
       </header>
 
-      <section className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] w-full max-w-7xl items-center gap-12 px-5 pb-12 pt-5 sm:px-8 lg:grid-cols-[1.08fr_0.92fr] lg:px-12 lg:pb-20">
-        <div className="max-w-2xl">
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground shadow-sm">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
-              <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
-            </span>
-            Your idea, built into a real product
-          </div>
-          <h1 className="max-w-xl text-balance text-5xl font-semibold leading-[0.98] tracking-[-0.055em] sm:text-6xl lg:text-7xl">
-            Build something remarkable.
+      {/* ═══ CENTER AUTH HERO ═══ */}
+      <div className="relative z-20 flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2 sm:pb-16">
+        {/* 3D Rotating Emblem iframe */}
+        <div className="w-[180px] h-[130px] sm:w-[210px] sm:h-[150px] relative flex items-center justify-center -mb-2">
+          <iframe
+            src="/bigbag-3d-emblem.html"
+            className="w-full h-full border-0 bg-transparent"
+            title="3D Bigbag Rotating Emblem"
+          />
+        </div>
+
+        {/* Headline */}
+        <div className="text-center space-y-1 mt-2">
+          <h1 className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-white">
+            Turn ideas into products
           </h1>
-          <p className="mt-6 max-w-xl text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
-            Plan with an AI that understands the brief, shape the interface in a live workspace, and ship a working preview without losing the details that make it yours.
+          <p className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-white">
+            From prompt <span className="text-[#34d399]">to production</span>
           </p>
-
-          <ul className="mt-10 grid max-w-xl grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Builder capabilities">
-            {[
-              { label: "Design", Icon: Figma, tone: "tool-figma" },
-              { label: "Edit", Icon: PencilRuler, tone: "tool-edit" },
-              { label: "Sync", Icon: Github, tone: "tool-github" },
-              { label: "Publish", Icon: Rocket, tone: "tool-publish" },
-            ].map(({ label, Icon, tone }) => (
-              <li key={label} className="flex items-center gap-2.5 rounded-2xl border border-border bg-card p-3 shadow-sm">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}><Icon className="h-4 w-4" /></span>
-                <span className="text-sm font-medium">{label}</span>
-              </li>
-            ))}
-          </ul>
         </div>
 
-        <div className="justify-self-stretch lg:justify-self-end lg:w-full lg:max-w-[440px]">
-          <div className="studio-auth-panel relative overflow-hidden rounded-[2rem] border border-border bg-card p-6 shadow-[0_32px_80px_-36px_rgba(26,24,46,0.45)] sm:p-8">
-            <div className="mb-8 flex items-start justify-between gap-4">
+        {/* Action Buttons */}
+        <div className="w-full max-w-[310px] sm:max-w-[340px] space-y-3 mt-7 flex flex-col items-center">
+          {status === "misconfigured" ? (
+            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs leading-5 text-amber-200" role="alert">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               <div>
-                <p className="text-sm font-medium text-primary">Private workspace</p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em]">Start with your Google account</h2>
+                <p className="font-semibold">Firebase configuration missing</p>
+                <p className="mt-0.5 text-amber-300/80">Configure Firebase variables in .env.local to enable Google sign-in.</p>
               </div>
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
-                <span className="font-mono text-xs font-bold">&lt;/&gt;</span>
-              </span>
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onSignIn()}
+              disabled={status === "loading"}
+              className="w-full h-11 sm:h-12 rounded-full bg-white text-black font-semibold text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 shadow-lg shadow-white/5 hover:bg-zinc-100 active:scale-[0.99] transition-all disabled:opacity-60 cursor-pointer"
+            >
+              {status === "loading" ? (
+                <Loader2 className="h-4 w-4 animate-spin text-black" />
+              ) : (
+                <GoogleMark className="h-4 w-4 shrink-0" />
+              )}
+              <span>{status === "loading" ? "Connecting securely…" : "Continue with Google"}</span>
+            </button>
+          )}
 
-            <p className="mb-6 text-sm leading-6 text-foreground/70">
-              Your projects, conversations, and previews stay attached to your identity so you can pick up exactly where you left off.
+          <button
+            type="button"
+            onClick={() => void onSignIn()}
+            disabled={status === "loading"}
+            className="w-full h-11 sm:h-12 rounded-full bg-[#1c1c1f] text-white font-medium text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 border border-white/10 hover:bg-[#28282d] hover:border-white/20 active:scale-[0.99] transition-all cursor-pointer"
+          >
+            <Mail className="h-4 w-4 text-zinc-300" />
+            <span>Continue with Email</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void onSignIn()}
+            disabled={status === "loading"}
+            className="w-full h-11 sm:h-12 rounded-full bg-[#1c1c1f] text-white font-medium text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 border border-white/10 hover:bg-[#28282d] hover:border-white/20 active:scale-[0.99] transition-all cursor-pointer"
+          >
+            <Smartphone className="h-4 w-4 text-zinc-300" />
+            <span>Continue with Phone</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void onSignIn()}
+            className="pt-1 text-xs text-zinc-400 hover:text-white transition-colors underline-offset-4 hover:underline cursor-pointer"
+          >
+            View more
+          </button>
+
+          {error && (
+            <p className="text-center text-xs text-red-400" role="alert">
+              {error}
             </p>
-
-            {status === "misconfigured" ? (
-              <div className="flex gap-3 rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 text-sm leading-6 text-amber-800 dark:text-amber-200" role="alert">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-                <div>
-                  <p className="font-semibold">Firebase setup is incomplete</p>
-                  <p className="mt-0.5">Add the public Firebase configuration to enable secure Google sign-in.</p>
-                </div>
-              </div>
-            ) : (
-              <Button onClick={() => void onSignIn()} disabled={status === "loading"} className="h-12 w-full rounded-2xl bg-foreground text-sm font-semibold text-background shadow-lg transition-transform hover:bg-foreground/90 active:scale-[0.99]" variant="default">
-                {status === "loading" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleMark className="mr-2 h-5 w-5" />}
-                {status === "loading" ? "Connecting securely…" : "Continue with Google"}
-              </Button>
-            )}
-            {error && <p className="mt-3 text-sm text-destructive" role="alert">{error}</p>}
-
-            <div className="mt-6 flex items-start gap-3 border-t border-border pt-5 text-xs leading-5 text-muted-foreground">
-              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[color:var(--studio-mint)]" />
-              <p>Your Google identity is used only to isolate and restore your own projects.</p>
-            </div>
-          </div>
+          )}
         </div>
-      </section>
+
+        {/* Footer Legal notice */}
+        <div className="mt-8 text-center text-[11px] leading-relaxed text-zinc-500 max-w-xs">
+          By continuing, you agree to our{" "}
+          <a href="#" className="underline underline-offset-2 text-zinc-400 hover:text-zinc-200 transition-colors">
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a href="#" className="underline underline-offset-2 text-zinc-400 hover:text-zinc-200 transition-colors">
+            Privacy Policy
+          </a>
+          .
+        </div>
+      </div>
     </main>
   );
 }

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Bigbag Rotating Emblem</title>
+  <!-- Three.js 3D Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- OrbitControls for fluid touch and mouse interaction -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <!-- FontLoader and TextGeometry for pristine 3D Typography -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/TextGeometry.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    #webgl-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+    }
+    #webgl-canvas:active {
+      cursor: grabbing;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="webgl-canvas"></canvas>
+
+  <script>
+    /* Global Application State */
+    let scene, camera, renderer, controls;
+    let mainGroup;
+    let isRotating = true;
+    let spinDirection = -1; // -1 for continuous leftward spin
+    let rotationSpeed = 0.022; // Steady, uniform constant speed
+
+    function initScene() {
+      const canvas = document.getElementById('webgl-canvas');
+      
+      scene = new THREE.Scene();
+      // Transparent background so it blends into the page
+      scene.background = null;
+
+      camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 0, 11.2);
+
+      renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        antialias: true,
+        alpha: true,
+        powerPreference: 'high-performance'
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.3;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxDistance = 22;
+      controls.minDistance = 4;
+      controls.enablePan = false;
+      controls.enableZoom = false; // Disable zoom so page scrolling isn't intercepted
+      controls.target.set(0, 0, 0);
+
+      mainGroup = new THREE.Group();
+      scene.add(mainGroup);
+
+      setupStudioLighting();
+      createLogoGeometry();
+
+      window.addEventListener('resize', onWindowResize, false);
+    }
+
+    function setupStudioLighting() {
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+      scene.add(ambientLight);
+
+      const keyLight1 = new THREE.DirectionalLight(0xffffff, 3.4);
+      keyLight1.position.set(-6, 7, 8);
+      scene.add(keyLight1);
+
+      const keyLight2 = new THREE.DirectionalLight(0xdbeafe, 2.8);
+      keyLight2.position.set(7, 3, 6);
+      scene.add(keyLight2);
+
+      const rimLight = new THREE.DirectionalLight(0xffffff, 4.2);
+      rimLight.position.set(0, 8, -7);
+      scene.add(rimLight);
+
+      const underLight = new THREE.DirectionalLight(0xcfd8dc, 1.6);
+      underLight.position.set(0, -6, 5);
+      scene.add(underLight);
+
+      const specularFill = new THREE.PointLight(0xffffff, 2.4, 20);
+      specularFill.position.set(0, 1.5, 7.5);
+      scene.add(specularFill);
+    }
+
+    function createCandyMaterial() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const ctx = canvas.getContext('2d');
+
+      const grad = ctx.createLinearGradient(0, 0, 1024, 1024);
+      grad.addColorStop(0.0, '#ffffff');
+      grad.addColorStop(0.18, '#e2e8f0');
+      grad.addColorStop(0.35, '#94a3b8');
+      grad.addColorStop(0.50, '#f8fafc');
+      grad.addColorStop(0.68, '#cbd5e1');
+      grad.addColorStop(0.85, '#64748b');
+      grad.addColorStop(1.0, '#f1f5f9');
+
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 1024, 1024);
+
+      const radial = ctx.createRadialGradient(400, 300, 50, 512, 512, 650);
+      radial.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+      radial.addColorStop(0.4, 'rgba(255, 255, 255, 0.1)');
+      radial.addColorStop(1, 'rgba(0, 0, 0, 0.25)');
+      ctx.fillStyle = radial;
+      ctx.fillRect(0, 0, 1024, 1024);
+
+      const silverTex = new THREE.CanvasTexture(canvas);
+      silverTex.wrapS = THREE.ClampToEdgeWrapping;
+      silverTex.wrapT = THREE.ClampToEdgeWrapping;
+
+      return new THREE.MeshPhysicalMaterial({
+        color: 0xeeeeee,
+        map: silverTex,
+        roughness: 0.12,
+        metalness: 0.94,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06,
+        reflectivity: 0.98
+      });
+    }
+
+    function createLogoGeometry() {
+      const mat = createCandyMaterial();
+      const symbolGroup = new THREE.Group();
+
+      const leftBracket = createBracketMesh(mat, false);
+      leftBracket.position.set(-1.18, 1.45, 0);
+      symbolGroup.add(leftBracket);
+
+      const slash = createSlashMesh(mat);
+      slash.position.set(0.0, 1.45, 0);
+      symbolGroup.add(slash);
+
+      const rightBracket = createBracketMesh(mat, true);
+      rightBracket.position.set(1.18, 1.45, 0);
+      symbolGroup.add(rightBracket);
+
+      mainGroup.add(symbolGroup);
+
+      loadOrGenerateText("Bigbag", mat);
+    }
+
+    function createBracketMesh(material, isFlipped) {
+      const shape = new THREE.Shape();
+      shape.moveTo(0.50, 1.18);
+      shape.absarc(0.32, 1.18, 0.18, 0, Math.PI, false);
+      shape.lineTo(-0.52, 0.18);
+      shape.quadraticCurveTo(-0.72, 0.0, -0.52, -0.18);
+      shape.lineTo(0.14, -1.18);
+      shape.absarc(0.32, -1.18, 0.18, Math.PI, 0, false);
+      shape.lineTo(-0.20, -0.12);
+      shape.quadraticCurveTo(-0.35, 0.0, -0.20, 0.12);
+      shape.lineTo(0.50, 1.18);
+      shape.closePath();
+
+      const extrudeSettings = {
+        steps: 2,
+        depth: 0.38,
+        bevelEnabled: true,
+        bevelThickness: 0.18,
+        bevelSize: 0.14,
+        bevelOffset: 0,
+        bevelSegments: 8
+      };
+
+      const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+      geometry.center();
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+
+      if (isFlipped) {
+        mesh.rotation.y = Math.PI;
+      }
+
+      return mesh;
+    }
+
+    function createSlashMesh(material) {
+      const length = 3.65;
+      const radius = 0.35;
+      const group = new THREE.Group();
+
+      const cylinderGeo = new THREE.CylinderGeometry(radius, radius, length - radius * 2, 32);
+      const topCapGeo = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5);
+      const bottomCapGeo = new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5);
+
+      const cylinder = new THREE.Mesh(cylinderGeo, material);
+      const topCap = new THREE.Mesh(topCapGeo, material);
+      topCap.position.y = (length - radius * 2) / 2;
+
+      const bottomCap = new THREE.Mesh(bottomCapGeo, material);
+      bottomCap.position.y = -(length - radius * 2) / 2;
+
+      group.add(cylinder);
+      group.add(topCap);
+      group.add(bottomCap);
+
+      group.rotation.z = -0.32;
+      group.scale.set(1.0, 1.0, 0.95);
+
+      return group;
+    }
+
+    function loadOrGenerateText(textString, material) {
+      const fontLoader = new THREE.FontLoader();
+      const localFontUrl = '/fonts/helvetiker_bold.typeface.json';
+      const fontUrl = 'https://unpkg.com/three@0.128.0/examples/fonts/helvetiker_bold.typeface.json';
+
+      fontLoader.load(
+        localFontUrl,
+        function (font) {
+          build3DText(font, textString, material);
+        },
+        undefined,
+        function () {
+          fontLoader.load(
+            fontUrl,
+            function (font) {
+              build3DText(font, textString, material);
+            },
+            undefined,
+            function () {
+              buildProceduralTextFallback(material);
+            }
+          );
+        }
+      );
+    }
+
+    function build3DText(font, text, material) {
+      const textGeo = new THREE.TextGeometry(text, {
+        font: font,
+        size: 1.22,
+        height: 0.36,
+        curveSegments: 12,
+        bevelEnabled: true,
+        bevelThickness: 0.12,
+        bevelSize: 0.08,
+        bevelOffset: 0,
+        bevelSegments: 6
+      });
+
+      textGeo.computeBoundingBox();
+      textGeo.center();
+
+      const textMesh = new THREE.Mesh(textGeo, material);
+      textMesh.position.set(0, -1.82, 0);
+      textMesh.castShadow = true;
+      textMesh.receiveShadow = true;
+
+      mainGroup.add(textMesh);
+    }
+
+    function buildProceduralTextFallback(material) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 320;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 210px "Inter", "Arial Black", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Bigbag', 512, 160);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      const textPlaneGeo = new THREE.PlaneGeometry(5.2, 1.6);
+      const textMat = new THREE.MeshStandardMaterial({
+        map: texture,
+        transparent: true,
+        roughness: 0.15,
+        metalness: 0.9
+      });
+
+      const fallbackMesh = new THREE.Mesh(textPlaneGeo, textMat);
+      fallbackMesh.position.set(0, -1.82, 0.1);
+      mainGroup.add(fallbackMesh);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (isRotating && mainGroup) {
+        mainGroup.rotation.y += spinDirection * rotationSpeed;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    }
+
+    window.addEventListener('load', () => {
+      initScene();
+      animate();
+    });
+  </script>
+</body>
+</html>
