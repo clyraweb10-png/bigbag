@@ -603,15 +603,26 @@ export default function DashboardPage() {
         </header>
       )}
 
-      <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-10 sm:px-6"}>
+      <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-8 sm:py-12 sm:px-6"}>
         {/* Hero prompt */}
-        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-10" : "flex min-h-[58vh] flex-col items-center justify-center"}>
+        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
             <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
-              {!chatOpen && !hasProjects && (
-                <div className="mb-8 text-left sm:text-center">
-                  <div className="mb-5 flex sm:justify-center"><BigBagLogo size="lg" /></div>
-                  <h1 className="text-balance text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl">Build something remarkable.</h1>
-                  <p className="mt-4 text-base leading-7 text-foreground/65">Describe the app you want to build, or ask any questions to get started.</p>
+              {!chatOpen && landingMessages.length === 0 && (
+                <div className="mb-8 text-center">
+                  <div className="mb-4 flex justify-center">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-secondary/70 dark:bg-white/5 px-3.5 py-1 text-xs font-medium text-foreground/80 shadow-xs backdrop-blur-sm">
+                      <div className="flex h-5 w-5 items-center justify-center rounded-md bg-primary/15 text-primary font-mono text-[11px] font-bold">
+                        &lt;/&gt;
+                      </div>
+                      <span>AI App Builder</span>
+                    </div>
+                  </div>
+                  <h1 className="text-balance text-3xl sm:text-4xl lg:text-5xl font-semibold leading-[1.08] tracking-[-0.035em] text-foreground">
+                    Think it, build it <span className="font-mono font-bold text-primary">&lt;/&gt;</span>
+                  </h1>
+                  <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground sm:text-base">
+                    Describe the app you want to build, or ask any questions to get started.
+                  </p>
                 </div>
               )}
 
