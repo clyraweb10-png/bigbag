@@ -245,6 +245,12 @@ async function servePersistentDeployment(
         file = await durableProjectStore.readDeploymentFile(projectId, "index.html");
     }
     if (!file) {
+        // For document requests (browser navigation), show a friendly boot page
+        // with auto-refresh instead of raw JSON. The user sees this as "starting"
+        // and the iframe will auto-retry every 2 seconds.
+        const wantsDocument = request.method === "GET" &&
+            (request.headers.get("accept") || "").includes("text/html");
+        if (wantsDocument) return previewBootPage();
         return NextResponse.json(
             { ok: false, error: "This project has no persistent deployment yet", code: "NO_PREVIEW" },
             { status: 404, headers: { "cache-control": "no-store" } }

@@ -4,7 +4,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   SendHorizontal, Square, Loader2, CodeXml, AlertCircle,
-  KeyRound, FileDiff, ChevronDown, ChevronRight, ChevronUp, Paperclip, X, Check,
+  KeyRound, FileDiff, ChevronDown, ChevronUp, Paperclip, X, Check,
   Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
 } from "lucide-react";
 import { vcaasApi } from "@/lib/vcaas";
@@ -24,6 +24,8 @@ import { useRunClock } from "@/components/workspace/use-run-clock";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { toast } from "sonner";
 import type { ConversationMessage, VcaasSecret, AgentInputFile, AgentRunOptions } from "@/lib/vcaas-types";
+import { AIActivity, activityStepsFromBuildMsgs } from "@/components/workspace/AIActivity";
+import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 interface ChatPanelProps {
   messages: ConversationMessage[];
@@ -79,6 +81,15 @@ interface ChatPanelProps {
   visualEditActive?: boolean;
   visualEditBusy?: boolean;
   onToggleVisualEdit?: () => void;
+
+  /**
+   * ⭐ THE PROJECT STAGE — drives which suggestion pills appear and lets the chat
+   * panel signal when the user clicks "Proceed". Optional so existing callers
+   * (mobile panel, etc.) don't need to pass it.
+   */
+  stage?: ProjectStage;
+  /** Called when the user clicks a suggestion pill with `action: "send"`. */
+  onSuggestSend?: (text: string) => void;
 }
 
 interface MessageGroup {
@@ -463,36 +474,37 @@ function SecretKeysForm({ secretKeysNeeded, projectId, onTellAi, projectSecrets 
   );
 }
 
-// --- Build Group ---
+// --- Build Group (powered by AIActivity widget) ---
 function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: MessageGroup; projectId: string; onTellAi: (count: number) => void; projectSecrets?: VcaasSecret[] }) {
-  const [expanded, setExpanded] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
-  const hasBuildMsgs = (group.buildMsgs?.length || 0) > 0;
   const isComplete = !!group.finishMsg;
 
-  return (
-    <div className="space-y-1">
-      {hasBuildMsgs && (
-        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 py-0.5 transition-colors">
-          {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          {isComplete ? `${group.buildMsgs!.length} ${"build steps"}` : `${"Building..."} (${group.buildMsgs!.length})`}
-          {!isComplete && <Loader2 className="w-3 h-3 animate-spin text-gray-400" />}
-        </button>
-      )}
-      {expanded && group.buildMsgs?.map((msg, idx) => (
-        <div key={idx} className="text-xs text-gray-400 dark:text-gray-500 pl-4 py-0.5 border-l-2 border-gray-100 dark:border-gray-700">{msg.message}</div>
-      ))}
+  // Derive ActivityStep[] from the existing building messages — no engine changes needed.
+  const activitySteps = activityStepsFromBuildMsgs(
+    group.buildMsgs ?? [],
+    isComplete,
+    group.startMsg?.createdAt
+  );
 
-      {/* Live current build step — always visible while the run is in progress,
-          shows ONLY the latest step so the user sees progress without expanding. */}
-      {!isComplete && hasBuildMsgs && !expanded && (
-        <div className="flex items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400 pl-4 py-0.5">
-          <Loader2 className="w-3 h-3 animate-spin text-gray-400 mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{group.buildMsgs![group.buildMsgs!.length - 1].message}</span>
+  return (
+    <div className="space-y-1.5">
+      {/* ── AIActivity widget (replaces old collapse toggle + live step text) ── */}
+      {((group.buildMsgs?.length ?? 0) > 0 || !isComplete) && (
+        <AIActivity
+          steps={activitySteps}
+          isBuilding={!isComplete}
+        />
+      )}
+
+      {/* Starting spinner — shown only before the first building message arrives */}
+      {!isComplete && (group.buildMsgs?.length ?? 0) === 0 && group.startMsg && (
+        <div className="flex items-center gap-2 text-[15px] text-gray-500 py-1">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>{group.startMsg.message}</span>
         </div>
       )}
 
-      {/* Finish message - NO background at all */}
+      {/* Finish message */}
       {group.finishMsg && (
         <div className="py-1">
           {group.finishMsg.messageType === "error" ? (
@@ -503,7 +515,6 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
           ) : (
             <div>
               <FormattedText text={group.finishMsg.message} />
-              {/* Checkmark + Completed at the end */}
               <div className="flex items-center gap-1.5 mt-3 text-sm text-emerald-600 dark:text-emerald-400">
                 <Check className="w-4 h-4" />
                 <span className="font-medium">{"Completed"}</span>
@@ -542,12 +553,10 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
           )}
         </div>
       )}
-      {!isComplete && !hasBuildMsgs && group.startMsg && (
-        <div className="flex items-center gap-2 text-[15px] text-gray-500 py-1"><Loader2 className="w-4 h-4 animate-spin" /><span>{group.startMsg.message}</span></div>
-      )}
     </div>
   );
 }
+
 
 export function ChatPanel({
   messages, isBuilding, prompt, setPrompt, onSend, onStop, sending, projectId, projectSecrets,
@@ -556,6 +565,7 @@ export function ChatPanel({
   onOpenFigma, figmaConnected = false, onDisconnectFigma,
   onOpenGithub, onGithubStatusChange, onGithubPull, githubPulling = false,
   visualEditAvailable = false, visualEditActive = false, visualEditBusy = false, onToggleVisualEdit,
+  stage = "idle", onSuggestSend,
 }: ChatPanelProps) {
   const t = useT();
   /**
@@ -719,20 +729,58 @@ export function ChatPanel({
         })}
 
         {isBuilding && (
-          <div className="py-2">
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-              </div>
-              <span className="text-sm text-gray-400">{"Building..."}</span>
-            </div>
-            {/* The platform's run progress bar, copied verbatim — see `RunProgress`. */}
+          <div className="py-1.5">
+            {/* The platform's run progress bar — the AIActivity widget in BuildGroup
+                already shows per-step detail, so we keep just the time bar here. */}
             <RunProgress elapsedMs={elapsedMs} expectedMinutes={expectedMinutes} />
           </div>
         )}
       </div>
+
+      {/* ── Suggestion Pills ─────────────────────────────────────────────── */}
+      {!isBuilding && stage !== "building" && (() => {
+        const PILLS: Record<string, { label: string; action: "send" | "fill" }[]> = {
+          idle: [
+            { label: "✨ Creative Agency Website", action: "fill" },
+            { label: "🛒 E-Commerce Store", action: "fill" },
+            { label: "📋 Kanban Task Manager", action: "fill" },
+          ],
+          planning: [],
+          awaiting_confirmation: [
+            { label: "🚀 Proceed to build", action: "send" },
+            { label: "🌙 Add dark mode", action: "fill" },
+            { label: "📊 Add a dashboard", action: "fill" },
+          ],
+          building: [],
+          active: [
+            { label: "🌐 Deploy the real site", action: "fill" },
+            { label: "📊 Add a dashboard", action: "fill" },
+            { label: "⚡ Wire up real database", action: "fill" },
+          ],
+        };
+        const pills = PILLS[stage] ?? [];
+        if (pills.length === 0) return null;
+        return (
+          <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+            {pills.map((pill) => (
+              <button
+                key={pill.label}
+                type="button"
+                onClick={() => {
+                  if (pill.action === "send") {
+                    onSuggestSend?.(pill.label.replace(/^[\p{Emoji}\s]+/u, "").trim());
+                  } else {
+                    setPrompt(pill.label.replace(/^[\p{Emoji}\s]+/u, "").trim());
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-secondary/60 hover:bg-secondary border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                {pill.label}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {/*
         ⭐ THE CHOICE IS VISIBLE AT THE MOMENT OF SENDING. A Sonnet or fast-mode prompt is
@@ -747,6 +795,7 @@ export function ChatPanel({
         items={attachedFiles.map((f) => ({ name: f.name, url: f.url }))}
         onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
       />
+
 
       <div className="shrink-0 px-3 pb-3 pt-2">
         <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs" style={{ background: "var(--textarea-bg, #FFFFFF)" }}>

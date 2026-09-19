@@ -47,6 +47,8 @@ import { useVisualEditor } from "@/components/workspace/visual-editor/use-visual
 import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEditorPanel";
 import { VisualChangesBar } from "@/components/workspace/visual-editor/VisualChangesBar";
 import { t as translate } from "@/i18n";
+import { classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
+import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 // Pick the correct development preview URL following the Totalum API docs:
 // use `developmentUrlFieldToUse` to decide between the live server URL and the
@@ -409,6 +411,15 @@ export default function WorkspacePage() {
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * ⭐ THE PROJECT STAGE — drives the planning tier routing.
+   * Inferred from conversation on mount; updated as the user interacts.
+   * Kept in state (not persisted) so a reload re-infers from the conversation.
+   */
+  const [stage, setStage] = useState<ProjectStage>("idle");
+  /** True while the Groq/GLM planner is running — shows a brief "thinking" state. */
+  const [plannerRunning, setPlannerRunning] = useState(false);
+
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
 
@@ -481,6 +492,67 @@ export default function WorkspacePage() {
     const res = await vcaasApi.github.status(projectId);
     if (res.ok && res.data && mountedRef.current) setGithubConnected(!!res.data.connected);
   }
+
+  /**
+   * ⭐ CALL THE GROQ/GLM PLANNER for chat, plan generation, and plan refinement.
+   * This is the "fast interaction tier" — ~200ms for chat, ~600ms for a plan.
+   * On success, adds the planner response as a ConversationMessage to the list.
+   */
+  async function callPlannerTier(
+    intent: "chat" | "plan" | "update_plan",
+    userMessage: string
+  ): Promise<void> {
+    if (!mountedRef.current) return;
+    setPlannerRunning(true);
+
+    // Build a short history from the last 10 messages for context.
+    const history = messages
+      .slice(-10)
+      .filter((m) => m.author === "user" || m.author === "agent")
+      .map((m) => ({
+        role: (m.author === "user" ? "user" : "assistant") as "user" | "assistant",
+        content: m.message || "",
+      }));
+
+    try {
+      const res = await fetch("/api/planner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent, message: userMessage, history }),
+      });
+      if (!mountedRef.current) return;
+      const data = await res.json() as { ok: boolean; data?: { text: string }; error?: string };
+
+      if (data.ok && data.data?.text) {
+        const plannerMsg: ConversationMessage = {
+          author: "agent",
+          message: data.data.text,
+          messageType: "regular",
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, plannerMsg]);
+
+        // Advance stage after a plan is generated.
+        if (intent === "plan" || intent === "update_plan") {
+          setStage("awaiting_confirmation");
+        }
+      } else {
+        toast.error(data.error || "Planner unavailable — try again.");
+        // Roll back the optimistic user message.
+        setMessages((prev) => prev.slice(0, -1));
+        setPrompt(userMessage);
+      }
+    } catch (err) {
+      if (!mountedRef.current) return;
+      toast.error("Planner request failed — check your connection.");
+      setMessages((prev) => prev.slice(0, -1));
+      setPrompt(userMessage);
+      console.error("[planner] fetch error:", err);
+    } finally {
+      if (mountedRef.current) setPlannerRunning(false);
+    }
+  }
+
   function startAgentPolling() { stopAgentPolling(); pollAgentOnce(); }
   function stopAgentPolling() { if (pollingRef.current) { clearTimeout(pollingRef.current); pollingRef.current = null; } }
   async function pollAgentOnce() {
@@ -603,6 +675,26 @@ export default function WorkspacePage() {
   }, [projectId]);
 
   /**
+   * ⭐ INFER STAGE FROM CONVERSATION ON LOAD AND WHEN MESSAGES CHANGE.
+   * Keeps the stage in sync without persisting it — re-reading the conversation
+   * is always authoritative, and avoids store schema migrations.
+   * Only runs when the conversation has settled (not while a run is in progress).
+   */
+  useEffect(() => {
+    if (loading) return;
+    const isCurrentlyBuilding = project?.agentProcessStatus === "init";
+    const inferred = inferStageFromConversation(messages, !!isCurrentlyBuilding);
+    setStage((prev) => {
+      // Don't downgrade a stage that the user explicitly advanced this session.
+      // e.g. if user just clicked "Proceed" and stage is "building", don't reset to "idle".
+      if (prev === "building" && inferred !== "active") return prev;
+      if (prev === "planning") return prev;
+      return inferred;
+    });
+  }, [messages, loading, project?.agentProcessStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+
+  /**
    * ⭐ DISCONNECT FIGMA FROM THE COMPOSER, without opening the modal. It RETHROWS on
    * failure: `FigmaPromptButton` awaits this and keeps its popover open — still showing
    * "connected" — when it rejects, instead of closing on a disconnect that did not happen.
@@ -622,6 +714,48 @@ export default function WorkspacePage() {
   // dashboard whose first prompt is carried over via sessionStorage).
   const sendPromptText = useCallback(async (text: string, files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
     if ((!text.trim() && (!files || files.length === 0)) || sendingRef.current) return;
+
+    /**
+     * ⭐ PLANNING TIER ROUTING (local orchestrator only).
+     *
+     * In local mode, classify the user's intent and route to:
+     *  - "chat" | "plan" | "update_plan" → Groq/GLM fast tier (no code engine)
+     *  - "confirm_build" | "direct_edit" → code engine (existing path)
+     *
+     * In cloud mode (Totalum API), skip intent routing and always use the code engine.
+     * The planner API keys may also be absent; fall through to the code engine in that case.
+     */
+    const isLocalMode = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local" ||
+      (typeof window !== "undefined" && window.location.hostname === "localhost");
+
+    if (isLocalMode) {
+      const lastAgentMsg = messages
+        .filter((m) => m.author === "agent")
+        .slice(-1)[0]?.message;
+      const intent = classifyIntent(text, stage, lastAgentMsg);
+
+      if (intent === "chat" || intent === "plan" || intent === "update_plan") {
+        // Optimistically add the user message.
+        sendingRef.current = true;
+        const hasFiles = !!files && files.length > 0;
+        if (hasFiles) sentFilesRef.current.push({ message: text, files: files! });
+        setMessages((prev) => [...prev, {
+          author: "user", message: text, messageType: "regular",
+          createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined,
+        }]);
+        setPrompt("");
+        // For "plan" intents, advance stage to "planning" while the request is in flight.
+        if (intent === "plan") setStage("planning");
+        await callPlannerTier(intent, text);
+        sendingRef.current = false;
+        return;
+      }
+
+      // "confirm_build" or "direct_edit" → advance stage then fall through to code engine.
+      if (intent === "confirm_build") setStage("building");
+      if (intent === "direct_edit") setStage("active");
+    }
+
     sendingRef.current = true;
     setSending(true);
     const hasFiles = !!files && files.length > 0;
@@ -673,12 +807,21 @@ export default function WorkspacePage() {
     }
     setSending(false);
     sendingRef.current = false;
-  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, stage, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendPrompt = async (files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
     if (project?.agentProcessStatus === "init") return;
     await sendPromptText(prompt, files, options);
   };
+
+  /** Called by the "Proceed to build" suggestion pill — bypasses planning tier. */
+  const handleSuggestSend = useCallback((text: string) => {
+    if (sendingRef.current || project?.agentProcessStatus === "init") return;
+    setStage("building");
+    void sendPromptText(text);
+  }, [sendPromptText, project?.agentProcessStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+
 
   /**
    * ═══⭐⭐ THE AUTOMATIC START ITSELF ═══════════════════════════════════════
@@ -1432,13 +1575,15 @@ export default function WorkspacePage() {
         <div className="flex-1 flex overflow-hidden">
           <div className={`flex flex-col shrink-0 transition-all ${chatCollapsed ? "w-0 overflow-hidden" : ""}`} style={chatCollapsed ? {} : { width: chatWidth, background: cardBg }}>
             <ChatPanel
-              messages={messages} isBuilding={isBuilding} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets}
+              messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets}
               runStartedAt={runStartedAt} expectedMinutes={expectedMinutes}
               {...composerProps}
               visualEditAvailable
               visualEditActive={visualEditorOpen}
               visualEditBusy={visualLocked}
               onToggleVisualEdit={handleToggleVisualEdit}
+              stage={stage}
+              onSuggestSend={handleSuggestSend}
             />
           </div>
           {!chatCollapsed && (
@@ -1562,7 +1707,7 @@ export default function WorkspacePage() {
           {mobileTab === "chat" ? (
             <div className="flex flex-col h-full">
               {/* ⚠️ No pencil here: the visual editor is a desktop surface (see the frame-ref note). */}
-              <ChatPanel messages={messages} isBuilding={isBuilding} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} />
+              <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} />
             </div>
           ) : (
             <div className="h-full overflow-hidden">
