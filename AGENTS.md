@@ -5,13 +5,11 @@ Next.js app, the user previews it live, edits it, and publishes it. **This repo 
 UI.** Everything heavy — the coding agent, sandboxes, hosting, database, deploys, custom
 domains, GitHub sync — is done by the **Totalum API** behind one API key.
 
-> **⚠️ NO AUTH BY DESIGN.** This project ships with no authentication — deliberately, so
-> whoever adopts it can add the auth that fits their system, or whatever they prefer.
-> Every route is public and the app acts on one API key, so anyone who can reach the URL
-> can use it and spend that key's credits. **If this is going online, an auth layer must
-> be in place first** — make the guards in `src/app/api/vcaas/_shared.ts` real and protect
-> the pages in `src/proxy.ts` (see "Boilerplate mode" below). Local or private-network use
-> without a login is fine.
+> **Authentication is required.** The builder uses Firebase Google sign-in, exchanges the
+> Firebase ID token for a signed HttpOnly session, and derives the local tenant id from the
+> verified Firebase uid. Provider-backed API routes are refused without that session. Keep
+> `TENANT_COOKIE_SECRET` private and configure the public Firebase identifiers documented in
+> `.env.example`; never place a service-account credential in a `NEXT_PUBLIC_*` variable.
 
 **Totalum API reference (read this before touching anything under `src/lib/vcaas*` or
 `src/app/api/`):** https://www.totalum.app/totalum-api.md — the whole core API in one
@@ -48,7 +46,7 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 - `src/lib/vcaas.ts` — the client catalog. Every UI call goes through here; never hardcode an `/api/vcaas/...` path in a component.
 - `src/lib/vcaas-server.ts` — the only module that reads `TOTALUM_VCAAS_API_KEY`. `server-only`. Never import it from a client component.
 - `src/lib/vcaas-types.ts` — response types. `src/lib/vcaas-errors.ts` — the error-code → copy mapping.
-- `src/app/api/vcaas/_shared.ts` — auth/ownership guards. **Deliberate no-ops**: one operator key, so "who is asking?" is always "you". This is the file to change before real users log in.
+- `src/app/api/vcaas/_shared.ts` — upstream cloud ownership guards. Signed-session authentication is enforced by the provider-backed route layer; local mode additionally enforces tenant ownership, while cloud mode is restricted to `VCAAS_OPERATOR_UIDS`. Add a persistent user-to-project map here before cloud mode is offered to multiple customers.
 - `src/app/api/preview/[projectId]/` — same-origin proxy of a project's dev server; required by the visual editor.
 - `src/app/api/visual-edit/[projectId]/apply` — turns visual-editor changes into real source edits (`src/lib/visual-edit*.ts`).
 - `src/proxy.ts` — CORS/CSP boundary (Next "proxy", formerly middleware).
@@ -86,22 +84,22 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 5. **New endpoint?** Add the typed function in `vcaas.ts`, the type in `vcaas-types.ts`, and let the catch-all proxy carry it. Only add a dedicated route under `src/app/api/vcaas/` when the request is not plain JSON (uploads, downloads).
 6. **New user-facing string?** Add the key to totalum-platform's `en.ts` first, then copy the file here. Do not fork the dictionary.
    **⚠️ BUT NEVER RE-COPY `en.ts` WHOLESALE TO PICK UP A FEW KEYS.** This dictionary carries deliberate local values — `workspace.serverWake.startingTitle` is "Your project **server** is still starting" here, and the credit copy names this app's own minimum — and a blind overwrite silently reverts every one of them while also importing unrelated platform copy changes. Copy the individual keys you need, or diff `git diff HEAD -- src/i18n/en.ts` afterwards and put the local values back.
-8. **The proxy holds an account-wide key and the app has no login.** Two rules follow, and both are load-bearing security, not style:
+8. **The proxy holds account-wide provider keys even though users sign in.** Two rules follow, and both are load-bearing security, not style:
    - **Every proxied path must stay inside `/api/v1/vcaas/`.** `vcaas-server.ts`'s `resolveVcaasUrl` resolves the final URL and refuses anything that escapes. Route params arrive decoded, so a traversal segment can otherwise survive into the joined path and `fetch` normalise it onto another part of the account API the key authorises. Never build an upstream URL any other way.
    - **Any server route that fetches a client-supplied URL is an SSRF hole until it calls `publicUrlRejectionReason` (async, resolves DNS) from `lib/safe-url.ts`, with `redirect: "error"` and a timeout.** The sync `urlRejectionReason` is for IP literals only. Both cover IPv4-mapped IPv6 (`::ffff:169.254.169.254`) and every private range; a plain host allowlist does not, because a redirect or a rebinding DNS name walks straight past it.
 
 
 ## Dependencies & security
 
-- **This UI ships no auth / payment / AI SDK.** `better-auth`, `stripe`, `bcrypt`, `jsonwebtoken`, `date-fns`, `recharts`, the AI SDK and their `@types` were listed but never imported and were removed. The builder is a thin client in front of one key; those belong in **boilerplate mode**, added by the operator. Before adding a dependency, confirm it is actually imported.
-- **Runtime deps** are UI/utility only: Next 16, React 19, Tailwind 4, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
+- **Auth is Firebase Google sign-in; payment is not included.** The browser uses only Firebase's public client configuration. The server validates ID tokens before issuing its own signed session.
+- **Runtime deps** are UI/utility plus Firebase Auth: Next 16, React 19, Tailwind 4, Firebase, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
 - **Keep `npm audit` at zero.** A `dompurify` override (`>=3.4.15`) pins the copy Monaco pulls in. Run `npm audit` after any dependency change; do not commit a new advisory.
 
 7. **Mobile and desktop layouts are both mounted** in the workspace page (hidden by CSS). Only the desktop `PreviewPanel` gets `frameRef`; only the desktop `ChatPanel` gets the visual-editor pencil. Anything the composer *holds* (the prompt, the attachments) must therefore be page state passed down, never `useState` inside `ChatPanel` — two mounted copies would drift, and sending on one would leave the other's chips behind.
 
 ## Common next steps
 
-- **Put real users behind it:** see "Boilerplate mode" below — the guards live in `src/app/api/vcaas/_shared.ts`.
+- **Add billing and quotas:** see "Boilerplate mode" below; authentication and local tenant isolation are already present.
 - **Rebrand / white-label:** `src/app/layout.tsx` (metadata), `src/app/page.tsx` header, `src/app/icon.svg`, `globals.css` tokens. Remove `InsufficientCreditsModal`'s billing link before selling to customers — it points at the operator's account.
 - **Add a workspace capability:** check the endpoint in the API reference above → `vcaas.ts` + types → a `*Modal.tsx` (use `components/primitives/Modal`) → mount it in the workspace page under `openModal`.
 - **Add a language:** replace the frozen `useLocale()` in `i18n/index.ts` with the platform's `LocaleProvider` and add `es.ts`.
@@ -110,7 +108,7 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 
 This repo is the reference implementation. Two ways to use it:
 
-**A. Run it as-is beside your product.** Deploy it on a subdomain (`builder.yourapp.com`), put your login in front of it (see below), and link to `/project/<id>`. Rebrand `layout.tsx`, the dashboard header and `icon.svg`. Nothing else needs to change.
+**A. Run it as-is beside your product.** Deploy it on a subdomain (`builder.yourapp.com`), configure Firebase Google sign-in, and link to `/project/<id>`. Rebrand `layout.tsx`, the dashboard header and `icon.svg`.
 
 **B. Port the flow into your own stack.** The UI is optional; the contract is not. Mirror three things in your backend language:
 1. **A key-holding proxy** = `src/lib/vcaas-server.ts` + `src/app/api/vcaas/[...path]/route.ts`: forward `method`, path, query and body to `https://api-accounts.totalum.app/api/v1/vcaas/<path>`, add `api-key: <your key>`, return the `{ errors, data }` envelope unchanged. Your browser code must never hold the key.
@@ -119,9 +117,9 @@ This repo is the reference implementation. Two ways to use it:
 
 Credits are the key owner's. If you resell, meter your users yourself (next section) and keep `GET /api/v1/vcaas/account` in view.
 
-## Boilerplate mode: login with Supabase, payments with Stripe
+## Boilerplate mode: optional Supabase migration and Stripe payments
 
-Today the app is single-tenant: one key, no login, and the route guards in `src/app/api/vcaas/_shared.ts` always answer "yes". To ship it as a product:
+The local orchestrator already uses verified Firebase identities and tenant-scoped projects. Cloud Totalum mode fails closed to Firebase UIDs enrolled through `VCAAS_OPERATOR_UIDS`, but every enrolled operator still shares one operator key and its projects. Add upstream per-user ownership mapping and billing before reselling it:
 
 **Login and database (Supabase recommended, but you can choose another provider)**
 1. `npm i @supabase/supabase-js @supabase/ssr`. Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server only).

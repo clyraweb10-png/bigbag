@@ -14,6 +14,7 @@ const testDatabase = createClient({ url: process.env.TURSO_DATABASE_URL });
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
+const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
 const {
   createPreviewWriteCapability,
   isPreviewInitiatedRequest,
@@ -21,12 +22,15 @@ const {
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const { multiModelRouter } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
 const { GEMINI_MAX_RETRIES } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
+const { stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
+const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
+const { createAuthSession, isCloudOperator, verifyAuthSession } = require("../src/lib/auth-session") as typeof import("../src/lib/auth-session");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 type LocalProjectRecord = import("../src/lib/local-orchestrator/types").LocalProjectRecord;
 
@@ -152,6 +156,57 @@ test("website URL detection is explicit and strips chat punctuation", () => {
   assert.equal(extractWebsiteUrl("use javascript:alert(1)"), null);
 });
 
+test("intent routing keeps conversation separate from planning and code edits", () => {
+  assert.equal(classifyIntent("hi", "idle"), "chat");
+  assert.equal(classifyIntent("Hi, build me a responsive CRM app", "idle"), "plan");
+  assert.equal(classifyIntent("portfolio website", "idle"), "plan");
+  assert.equal(classifyIntent("recreate https://example.com", "idle"), "plan");
+  assert.equal(classifyIntent("thanks", "awaiting_confirmation"), "chat");
+  assert.equal(classifyIntent("add a pricing page", "awaiting_confirmation"), "update_plan");
+  assert.equal(classifyIntent("proceed", "awaiting_confirmation"), "confirm_build");
+  assert.equal(classifyIntent("hello", "active"), "chat");
+  assert.equal(classifyIntent("I like the direction", "active"), "chat");
+  assert.equal(classifyIntent("change the navbar color", "active"), "direct_edit");
+  assert.equal(classifyIntent("the header should be blue", "active"), "direct_edit");
+  assert.equal(classifyIntent("I don't like the navbar", "active"), "direct_edit");
+  assert.equal(classifyIntent("how can I change the navbar?", "active"), "chat");
+  assert.match(approvedBuildInstruction([
+    { author: "user", message: "Build a calm travel planner" },
+    { author: "agent", message: "## Implementation Plan\n\n**Project:** Wayfinder" },
+  ], "proceed"), /Build a calm travel planner[\s\S]*Wayfinder/);
+  assert.match(approvedBuildInstruction([
+    { author: "user", message: "Build a calm travel planner" },
+    { author: "agent", message: "## Implementation Plan\n\n**Project:** Wayfinder v1" },
+    { author: "user", message: "Make it work offline too" },
+    { author: "agent", message: "## Implementation Plan\n\n**Project:** Wayfinder v2" },
+  ], "proceed"), /1\. Build a calm travel planner[\s\S]*2\. Make it work offline too[\s\S]*Wayfinder v2/);
+});
+
+test("generated Tailwind CSS cannot break previews with unsupported apply utilities", () => {
+  const css = '@import "tailwindcss";\nbody {\n  @apply bg-background text-foreground;\n  margin: 0;\n}\n';
+  assert.equal(stripGeneratedApplyRules(css), '@import "tailwindcss";\nbody {\n\n  margin: 0;\n}\n');
+  assert.equal(stripGeneratedApplyRules('body { @apply bg-background; color: black; }'), 'body {  color: black; }');
+  assert.equal(stripGeneratedApplyRules('.button { @apply rounded border px-4; }'), '.button { @apply rounded border px-4; }');
+});
+
+test("generation validation rejects invented durable database methods", () => {
+  const issues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `import db from "@/lib/db"; export default function Page(){ db.putMany?.("habits", []); return <main />; }`,
+  }], ["src/lib/db.ts"]);
+  assert.ok(issues.some((issue) => issue.includes("invents a database method")));
+  const aliasedIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `import client from "@/lib/db"; const store = client; export default function Page(){ store.query?.("habits"); return <main />; }`,
+  }], ["src/lib/db.ts"]);
+  assert.ok(aliasedIssues.some((issue) => issue.includes("invents a database method")));
+  const shadowedIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `import db from "@/lib/db"; function run(db: { query: () => void }) { db.query(); } export default function Page(){ return <main />; }`,
+  }], ["src/lib/db.ts"]);
+  assert.equal(shadowedIssues.some((issue) => issue.includes("invents a database method")), false);
+});
+
 test("preview-originated browser requests cannot reach builder APIs", () => {
   const request = (headers: Record<string, string>) => ({ headers: new Headers(headers) }) as never;
   assert.equal(
@@ -175,6 +230,30 @@ test("proxy query parameters cannot grant preview document privileges", async ()
   assert.equal(publicPreview.headers.get("content-security-policy"), null);
   assert.equal(editorPreview.headers.get("content-security-policy"), null);
   assert.equal(platform.headers.get("content-security-policy"), "frame-ancestors *");
+});
+
+test("signed auth sessions protect provider-backed APIs", async () => {
+  const session = createAuthSession("firebase-user", 1_000_000);
+  assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "firebase-user");
+  assert.equal(verifyAuthSession(`${session}x`, 1_000_000), null);
+  assert.equal(verifyAuthSession(session, 1_000_000 + 8 * 24 * 60 * 60_000), null);
+
+  const blocked = await proxy(new NextRequest("https://builder.example.test/api/planner"));
+  assert.equal(blocked.status, 401);
+  const allowed = await proxy(new NextRequest("https://builder.example.test/api/planner", {
+    headers: { cookie: `bigbag_auth=${createAuthSession("firebase-user")}` },
+  }));
+  assert.equal(allowed.status, 200);
+
+  const previousOperators = process.env.VCAAS_OPERATOR_UIDS;
+  process.env.VCAAS_OPERATOR_UIDS = "another-user, firebase-user";
+  try {
+    assert.equal(isCloudOperator({ sub: "firebase-user", exp: Number.MAX_SAFE_INTEGER }), true);
+    assert.equal(isCloudOperator({ sub: "not-enrolled", exp: Number.MAX_SAFE_INTEGER }), false);
+  } finally {
+    if (previousOperators === undefined) delete process.env.VCAAS_OPERATOR_UIDS;
+    else process.env.VCAAS_OPERATOR_UIDS = previousOperators;
+  }
 });
 
 test("Gemini is first and GLM-5.3-Flash is the fallback", () => {

@@ -132,6 +132,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `TURSO_DATABASE_URL` | ✅ Local orchestrator | Durable metadata, complete generated source, and compiled preview artifacts. |
 | `TURSO_AUTH_TOKEN` | ✅ Local orchestrator | Server-only token for the Turso database. |
 | `TENANT_COOKIE_SECRET` | ✅ Production | Dedicated random secret used only to sign anonymous tenant cookies. |
+| `VCAAS_OPERATOR_UIDS` | ✅ Cloud mode | Comma-separated Firebase UIDs allowed to use the single cloud operator credential. |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 ### E2B and persistent Render previews
@@ -154,16 +155,12 @@ cp .env.example .env.local
 
 This is a standard Next.js app with no platform lock-in. It runs wherever Next.js runs.
 
-> ### ⚠️ Important: this project ships with NO authentication
+> ### Authentication setup
 >
-> That is on purpose — we want you to add the auth that fits how your system works, or
-> however you prefer. Out of the box every route is public and the app acts on a single
-> API key, so **anyone who can reach the URL can use it and spend that key's credits.**
->
-> **Before you publish this anywhere public, put an auth layer in front of it.** The
-> hooks are already there: make the two guards in `src/app/api/vcaas/_shared.ts` real and
-> protect the pages in `src/proxy.ts`. See [Use it as a boilerplate](#use-it-as-a-boilerplate-login--payments) for the step-by-step. Running it locally or on a private
-> network with no login is fine.
+> The builder includes Firebase Google sign-in and signed HttpOnly sessions. Configure
+> the public `NEXT_PUBLIC_FIREBASE_*` values, enable Google in Firebase Authentication,
+> add your deployment hostname to Authorized domains, and set a strong private
+> `TENANT_COOKIE_SECRET`.
 
 ### Vercel, one click
 
@@ -193,16 +190,16 @@ This is not only a standalone tool. It is a drop-in AI app-builder layer for a S
 
 > **The pitch to your customers:** *"Build and ship a full-stack app right here, inside our platform."*
 
-> ⚠️ **Before you put real users behind it, read `src/app/api/vcaas/_shared.ts`.** This app runs on one API key, so "who is asking?" and "may they touch this project?" are answered with "yes" by default. That file is where you add your own auth and ownership checks. The API routes already delegate the decision to it.
+> ⚠️ **Before reselling cloud mode, read `src/app/api/vcaas/_shared.ts`.** Firebase protects the builder and local projects are tenant-scoped, but one cloud operator key still needs an upstream user-to-project ownership map and billing controls.
 
 ### Two ways to integrate
 
-- **Run it beside your product.** Deploy this app on a subdomain, put your login in front, rebrand it, and link or iframe to it. Hours, not weeks.
+- **Run it beside your product.** Deploy it on a subdomain, configure Firebase Google sign-in, rebrand it, and link or iframe to it. Hours, not weeks.
 - **Port the flow into your stack.** Keep the contract, not the UI: a server-side proxy that adds the `api-key` header, then `launch` → poll agent status → show the preview URL → follow-up prompts → deploy. One BigBag project per customer, ownership checked on every proxied call. The step-by-step version, with the exact files to mirror, is in [`AGENTS.md`](AGENTS.md#adding-an-ai-app-builder-to-an-existing-product-any-stack).
 
 ### Use it as a boilerplate: login + payments
 
-Want to ship this as your own product? Add an auth provider such as **Supabase** for login (a `profiles` and a `projects` table, make the two guards in `_shared.ts` real, protect the pages in `src/proxy.ts`) and **Stripe** for payments (checkout for credit packs or a plan, a webhook that tops up `profiles.credits`, a 402 on spend-shaped calls when the balance is empty, which the UI already turns into a "buy credits" dialog). The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe).
+Want to ship this as your own product? Firebase Google sign-in and local tenant isolation are included. Add **Stripe** for payments, or migrate identity/project ownership to Supabase if that better matches your stack. The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments).
 
 ---
 
@@ -211,7 +208,7 @@ Want to ship this as your own product? Add an auth provider such as **Supabase**
 Two different things live here, and it is worth keeping them apart:
 
 - **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the BigBag AI Engine. Nothing to install.
-- **This builder UI itself** is deliberately lean. It ships no auth, payment or AI SDK, because it needs none: it is a thin client in front of one API key. When you turn it into your own product you add exactly the providers you want — the step-by-step is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-login-with-supabase-payments-with-stripe):
+- **This builder UI itself** uses Firebase Google sign-in and a server-verified signed session. Payment remains optional; the step-by-step for billing or replacing the auth/data layer is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments):
 
   - **Auth**: Supabase Auth, Better Auth, Clerk, Auth0 or your own.
   - **Payments**: Stripe, or any provider — for credit packs or plans.

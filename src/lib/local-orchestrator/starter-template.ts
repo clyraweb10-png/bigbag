@@ -10,6 +10,7 @@ import ts from "typescript";
 export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   react: "^19.0.0",
   "react-dom": "^19.0.0",
+  "react-is": "^19.2.0",
   "lucide-react": "^0.536.0",
   clsx: "^2.1.1",
   "tailwind-merge": "^3.3.1",
@@ -631,6 +632,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
+  build: { minify: false },
   server: { allowedHosts: [".e2b.app"], hmr: false },
   resolve: {
     alias: { "@": path.resolve(configDir, "./src") },
@@ -686,6 +688,12 @@ export default defineConfig({
     updatedViteConfig = updatedViteConfig.replace(
       templateServerConfig,
       'server: { allowedHosts: [".e2b.app"], hmr: false },'
+    );
+  }
+  if (!/\bbuild\s*:/.test(updatedViteConfig)) {
+    updatedViteConfig = updatedViteConfig.replace(
+      /plugins:\s*\[react\(\)\],/,
+      'plugins: [react()],\n  build: { minify: false },'
     );
   }
   if (updatedViteConfig !== currentViteConfig) {

@@ -7,8 +7,8 @@ import { e2bSandboxManager } from "./e2b-sandbox-manager";
 import { multiModelRouter } from "./multi-model-router";
 import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
-import type { ConversationMessage } from "@/lib/vcaas-types";
-import { withDesignSystemPrompt } from "@/lib/design-system-prompt";
+import type { ConversationMessage } from "../vcaas-types";
+import { withDesignSystemPrompt } from "../design-system-prompt";
 import { analyzeWebsiteDesign, extractWebsiteUrl } from "./firecrawl-design";
 import {
   containsGenerationPlaceholder,
@@ -23,7 +23,7 @@ const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer.
 
 **OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
 
-1. Runtime — This is a Vite React client backed by platform server APIs. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, import the browser-safe client from @/lib/db; it calls the platform's server-side database without exposing credentials.
+1. Runtime — This is a Vite React client backed by platform server APIs. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, use ONLY this exact browser-safe database API: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. The only collection methods are \`list\`, \`get\`, \`create\`, \`update\`, and \`remove\`. Never invent \`db.list\`, \`db.putMany\`, \`db.query\`, or another API. When the user asks for durable/full-stack data, the platform database is authoritative; do not silently substitute localStorage or in-memory state for failed writes.
 
 2. Output Format — Each file with markdown heading + code block:
 ### File: src/app/page.tsx
@@ -46,7 +46,9 @@ The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css w
 
 8. Images — Use user-supplied asset URLs exactly when relevant and preserve their descriptions as meaningful alt text. If the user supplied no suitable image, use original CSS/SVG artwork or lucide-react icons. Never invent, scrape, or hotlink an external image URL.
 
-9. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+9. Build efficiency — Prefer lightweight CSS and responsive inline SVG for decorative data visualizations. Import a charting library only when the user explicitly requires that library or the requested interaction cannot reasonably be built with SVG; large chart bundles can exhaust small preview workers.
+
+10. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
@@ -384,6 +386,24 @@ function sanitizeOrphanedCssProperties(css: string): string {
   }
 
   return result.join("\n");
+}
+
+/**
+ * Tailwind 4 rejects `@apply` for semantic utilities that have not been declared
+ * through its theme system (the most common generated example is
+ * `@apply bg-background text-foreground`). Generated pages already carry their
+ * visual utilities in JSX, so dropping these optional convenience declarations
+ * is safer than turning an otherwise valid app into a blank preview.
+ */
+export function stripGeneratedApplyRules(css: string): string {
+  const unsupportedSemanticUtility = /\b(?:bg-background|text-foreground|border-border|ring-ring|bg-card|text-card-foreground|bg-popover|text-popover-foreground)\b/;
+  return css
+    .replace(/^[\t ]*@apply\s+[^;{}]+;[\t ]*$/gm, (declaration) =>
+      unsupportedSemanticUtility.test(declaration) ? "" : declaration
+    )
+    .replace(/@apply\s+[^;{}]+;/g, (declaration) =>
+      unsupportedSemanticUtility.test(declaration) ? "" : declaration
+    );
 }
 
 /**
@@ -746,7 +766,7 @@ export const localAgentEngine = {
           let fileContent = file.content;
 
           if (file.path.endsWith(".css")) {
-            fileContent = sanitizeOrphanedCssProperties(fileContent);
+            fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
           }
 
           if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
@@ -850,7 +870,7 @@ export const localAgentEngine = {
 
             for (const file of repairFiles) {
               let fileContent = file.content;
-              if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(fileContent);
+              if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
               if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
                 fileContent = fixCssImportOrder(fileContent);
               }

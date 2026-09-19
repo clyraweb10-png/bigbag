@@ -47,6 +47,7 @@ import type {
   AgentStatus,
   AgentInputFile,
   AgentRunOptions,
+  ConversationMessage,
   ConversationHistory,
   ProjectVersion,
   FileTree,
@@ -419,6 +420,13 @@ export const vcaasApi = {
         `${project(projectId)}/agent/full-conversation${suffix}`
       );
     },
+
+    /** Persist local planner chat so a refresh does not lose an approved plan. */
+    appendConversation: (
+      projectId: string,
+      messages: Array<Pick<ConversationMessage, "author" | "message" | "messageType" | "createdAt">>
+    ): Promise<VcaasResponse<{ saved: number }>> =>
+      proxy.post<{ saved: number }>(`${project(projectId)}/agent/conversation`, { messages }),
 
     /** POST …/agent/start — kick off an agent run with a prompt and optional files. */
     start: (

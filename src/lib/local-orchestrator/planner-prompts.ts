@@ -46,7 +46,7 @@ FORMAT YOUR RESPONSE EXACTLY LIKE THIS (use this markdown structure verbatim):
 
 **Tech Stack**
 - React 19 + Vite + Tailwind CSS 4
-- [any notable library the request implies, e.g. "recharts (analytics dashboard)"]
+- [only a notable library the user explicitly requested; omit this line otherwise]
 
 ---
 Ready to build? Click **Proceed** or reply **Build it** — or tell me what to change first.

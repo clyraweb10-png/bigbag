@@ -14,6 +14,7 @@ import {
 import { useTheme } from "next-themes";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AuthUserMenu } from "@/components/auth/AuthProvider";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChatPanel } from "@/components/workspace/ChatPanel";
@@ -47,7 +48,7 @@ import { useVisualEditor } from "@/components/workspace/visual-editor/use-visual
 import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEditorPanel";
 import { VisualChangesBar } from "@/components/workspace/visual-editor/VisualChangesBar";
 import { t as translate } from "@/i18n";
-import { classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
+import { approvedBuildInstruction, classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 // Pick the correct development preview URL following the Totalum API docs:
@@ -397,6 +398,12 @@ export default function WorkspacePage() {
   const lastProjectReadAt = useRef(Date.now());
   const sendingRef = useRef(false);
   const autoSentRef = useRef(false);
+  const failedBuildRetryRef = useRef<{
+    enginePrompt: string;
+    visiblePrompt: string;
+    files?: { name: string; url: string; imageDescription: string }[];
+    options?: AgentRunOptions;
+  } | null>(null);
   // Guards the poll loop right after a new run is started: the server may still
   // report the PREVIOUS run's "done"/"idle" for a moment, and concluding on that
   // stale status would wipe the just-sent message and stop polling. We wait to
@@ -524,6 +531,7 @@ export default function WorkspacePage() {
       const data = await res.json() as { ok: boolean; data?: { text: string }; error?: string };
 
       if (data.ok && data.data?.text) {
+        const userCreatedAt = new Date().toISOString();
         const plannerMsg: ConversationMessage = {
           author: "agent",
           message: data.data.text,
@@ -531,6 +539,11 @@ export default function WorkspacePage() {
           createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, plannerMsg]);
+        const persisted = await vcaasApi.agent.appendConversation(projectId, [
+          { author: "user", message: userMessage, messageType: "regular", createdAt: userCreatedAt },
+          plannerMsg,
+        ]);
+        if (!persisted.ok) console.warn("[planner] conversation persistence failed:", persisted.error);
 
         // Advance stage after a plan is generated.
         if (intent === "plan" || intent === "update_plan") {
@@ -712,8 +725,10 @@ export default function WorkspacePage() {
   // Core send routine — accepts an explicit prompt text so it can be driven both
   // by the chat input and by the auto-submit flow (a project just created from the
   // dashboard whose first prompt is carried over via sessionStorage).
-  const sendPromptText = useCallback(async (text: string, files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
+  const sendPromptText = useCallback(async (text: string, files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions, forceBuild = false, displayText?: string) => {
     if ((!text.trim() && (!files || files.length === 0)) || sendingRef.current) return;
+    const visiblePrompt = displayText?.trim() || text;
+    const previousStage = stage;
 
     /**
      * ⭐ PLANNING TIER ROUTING (local orchestrator only).
@@ -728,7 +743,8 @@ export default function WorkspacePage() {
     const isLocalMode = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local" ||
       (typeof window !== "undefined" && window.location.hostname === "localhost");
 
-    if (isLocalMode) {
+    let enginePrompt = text;
+    if (isLocalMode && !forceBuild) {
       const lastAgentMsg = messages
         .filter((m) => m.author === "agent")
         .slice(-1)[0]?.message;
@@ -738,9 +754,9 @@ export default function WorkspacePage() {
         // Optimistically add the user message.
         sendingRef.current = true;
         const hasFiles = !!files && files.length > 0;
-        if (hasFiles) sentFilesRef.current.push({ message: text, files: files! });
+        if (hasFiles) sentFilesRef.current.push({ message: visiblePrompt, files: files! });
         setMessages((prev) => [...prev, {
-          author: "user", message: text, messageType: "regular",
+          author: "user", message: visiblePrompt, messageType: "regular",
           createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined,
         }]);
         setPrompt("");
@@ -752,22 +768,28 @@ export default function WorkspacePage() {
       }
 
       // "confirm_build" or "direct_edit" → advance stage then fall through to code engine.
-      if (intent === "confirm_build") setStage("building");
+      if (intent === "confirm_build") {
+        setStage("building");
+        enginePrompt = approvedBuildInstruction(messages, text);
+      }
       if (intent === "direct_edit") setStage("active");
+    } else if (forceBuild) {
+      setStage("building");
     }
 
     sendingRef.current = true;
     setSending(true);
     const hasFiles = !!files && files.length > 0;
-    if (hasFiles) sentFilesRef.current.push({ message: text, files: files! });
-    setMessages((prev) => [...prev, { author: "user", message: text, messageType: "regular", createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined }]);
+    if (hasFiles) sentFilesRef.current.push({ message: visiblePrompt, files: files! });
+    setMessages((prev) => [...prev, { author: "user", message: visiblePrompt, messageType: "regular", createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined }]);
     setPrompt("");
     /**
      * ⚠️ ONLY WHAT THE USER CHOSE IS SENT. `options` is `{}` unless the run-options menu
      * was touched, so Totalum's own model/effort routing stays in charge by default.
      */
-    const res = await vcaasApi.agent.start(projectId, { prompt: text, inputFiles: files || [], ...(options || {}) });
+    const res = await vcaasApi.agent.start(projectId, { prompt: enginePrompt, inputFiles: files || [], ...(options || {}) });
     if (res.ok) {
+      failedBuildRetryRef.current = null;
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
       pendingRunRef.current = true; runWaitPollsRef.current = 0;
       // A new run: the previous run's estimate must not show while the first poll is out.
@@ -787,8 +809,10 @@ export default function WorkspacePage() {
        */
       setMessages((prev) => prev.slice(0, -1));
       if (hasFiles) sentFilesRef.current.pop();
-      setPrompt(text);
+      setPrompt(visiblePrompt);
       if (hasFiles) setAttachedFiles(files!);
+      failedBuildRetryRef.current = { enginePrompt, visiblePrompt, files, options };
+      setStage(previousStage);
 
       /**
        * ⭐⭐ THE SERVER WAS ASLEEP, SO THE API STARTED IT AND REFUSED THE PROMPT.
@@ -811,6 +835,18 @@ export default function WorkspacePage() {
 
   const handleSendPrompt = async (files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => {
     if (project?.agentProcessStatus === "init") return;
+    const retry = failedBuildRetryRef.current;
+    if (retry && prompt.trim() === retry.visiblePrompt.trim()) {
+      await sendPromptText(
+        retry.enginePrompt,
+        files || retry.files,
+        options || retry.options,
+        true,
+        retry.visiblePrompt
+      );
+      return;
+    }
+    failedBuildRetryRef.current = null;
     await sendPromptText(prompt, files, options);
   };
 
@@ -978,19 +1014,22 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (loading || !project || autoSentRef.current) return;
     if (project.agentProcessStatus === "init") return;
-    const promptKey = `vibebuild:pendingPrompt:${projectId}`;
+    const promptKey = `bigbag:pendingPrompt:${projectId}`;
     const pending = typeof window !== "undefined" ? sessionStorage.getItem(promptKey) : null;
     if (!pending) return;
     autoSentRef.current = true;
     sessionStorage.removeItem(promptKey);
-    const filesKey = `vibebuild:pendingFiles:${projectId}`;
+    const displayKey = `bigbag:pendingDisplayPrompt:${projectId}`;
+    const displayPrompt = sessionStorage.getItem(displayKey) || pending;
+    sessionStorage.removeItem(displayKey);
+    const filesKey = `bigbag:pendingFiles:${projectId}`;
     let files: { name: string; url: string; imageDescription: string }[] | undefined;
     try {
       const raw = sessionStorage.getItem(filesKey);
       if (raw) files = JSON.parse(raw);
     } catch { /* ignore */ }
     sessionStorage.removeItem(filesKey);
-    sendPromptText(pending, files);
+    sendPromptText(pending, files, undefined, true, displayPrompt);
   }, [loading, project, projectId, sendPromptText]);
   /**
    * ═══⭐⭐⭐ THE ONE PLACE A LONG OPERATION FINISHES ═════════════════════════
@@ -1560,6 +1599,7 @@ export default function WorkspacePage() {
               <KeyRound className="w-3.5 h-3.5" />
             </button>
             <ThemeToggle showLabel={false} />
+            <AuthUserMenu />
             <DeployControl
               projectId={projectId}
               project={project}
@@ -1687,7 +1727,7 @@ export default function WorkspacePage() {
               {popupMenu}
             </div>
           </div>
-          <ThemeToggle showLabel={false} />
+          <div className="flex items-center gap-1"><ThemeToggle showLabel={false} /><AuthUserMenu /></div>
         </header>
 
         {/*

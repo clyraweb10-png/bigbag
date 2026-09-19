@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callPlanner } from "@/lib/local-orchestrator/planner-client";
 import { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT } from "@/lib/local-orchestrator/planner-prompts";
 import type { UserIntent } from "@/lib/local-orchestrator/intent-router";
+import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
 
 export interface PlannerRequestBody {
   intent: UserIntent;
@@ -18,6 +19,9 @@ export interface PlannerResponseData {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!verifyAuthSession(req.cookies.get(AUTH_COOKIE)?.value)) {
+    return NextResponse.json({ ok: false, error: "Sign in with Google to continue" }, { status: 401 });
+  }
   let body: PlannerRequestBody;
   try {
     body = (await req.json()) as PlannerRequestBody;
