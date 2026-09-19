@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { getApp, getApps, initializeApp, type FirebaseOptions } from "firebase/app";
 import {
   browserLocalPersistence,
   getAuth,
@@ -55,9 +55,23 @@ async function serializeSessionMutation<T>(operation: () => Promise<T>): Promise
   return result;
 }
 
-function firebaseAuth() {
-  if (!configured) return null;
-  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+let cachedRuntimeConfig: FirebaseOptions | null = null;
+
+function resolveFirebaseConfig(runtimeConfig?: FirebaseOptions | null): FirebaseOptions | null {
+  if (runtimeConfig?.apiKey && runtimeConfig?.authDomain && runtimeConfig?.projectId && runtimeConfig?.appId) {
+    cachedRuntimeConfig = runtimeConfig;
+    return runtimeConfig;
+  }
+  if (cachedRuntimeConfig) return cachedRuntimeConfig;
+  if (configured) return firebaseConfig;
+  return null;
+}
+
+function firebaseAuth(runtimeConfig?: FirebaseOptions | null) {
+  if (getApps().length > 0) return getAuth(getApp());
+  const config = resolveFirebaseConfig(runtimeConfig);
+  if (!config) return null;
+  const app = initializeApp(config);
   return getAuth(app);
 }
 
@@ -67,23 +81,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!configured) {
-      setStatus("misconfigured");
-      return;
-    }
-    const auth = firebaseAuth();
-    if (!auth) {
-      setStatus("misconfigured");
-      return;
-    }
     let active = true;
     let unsubscribe = () => undefined;
 
-    void setPersistence(auth, browserLocalPersistence).catch(() => undefined);
     void (async () => {
       const sessionResponse = await fetch("/api/auth/session", { cache: "no-store" }).catch(() => null);
-      const hasServerSession = Boolean(sessionResponse?.ok);
+      const sessionPayload = (await sessionResponse?.json().catch(() => null)) as {
+        ok?: boolean;
+        data?: {
+          authenticated?: boolean;
+          configured?: boolean;
+          firebase?: FirebaseOptions | null;
+        };
+      } | null;
+
       if (!active) return;
+
+      const runtimeConfig = sessionPayload?.data?.firebase;
+      const auth = firebaseAuth(runtimeConfig);
+
+      if (!auth) {
+        setStatus("misconfigured");
+        return;
+      }
+
+      const hasServerSession = Boolean(sessionPayload?.data?.authenticated);
+      void setPersistence(auth, browserLocalPersistence).catch(() => undefined);
 
       unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
         if (!active) return;
@@ -113,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (active) setStatus("unauthenticated");
             return;
           }
-          const payload = await response.json() as { ok?: boolean; error?: string };
+          const payload = (await response.json()) as { ok?: boolean; error?: string };
           if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not create a secure session");
           if (active) setStatus("authenticated");
         } catch (sessionError) {
@@ -124,7 +147,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     })();
 
-    return () => { active = false; unsubscribe(); };
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   const signIn = useCallback(async () => {
