@@ -138,6 +138,9 @@ async function servePersistentDeployment(
     const isHashedAsset = /^assets\/.+-[a-z0-9_-]{8,}\.[^/]+$/i.test(file.path);
     const headers = new Headers({
         "content-type": contentType,
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, HEAD, OPTIONS",
+        "access-control-allow-headers": "*",
         "cache-control": isHtml
             ? "no-store"
             : isHashedAsset
@@ -146,6 +149,7 @@ async function servePersistentDeployment(
         "x-content-type-options": "nosniff",
         "content-security-policy": "frame-ancestors *; sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads",
     });
+    if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers });
     if (request.method === "HEAD") return new NextResponse(null, { status: 200, headers });
 
     if (isHtml) {
@@ -326,6 +330,8 @@ async function handle(
             status: 200,
             headers: {
                 "content-type": "application/javascript; charset=utf-8",
+                "access-control-allow-origin": "*",
+                "access-control-allow-methods": "GET, HEAD, OPTIONS",
                 "cache-control": "no-store",
             },
         });
@@ -417,6 +423,8 @@ async function handle(
     upstream.headers.forEach((value, key) => {
         if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) responseHeaders.set(key, value);
     });
+    responseHeaders.set("access-control-allow-origin", "*");
+    responseHeaders.set("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS");
 
     const base = `/api/preview/${encodeURIComponent(projectId)}`;
 
@@ -479,3 +487,4 @@ export const PUT = handle;
 export const PATCH = handle;
 export const DELETE = handle;
 export const HEAD = handle;
+export const OPTIONS = handle;

@@ -34,6 +34,8 @@ export function rewriteHtml(html: string, base: string): string {
         // "preloaded but not used" warning for every one of them on every page load.
         .replace(/<link[^>]+rel=["']preload["'][^>]+as=["']font["'][^>]*\/?>/gi, "")
         .replace(/<link[^>]+as=["']font["'][^>]+rel=["']preload["'][^>]*\/?>/gi, "")
+        // Strip crossorigin attribute from stylesheets so sandboxed opaque origins don't fail CORS
+        .replace(/(<link\b[^>]*?)\s+crossorigin(?:=(?:"[^"]*"|'[^']*'|[^\s>]+))?([^>]*>)/gi, "$1$2")
         .replace(/(\s(?:src|href|action|poster)\s*=\s*")\/(?!\/)/g, `$1${base}/`)
         .replace(/(\s(?:src|href|action|poster)\s*=\s*')\/(?!\/)/g, `$1${base}/`)
         .replace(/(\ssrcset\s*=\s*")([^"]*)"/g, (_full, prefix: string, value: string) => {

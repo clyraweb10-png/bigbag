@@ -20,6 +20,9 @@ function isAllowedOrigin(origin: string, request: NextRequest): boolean {
   if (appOrigin && origin === appOrigin) return true;
   if (extraAllowedOrigins.has(origin)) return true;
 
+  // Sandboxed preview iframes have origin 'null'
+  if (origin === "null" && request.nextUrl.pathname.startsWith("/api/preview/")) return true;
+
   // Trust same-host requests — custom domains served by this same server
   const host = request.headers.get("host");
   if (host && origin === `https://${host}`) return true;
@@ -30,6 +33,15 @@ function isAllowedOrigin(origin: string, request: NextRequest): boolean {
 // Add CORS headers if the origin is allowed
 function addCorsHeaders(response: NextResponse, request: NextRequest) {
   const origin = request.headers.get("origin");
+
+  // Always enable CORS for sandboxed preview iframe assets
+  if (request.nextUrl.pathname.startsWith("/api/preview/")) {
+    response.headers.set("Access-Control-Allow-Origin", origin === "null" ? "*" : (origin || "*"));
+    response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    response.headers.set("Access-Control-Max-Age", "86400");
+    return response;
+  }
 
   if (origin && isAllowedOrigin(origin, request)) {
     response.headers.set("Access-Control-Allow-Origin", origin);
