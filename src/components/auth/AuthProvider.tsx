@@ -200,58 +200,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: string | null; onSignIn: () => Promise<void> }) {
   return (
-    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#1d1d1c] text-white flex flex-col justify-between select-none">
+    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#fafafa] dark:bg-[#1d1d1c] text-zinc-900 dark:text-white flex flex-col justify-between select-none transition-colors duration-200">
       {/* ═══ 6 DISTINCT FLOATING MOCKUP CARDS (3 LEFT, 3 RIGHT, RESPONSIVE) ═══ */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
         {/* Ambient subtle background */}
-        <div className="absolute inset-0 bg-[#1d1d1c]" />
+        <div className="absolute inset-0 bg-[#fafafa] dark:bg-[#1d1d1c] transition-colors duration-200" />
 
         {/* ─── LEFT SIDE CARDS (3 CARDS) ─── */}
         {/* Card 1 (Left Top): Pulse Analytics Dashboard */}
-        <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[12deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 -rotate-[12deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-1.png" alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-left-1.png" alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* Card 2 (Left Middle): Aura E-Commerce Store */}
-        <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[15deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 -rotate-[15deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-2.png" alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-left-2.png" alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* Card 3 (Left Bottom): Video Ad Studio */}
-        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[8deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 -rotate-[8deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-3.png" alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-left-3.png" alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* ─── RIGHT SIDE CARDS (3 CARDS) ─── */}
         {/* Card 4 (Right Top): Build Unicorns Founder Platform */}
-        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[14deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 rotate-[14deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-1.png" alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-right-1.png" alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* Card 5 (Right Middle): Synthesis AI Video Studio */}
-        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[17deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 rotate-[17deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-3.png" alt="AI Video Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-right-3.png" alt="AI Video Studio" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* Card 6 (Right Bottom): Mobile Health & Finance App */}
-        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[270px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[22deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[270px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/10 dark:shadow-2xl dark:shadow-black/80 rotate-[22deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-2.png" alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+          <img src="/mockups/card-right-2.png" alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-black/10 dark:border-white/10" />
         </div>
 
         {/* Center radial overlay so text and login button are 100% readable */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(29,29,28,0.96)_0%,rgba(29,29,28,0.65)_55%,rgba(29,29,28,0.1)_100%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(250,250,250,0.96)_0%,rgba(250,250,250,0.7)_55%,rgba(250,250,250,0.15)_100%)] dark:bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(29,29,28,0.96)_0%,rgba(29,29,28,0.65)_55%,rgba(29,29,28,0.1)_100%)] transition-all duration-200" />
       </div>
 
       {/* ═══ TOP HEADER ═══ */}
       <header className="relative z-30 flex h-16 sm:h-20 w-full items-center justify-between px-6 sm:px-10">
         <div className="flex items-center gap-2">
-          <BigBagLogo size="md" href={null} className="text-white" />
+          <BigBagLogo size="md" href={null} hideText />
         </div>
         <ThemeToggle />
       </header>
@@ -269,22 +269,22 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
 
         {/* Headline */}
         <div className="text-center space-y-1 mt-2">
-          <h1 className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-white">
+          <h1 className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-zinc-900 dark:text-white transition-colors">
             Turn ideas into products
           </h1>
-          <p className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-white">
-            From prompt <span className="text-[#34d399]">to production</span>
+          <p className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-zinc-900 dark:text-white transition-colors">
+            From prompt <span className="text-emerald-600 dark:text-[#34d399]">to production</span>
           </p>
         </div>
 
         {/* Action Buttons */}
         <div className="w-full max-w-[310px] sm:max-w-[340px] space-y-3 mt-7 flex flex-col items-center">
           {status === "misconfigured" ? (
-            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs leading-5 text-amber-200" role="alert">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs leading-5 text-amber-800 dark:text-amber-200" role="alert">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500 dark:text-amber-400" />
               <div>
                 <p className="font-semibold">Firebase configuration missing</p>
-                <p className="mt-0.5 text-amber-300/80">Configure Firebase variables in .env.local to enable Google sign-in.</p>
+                <p className="mt-0.5 text-amber-700 dark:text-amber-300/80">Configure Firebase variables in .env.local to enable Google sign-in.</p>
               </div>
             </div>
           ) : (
@@ -292,10 +292,10 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
               type="button"
               onClick={() => void onSignIn()}
               disabled={status === "loading"}
-              className="w-full h-11 sm:h-12 rounded-full bg-white text-black font-semibold text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 shadow-lg shadow-white/5 hover:bg-zinc-100 active:scale-[0.99] transition-all disabled:opacity-60 cursor-pointer"
+              className="w-full h-11 sm:h-12 rounded-full bg-white text-zinc-900 border border-zinc-200/90 shadow-md shadow-zinc-900/5 hover:bg-zinc-50 dark:border-transparent dark:text-black dark:shadow-lg dark:shadow-white/5 dark:hover:bg-zinc-100 font-semibold text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 active:scale-[0.99] transition-all disabled:opacity-60 cursor-pointer"
             >
               {status === "loading" ? (
-                <Loader2 className="h-4 w-4 animate-spin text-black" />
+                <Loader2 className="h-4 w-4 animate-spin text-zinc-900 dark:text-black" />
               ) : (
                 <GoogleMark className="h-4 w-4 shrink-0" />
               )}
@@ -304,20 +304,20 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
           )}
 
           {error && (
-            <p className="text-center text-xs text-red-400" role="alert">
+            <p className="text-center text-xs text-red-500 dark:text-red-400" role="alert">
               {error}
             </p>
           )}
         </div>
 
         {/* Footer Legal notice */}
-        <div className="mt-8 text-center text-[11px] leading-relaxed text-zinc-500 max-w-xs">
+        <div className="mt-8 text-center text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 max-w-xs">
           By continuing, you agree to our{" "}
-          <a href="#" className="underline underline-offset-2 text-zinc-400 hover:text-zinc-200 transition-colors">
+          <a href="#" className="underline underline-offset-2 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white transition-colors">
             Terms of Service
           </a>{" "}
           and{" "}
-          <a href="#" className="underline underline-offset-2 text-zinc-400 hover:text-zinc-200 transition-colors">
+          <a href="#" className="underline underline-offset-2 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white transition-colors">
             Privacy Policy
           </a>
           .

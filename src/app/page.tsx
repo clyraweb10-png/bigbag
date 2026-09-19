@@ -227,7 +227,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user } = useAuth();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
-  const [loading, setLoading] = useState(true);
   const [firstPrompt, setFirstPrompt] = useState("");
   const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
   const [landingMessages, setLandingMessages] = useState<LandingMessage[]>([]);
@@ -331,14 +330,12 @@ export default function DashboardPage() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
     const res = await vcaasApi.projects.list();
     if (res.ok && res.data) {
       const list = Array.isArray(res.data) ? res.data : [];
       list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setProjects(list);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -608,8 +605,7 @@ export default function DashboardPage() {
 
       <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-10 sm:px-6"}>
         {/* Hero prompt */}
-        {!loading && (
-          <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-10" : "flex min-h-[58vh] flex-col items-center justify-center"}>
+        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-10" : "flex min-h-[58vh] flex-col items-center justify-center"}>
             <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
               {!chatOpen && !hasProjects && (
                 <div className="mb-8 text-left sm:text-center">
@@ -719,9 +715,9 @@ export default function DashboardPage() {
 
                   <div className="flex items-center justify-between bg-transparent px-3 py-3 sm:px-4">
                     <div className="flex items-center gap-1.5">
-                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#0A2540] hover:text-[#051726] dark:text-muted-foreground dark:hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
+                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
                         <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
-                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0A2540] dark:text-muted-foreground" /> : <AttachChainIcon className="w-4 h-4 text-[#0A2540] dark:text-white" />}
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[#003399] dark:text-[#60a5fa]" /> : <AttachChainIcon className="w-4 h-4 text-[#003399] dark:text-[#60a5fa]" />}
                         <span className="hidden sm:inline font-medium">Attach</span>
                       </label>
 
@@ -754,7 +750,6 @@ export default function DashboardPage() {
               {!chatOpen && keyConfigured === false && <SetupBanners />}
             </div>
           </div>
-        )}
 
         {/* Projects */}
         {!chatOpen && hasProjects && (
@@ -999,31 +994,6 @@ export default function DashboardPage() {
               </div>
             )}
           </>
-        )}
-
-        {!chatOpen && loading && (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="rounded-xl border border-border bg-[#252525] p-0 overflow-hidden flex flex-col h-full animate-pulse shadow-xs"
-              >
-                <div className="h-32 bg-[#1d1d1c]/80 flex items-center justify-center border-b border-border/40">
-                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                </div>
-                <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                  <div className="space-y-2">
-                    <div className="h-3.5 w-3/5 rounded-md bg-[#333332]" />
-                    <div className="h-2.5 w-4/5 rounded-md bg-[#333332]/60" />
-                  </div>
-                  <div className="flex items-center justify-between pt-2 border-t border-border/40">
-                    <div className="h-2.5 w-1/4 rounded-md bg-[#333332]/50" />
-                    <div className="h-3 w-3 rounded-full bg-[#333332]/50" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
         )}
       </div>
 

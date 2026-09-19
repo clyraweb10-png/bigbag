@@ -866,9 +866,9 @@ export function ChatPanel({
             <div className="flex items-center gap-0.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-accent text-[#0A2540] hover:text-[#051726] dark:text-muted-foreground dark:hover:text-foreground transition-colors">
+                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-accent text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors">
                     <input type="file" multiple className="hidden" onChange={handleFileUpload} accept="image/*,.pdf,.svg" disabled={isBuilding} />
-                    {uploading ? <Loader2 className="w-4 h-4 text-[#0A2540] dark:text-muted-foreground animate-spin" /> : <AttachChainIcon className="w-4 h-4 text-[#0A2540] dark:text-white" />}
+                    {uploading ? <Loader2 className="w-4 h-4 text-[#003399] dark:text-[#60a5fa] animate-spin" /> : <AttachChainIcon className="w-4 h-4 text-[#003399] dark:text-[#60a5fa]" />}
                     <span className="sr-only">{t("prompt.attachments.attach")}</span>
                   </label>
                 </TooltipTrigger>
