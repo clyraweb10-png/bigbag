@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { LandingPageMarketing } from "@/components/marketing/LandingPage";
 import { vcaasApi } from "@/lib/vcaas";
 import {
   CloneProjectDialog,
@@ -223,7 +224,17 @@ function TypingAssistantMessage({
   );
 }
 
-export default function DashboardPage() {
+/** Root page — shows marketing landing to guests, dashboard to signed-in users */
+export default function RootPage() {
+  const { user, status } = useAuth();
+  // Show marketing landing for unauthenticated visitors (including loading state)
+  if (status !== "authenticated" || !user) {
+    return <LandingPageMarketing />;
+  }
+  return <DashboardContent />;
+}
+
+function DashboardContent() {
   const router = useRouter();
   const { user } = useAuth();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
@@ -438,67 +449,12 @@ export default function DashboardPage() {
     const message = firstPrompt.trim();
     if ((!message && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
 
-    if (!message) {
-      const attachmentPrompt = "Build a complete application using the attached files as the primary product and visual reference.";
-      setApprovedPrompt(attachmentPrompt);
-      setFirstPrompt("");
-      openBuildModal(attachmentPrompt);
-      return;
-    }
-
-    const lastAgentMessage = [...landingMessages].reverse().find((entry) => entry.role === "assistant")?.content;
-    const intent = classifyIntent(message, landingStage, lastAgentMessage);
-
-    // If prompt has no question, user wants to create a build -> directly proceed to build
-    if (intent === "confirm_build") {
-      setApprovedPrompt(message);
-      setFirstPrompt("");
-      openBuildModal(message);
-      return;
-    }
-
-    // User is chatting or asking a doubt / question -> open chat and reply
-    setChatOpen(true);
-    setLandingSuggestions([]);
-    const nextHistory = [...landingMessages, { role: "user" as const, content: message }];
-    setLandingMessages(nextHistory);
-    setFirstPrompt("");
-    setPlannerRunning(true);
-    if (!approvedPrompt) {
-      setApprovedPrompt(message);
-    }
-
+    // Redirect to the dedicated generation/chat page
     try {
-      const response = await fetch("/api/planner", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "chat", message, history: landingMessages.slice(-10) }),
-      });
-      const payload = (await response.json()) as {
-        ok: boolean;
-        data?: { text?: string; suggestions?: string[] };
-        error?: string;
-      };
-      if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "The assistant is unavailable.");
-
-      setTypingMessageIndex(nextHistory.length);
-      setLandingMessages((current) => [...current, { role: "assistant", content: payload.data!.text! }]);
-      setLandingSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
-      setLandingStage("awaiting_confirmation");
-    } catch (error) {
-      setLandingMessages([
-        ...nextHistory,
-        {
-          role: "assistant",
-          content: "I couldn’t reach the assistant. Your message is saved here—try sending it again when the connection is ready.",
-        },
-      ]);
-      setFirstPrompt(message);
-      setLandingStage(landingMessages.length === 0 ? "idle" : landingStage);
-      toast.error(error instanceof Error ? error.message : "The assistant is unavailable.");
-    } finally {
-      setPlannerRunning(false);
-    }
+      if (message) sessionStorage.setItem("bigbag:pending-prompt", message);
+    } catch { /* storage unavailable */ }
+    setFirstPrompt("");
+    router.push(`/generate?prompt=${encodeURIComponent(message || "Build something amazing")}`);
   };
 
   const confirmBuild = async () => {

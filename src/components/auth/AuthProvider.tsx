@@ -195,7 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={value}>
-      {status === "authenticated" ? children : <SignInScreen status={status} error={error} onSignIn={signIn} />}
+      {children}
     </AuthContext.Provider>
   );
 }
