@@ -113,6 +113,31 @@ export function rewriteJavaScript(source: string, base: string): string {
 }
 
 /**
+ * In-memory shim for localStorage and sessionStorage.
+ * The preview iframe runs with a CSP sandbox that excludes allow-same-origin,
+ * so any access to window.localStorage or window.sessionStorage throws a
+ * SecurityError. This shim silently replaces them with a working in-memory
+ * implementation so AI-generated code that uses storage APIs doesn't crash.
+ */
+const STORAGE_SHIM_SCRIPT = `<script data-storage-shim>
+(function(){
+  function MemoryStorage(){this._d={};}
+  MemoryStorage.prototype.getItem=function(k){return this._d.hasOwnProperty(k)?this._d[k]:null;};
+  MemoryStorage.prototype.setItem=function(k,v){this._d[k]=String(v);};
+  MemoryStorage.prototype.removeItem=function(k){delete this._d[k];};
+  MemoryStorage.prototype.clear=function(){this._d={};};
+  MemoryStorage.prototype.key=function(i){return Object.keys(this._d)[i]||null;};
+  Object.defineProperty(MemoryStorage.prototype,'length',{get:function(){return Object.keys(this._d).length;}});
+  try{window.localStorage.setItem('__test','1');window.localStorage.removeItem('__test');}catch(e){
+    try{Object.defineProperty(window,'localStorage',{value:new MemoryStorage(),writable:false,configurable:true});}catch(e2){}
+  }
+  try{window.sessionStorage.setItem('__test','1');window.sessionStorage.removeItem('__test');}catch(e){
+    try{Object.defineProperty(window,'sessionStorage',{value:new MemoryStorage(),writable:false,configurable:true});}catch(e2){}
+  }
+})();
+</script>`;
+
+/**
  * Error boundary overlay injected into every preview iframe.
  * Catches runtime errors, unhandled promise rejections, and Next.js
  * compilation errors, then replaces the blank white screen with a
@@ -195,7 +220,7 @@ const ERROR_BOUNDARY_SCRIPT = `<script data-error-boundary>
 </script>`;
 
 export function injectAgent(html: string, base: string): string {
-    const tag = ERROR_BOUNDARY_SCRIPT + AGENT_SCRIPT_TAG(base);
+    const tag = STORAGE_SHIM_SCRIPT + ERROR_BOUNDARY_SCRIPT + AGENT_SCRIPT_TAG(base);
 
     const headOpen = /<head[^>]*>/i.exec(html);
     if (headOpen) {
