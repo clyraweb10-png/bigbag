@@ -1464,9 +1464,9 @@ export default function WorkspacePage() {
    */
   const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#1d1d1c" : "#FAFAF7";
-  const cardBg = darkMode ? "#1c1c1a" : "#FFFFFF";
-  const btnBorder = darkMode ? "border-[#3A3A3A]" : "border-[#DDDDD5]";
+  const pageBg = darkMode ? "#1d1d1c" : "#FFFFFF";
+  const cardBg = darkMode ? "#252525" : "#FFFFFF";
+  const btnBorder = darkMode ? "border-[#333332]" : "border-[#e1e1e8]";
 
   if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
   if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/"><Button variant="outline">{"Back"}</Button></Link></div>;
