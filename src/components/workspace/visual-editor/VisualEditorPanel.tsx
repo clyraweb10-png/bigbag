@@ -23,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/primitives";
 import { useT } from "@/i18n";
 import { currentTextSize, setColorClass, stepTextSize } from "@/lib/visual-edit";
+import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { uploadFileToProject, MAX_UPLOAD_BYTES } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 
@@ -163,9 +164,9 @@ export function VisualEditorPanel({
                 {/* The pencil, matching the composer's toggle — one icon means one feature. */}
                 <span className="relative flex items-center justify-center size-4 shrink-0" aria-hidden>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/pencil-icon.png" alt="" className="size-4 object-contain block dark:hidden" />
+                    <img src={CLOUDINARY_ASSETS.pencilIconLight} alt="" className="size-4 object-contain block dark:hidden" />
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/pencil-icon-dark.png" alt="" className="size-4 object-contain hidden dark:block" />
+                    <img src={CLOUDINARY_ASSETS.pencilIconDark} alt="" className="size-4 object-contain hidden dark:block" />
                 </span>
                 <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
                     {t("workspace.visualEditor.title")}

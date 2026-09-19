@@ -17,6 +17,7 @@ import { useT } from "@/i18n";
 import { vcaasApi } from "@/lib/vcaas";
 import type { GithubStatus } from "@/lib/vcaas-types";
 import { cn } from "@/lib/utils";
+import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 
 /**
  * ⭐ GITHUB, BESIDE FIGMA, IN THE CHAT COMPOSER.
@@ -165,9 +166,9 @@ export function GithubPromptButton({
                     >
                         <span className="relative flex items-center justify-center size-4">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src="/github-light.png" alt="GitHub" className="size-4 object-contain block dark:hidden" />
+                            <img src={CLOUDINARY_ASSETS.githubLight} alt="GitHub" className="size-4 object-contain block dark:hidden" />
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src="/github-dark.png" alt="GitHub" className="size-4 object-contain hidden dark:block" />
+                            <img src={CLOUDINARY_ASSETS.githubDark} alt="GitHub" className="size-4 object-contain hidden dark:block" />
                         </span>
                     </Button>
                 </TooltipTrigger>
@@ -218,9 +219,9 @@ export function GithubPromptButton({
                                 rather than being a state of it — so it animates. */}
                             <span className="relative flex items-center justify-center size-4">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src="/github-light.png" alt="GitHub" className={cn("size-4 object-contain block dark:hidden", pulling && "animate-pulse")} />
+                                <img src={CLOUDINARY_ASSETS.githubLight} alt="GitHub" className={cn("size-4 object-contain block dark:hidden", pulling && "animate-pulse")} />
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src="/github-dark.png" alt="GitHub" className={cn("size-4 object-contain hidden dark:block", pulling && "animate-pulse")} />
+                                <img src={CLOUDINARY_ASSETS.githubDark} alt="GitHub" className={cn("size-4 object-contain hidden dark:block", pulling && "animate-pulse")} />
                             </span>
                             <span className="sr-only">
                                 {t(

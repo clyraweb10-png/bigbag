@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "misconfigured";
 
@@ -210,50 +211,50 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
         {/* Card 1 (Left Top): Pulse Analytics Dashboard */}
         <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[12deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-1-light.png" alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardLeft1Light} alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-1-dark.png" alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardLeft1Dark} alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* Card 2 (Left Middle): Aura E-Commerce Store */}
         <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[15deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-2-light.png" alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardLeft2Light} alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-2-dark.png" alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardLeft2Dark} alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* Card 3 (Left Bottom): Video Ad Studio */}
         <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-3-light.png" alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardLeft3Light} alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-left-3-dark.png" alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardLeft3Dark} alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* ─── RIGHT SIDE CARDS (3 CARDS) ─── */}
         {/* Card 4 (Right Top): Build Unicorns Founder Platform */}
         <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[14deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-1-light.png" alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight1Light} alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-1-dark.png" alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight1Dark} alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* Card 5 (Right Middle): Pulse Studio Dashboard */}
         <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[17deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-3-light.png" alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight3Light} alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-3-dark.png" alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight3Dark} alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* Card 6 (Right Bottom): Mobile Health & Finance App */}
         <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[270px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[22deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-2-light.png" alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight2Light} alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/mockups/card-right-2-dark.png" alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight2Dark} alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
         {/* Center radial overlay so text and login button are 100% readable, without washing out the floating cards */}

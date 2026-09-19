@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ConfirmDialog } from "@/components/primitives";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { RunProgress } from "@/components/workspace/RunProgress";
 import { useRunClock } from "@/components/workspace/use-run-clock";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
@@ -908,9 +909,9 @@ export function ChatPanel({
                     >
                       <span className="relative flex items-center justify-center size-4">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src="/pencil-icon.png" alt="Edit" className="size-4 object-contain block dark:hidden" />
+                        <img src={CLOUDINARY_ASSETS.pencilIconLight} alt="Edit" className="size-4 object-contain block dark:hidden" />
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src="/pencil-icon-dark.png" alt="Edit" className="size-4 object-contain hidden dark:block" />
+                        <img src={CLOUDINARY_ASSETS.pencilIconDark} alt="Edit" className="size-4 object-contain hidden dark:block" />
                       </span>
                       <span className="sr-only">{t(visualEditActive ? "workspace.visualEditor.close" : "workspace.visualEditor.open")}</span>
                     </Button>
