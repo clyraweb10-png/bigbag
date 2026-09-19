@@ -56,6 +56,26 @@ const RETRY_PROMPT = `Your previous response did not contain valid code files. Y
 
 Return one complete, self-contained src/app/page.tsx with all custom sections defined in that file. You may import installed packages and the existing @/components/ui/button, @/components/ui/card, and @/lib/utils modules, but do not import any other local component. Then output src/app/globals.css if needed. Do not abbreviate code with ellipses. Generate the complete application now.`;
 
+/**
+ * Appended to the system prompt when the user is iterating on an existing project.
+ * Without this, the design-system prompt's strong push toward "build a unique website"
+ * causes the AI to ignore the existing code and generate something entirely new.
+ */
+const FOLLOW_UP_SUFFIX = `
+
+## FOLLOW-UP MODE — YOU ARE MODIFYING AN EXISTING APPLICATION
+
+The user's current project files are provided below. This is NOT a new project.
+You MUST:
+1. Read and understand the existing code before making changes.
+2. ONLY change what the user explicitly asked for.
+3. Keep ALL existing functionality, structure, design, content, and styling intact.
+4. Output the COMPLETE updated file(s) — not just the changed lines.
+5. If the user asks for a small change (like changing a color), make ONLY that change.
+6. Do NOT redesign, restructure, or replace the existing application.
+7. Do NOT add new sections, features, or content unless explicitly asked.
+`;
+
 const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 
 type SharedAgentRunState = {
@@ -520,22 +540,53 @@ export const localAgentEngine = {
           return;
         }
 
-        // Include existing code context if iterating on an existing project
+        // ═══⭐⭐ FOLLOW-UP AWARENESS ══════════════════════════════════════════
+        //
+        // Detect whether this is a follow-up prompt (existing real source code in
+        // the workspace) and, if so, include ALL project source files plus prior
+        // conversation history so the AI modifies the existing project instead of
+        // generating a brand-new website from scratch.
+
         let userPromptContent = prompt;
+        let isFollowUp = false;
+
+        // Gather ALL source files in the project, not just page.tsx
+        const sourceExtensions = /\.(?:tsx?|jsx?|css)$/;
+        const allSourceEntries = localFileManager
+          .getTree(projectId)
+          .entries.filter(
+            (e) => e.type === "file" && sourceExtensions.test(e.path)
+          );
+
+        // Check if there's real existing code (not a placeholder template)
         const existingPage = localFileManager.getContent(projectId, "src/app/page.tsx");
-        const existingStyles = localFileManager.getContent(projectId, "src/app/globals.css");
         const pageCode = existingPage?.content || "";
-        if (
-          pageCode &&
-          !pageCode.includes("AI is assembling your application") &&
-          !pageCode.includes("Ready for Prompt") &&
-          !pageCode.includes("Generation Issue")
-        ) {
-          const truncatedCode = pageCode.length > 10_000 ? pageCode.substring(0, 10_000) + "\n... (truncated)" : pageCode;
-          const styles = existingStyles?.content
-            ? existingStyles.content.slice(0, 5_000)
-            : "";
-          userPromptContent = `Current page:\n\`\`\`tsx\n${truncatedCode}\n\`\`\`\n\nCurrent global styles:\n\`\`\`css\n${styles}\n\`\`\`\n\nUser Request: ${prompt}\n\nUpdate the application completely enough to fulfill this request while preserving working features.`;
+        const isPlaceholder =
+          !pageCode ||
+          pageCode.includes("AI is assembling your application") ||
+          pageCode.includes("Ready for Prompt") ||
+          pageCode.includes("Generation Issue");
+
+        if (!isPlaceholder && allSourceEntries.length > 0) {
+          isFollowUp = true;
+
+          // Build source context from ALL project files, not just page.tsx
+          let charBudget = 30_000;
+          const sourceChunks: string[] = [];
+          for (const entry of allSourceEntries) {
+            if (charBudget <= 0) break;
+            const file = localFileManager.getContent(projectId, entry.path);
+            if (!file || file.encoding !== "utf8") continue;
+            // Skip placeholder content
+            if (containsGenerationPlaceholder(file.content)) continue;
+            const content = file.content.slice(0, charBudget);
+            charBudget -= content.length;
+            sourceChunks.push(`### File: ${entry.path}\n\`\`\`\n${content}\n\`\`\``);
+          }
+
+          if (sourceChunks.length > 0) {
+            userPromptContent = `Here are the current project files:\n\n${sourceChunks.join("\n\n")}\n\nUser Request: ${prompt}\n\nIMPORTANT: This is a FOLLOW-UP request on an existing project. Modify the existing code to fulfill this request. Preserve ALL existing structure, design, content, and working features. Only change what the user explicitly asked for. Output the complete updated files.`;
+          }
         }
 
         const referenceUrl = extractWebsiteUrl(prompt);
@@ -578,8 +629,33 @@ export const localAgentEngine = {
         // not to the conversation stored and shown to the user.
         userPromptContent = withDesignSystemPrompt(userPromptContent);
 
+        // ═══⭐⭐ BUILD CONVERSATION HISTORY FOR THE AI ═════════════════════════
+        //
+        // Include prior user/agent exchanges so the AI has context about what was
+        // previously requested and generated. Without this, every prompt is treated
+        // as a brand-new project and the AI generates from scratch.
+        const conversationHistory: Array<{ role: string; content: string }> = [];
+        if (isFollowUp) {
+          const priorConversation = localProjectStore.getRecord(projectId)?.conversation || [];
+          for (const msg of priorConversation) {
+            // Include previous user prompts (but not the current one — it's in userPromptContent)
+            if (msg.author === "user" && msg.message !== prompt) {
+              conversationHistory.push({ role: "user", content: msg.message });
+            }
+            // Include agent "finished" summaries so the AI knows what it produced
+            else if (msg.author === "agent" && msg.messageType === "finished") {
+              conversationHistory.push({ role: "assistant", content: msg.message });
+            }
+          }
+        }
+
+        const systemPromptForRun = isFollowUp
+          ? SYSTEM_PROMPT + FOLLOW_UP_SUFFIX
+          : SYSTEM_PROMPT;
+
         const messages = [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPromptForRun },
+          ...conversationHistory,
           { role: "user", content: userPromptContent },
         ];
 

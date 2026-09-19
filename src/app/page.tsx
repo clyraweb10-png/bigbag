@@ -62,22 +62,30 @@ function ProjectThumbnail({
 }) {
   const { projectId, previewImageUrl } = project;
   const name = project.label || projectId;
-  const [state, setState] = useState<"idle" | "ready" | "failed">("idle");
+  const [imgState, setImgState] = useState<"idle" | "ready" | "failed">("idle");
+  const [iframeReady, setIframeReady] = useState(false);
   const [c1, c2] = gradientFor(projectId);
   const isRow = variant === "row";
 
+  // Try loading previewImageUrl as an image (upstream Totalum screenshot)
   useEffect(() => {
-    setState("idle");
+    setImgState("idle");
     if (!previewImageUrl) return;
     let cancelled = false;
     const img = new Image();
     img.src = previewImageUrl;
     img
       .decode()
-      .then(() => { if (!cancelled) setState("ready"); })
-      .catch(() => { if (!cancelled) setState("failed"); });
+      .then(() => { if (!cancelled) setImgState("ready"); })
+      .catch(() => { if (!cancelled) setImgState("failed"); });
     return () => { cancelled = true; };
   }, [previewImageUrl]);
+
+  const hasImage = previewImageUrl && imgState !== "failed";
+  // Show live iframe preview when no screenshot image is available.
+  // In row variant, iframe is too small to be useful, so skip it.
+  const showIframe = !hasImage && !isRow;
+  const previewSrc = `/api/preview/${encodeURIComponent(projectId)}/`;
 
   const placeholder = (
     <div
@@ -96,7 +104,7 @@ function ProjectThumbnail({
 
   return (
     <div className="w-full h-full relative overflow-hidden bg-muted/50">
-      {previewImageUrl && state !== "failed" ? (
+      {hasImage ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -104,9 +112,35 @@ function ProjectThumbnail({
             alt={name}
             loading="lazy"
             decoding="async"
-            className={`w-full h-full object-cover object-top transition-opacity duration-300 ${state === "ready" ? "opacity-100" : "opacity-0"}`}
+            className={`w-full h-full object-cover object-top transition-opacity duration-300 ${imgState === "ready" ? "opacity-100" : "opacity-0"}`}
           />
-          {state !== "ready" && <div className="absolute inset-0">{placeholder}</div>}
+          {imgState !== "ready" && <div className="absolute inset-0">{placeholder}</div>}
+        </>
+      ) : showIframe ? (
+        <>
+          {/* Live iframe preview: render the project's preview page scaled down.
+           * The iframe is 1280×800 (desktop viewport) shrunk via CSS transform
+           * to fit the card thumbnail area. Non-interactive (pointer-events: none). */}
+          <div className="absolute inset-0 overflow-hidden" style={{ pointerEvents: "none" }}>
+            <iframe
+              src={previewSrc}
+              title={`Preview of ${name}`}
+              loading="lazy"
+              sandbox="allow-scripts"
+              tabIndex={-1}
+              onLoad={() => setIframeReady(true)}
+              className="border-0 origin-top-left"
+              style={{
+                width: "1280px",
+                height: "800px",
+                transform: "scale(0.28)",
+                transformOrigin: "top left",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+          {/* Show placeholder gradient until the iframe loads */}
+          {!iframeReady && <div className="absolute inset-0">{placeholder}</div>}
         </>
       ) : (
         placeholder
