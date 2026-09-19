@@ -451,7 +451,14 @@ export const AGENT_SOURCE = String.raw`
 (function () {
   if (window.__totalumVisualEditor) return;
 
-  var CHANNEL = window.name;
+  // Some opaque-origin sandbox implementations expose an empty window.name
+  // even when the iframe element has one. The parent repeats the same random
+  // correlation id in the editor URL so the bridge can still authenticate its
+  // postMessage channel without granting same-origin DOM access.
+  var CHANNEL = window.name || (function () {
+    try { return new URLSearchParams(window.location.search).get('__ve_channel') || ''; }
+    catch (e) { return ''; }
+  })();
   /**
    * The proxy base this document is served under, e.g. "/api/preview/my-app".
    * Derived from our own <script src>, so the agent never has to be told.

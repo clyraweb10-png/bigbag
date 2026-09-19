@@ -14,6 +14,13 @@ import { AGENT_PATH, AGENT_SOURCE, PREVIEW_RUNTIME_SHIM } from "@/lib/visual-edi
 import { injectAgent, rewriteCss, rewriteHtml, rewriteJavaScript } from "@/lib/preview-proxy";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { durableProjectStore } from "@/lib/local-orchestrator/durable-project-store";
+import { localSandboxManager } from "@/lib/local-orchestrator/sandbox-manager";
+import { localProjectStore } from "@/lib/local-orchestrator/project-store";
+import {
+    createPreviewWriteCapability,
+    resolveLocalTenant,
+    verifyPreviewWriteCapability,
+} from "@/lib/local-orchestrator/tenant-context";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +101,118 @@ function previewBootPage(): NextResponse {
     });
 }
 
+const APP_DATA_PATH = "__bigbag";
+const APP_DATA_MAX_BODY_BYTES = 64 * 1024;
+
+function appDataHeaders(): HeadersInit {
+    return {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
+        "access-control-allow-headers": "content-type, x-bigbag-capability",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+    };
+}
+
+function appDataJson(
+    body: { ok: boolean; data?: unknown; error?: string },
+    status = 200
+): NextResponse {
+    return NextResponse.json(body, { status, headers: appDataHeaders() });
+}
+
+async function readAppDataBody(request: NextRequest): Promise<Record<string, unknown>> {
+    const declaredSize = Number(request.headers.get("content-length") || "0");
+    if (declaredSize > APP_DATA_MAX_BODY_BYTES) throw new Error("Record is too large");
+    const raw = await request.text();
+    if (Buffer.byteLength(raw, "utf8") > APP_DATA_MAX_BODY_BYTES) throw new Error("Record is too large");
+    const parsed = JSON.parse(raw || "{}");
+    const data = parsed?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("Request body must contain a data object");
+    }
+    return data as Record<string, unknown>;
+}
+
+/**
+ * Public, project-scoped CRUD used by generated apps. This is intentionally not
+ * the builder API: it exposes no tenant cookie, source, provider key, or project
+ * operation. Generated applications that need end-user auth must implement that
+ * policy in their own UI before exposing write controls.
+ */
+async function serveAppData(
+    request: NextRequest,
+    projectId: string,
+    segments: string[]
+): Promise<NextResponse> {
+    if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers: appDataHeaders() });
+    const [, scope, collection, recordId, ...extra] = segments;
+    if (scope !== "data" || !collection || extra.length > 0) {
+        return appDataJson({ ok: false, error: "Invalid data path" }, 404);
+    }
+
+    try {
+        if (request.method === "GET") {
+            if (recordId) {
+                const record = await durableProjectStore.getAppRecord(projectId, collection, recordId);
+                return record
+                    ? appDataJson({ ok: true, data: record })
+                    : appDataJson({ ok: false, error: "Record not found" }, 404);
+            }
+            const requestedLimit = Number(request.nextUrl.searchParams.get("limit") || "50");
+            const requestedOffset = Number(request.nextUrl.searchParams.get("offset") || "0");
+            const limit = Number.isInteger(requestedLimit)
+                ? Math.min(200, Math.max(1, requestedLimit))
+                : 50;
+            const offset = Number.isInteger(requestedOffset)
+                ? Math.max(0, requestedOffset)
+                : 0;
+            const data = await durableProjectStore.listAppRecords(projectId, collection, { limit, offset });
+            return appDataJson({ ok: true, data });
+        }
+        const tenantId = verifyPreviewWriteCapability(
+            request.headers.get("x-bigbag-capability"),
+            projectId
+        );
+        if (!tenantId) return appDataJson({ ok: false, error: "Write authorization required" }, 401);
+        if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
+            return appDataJson({ ok: false, error: "Project not found" }, 404);
+        }
+        if (request.method === "POST" && !recordId) {
+            const data = await durableProjectStore.createAppRecord(
+                projectId,
+                collection,
+                await readAppDataBody(request)
+            );
+            return appDataJson({ ok: true, data }, 201);
+        }
+        if (request.method === "PATCH" && recordId) {
+            const data = await durableProjectStore.updateAppRecord(
+                projectId,
+                collection,
+                recordId,
+                await readAppDataBody(request)
+            );
+            return data
+                ? appDataJson({ ok: true, data })
+                : appDataJson({ ok: false, error: "Record not found" }, 404);
+        }
+        if (request.method === "DELETE" && recordId) {
+            const deleted = await durableProjectStore.deleteAppRecord(projectId, collection, recordId);
+            return deleted
+                ? appDataJson({ ok: true, data: { deleted: true } })
+                : appDataJson({ ok: false, error: "Record not found" }, 404);
+        }
+        return appDataJson({ ok: false, error: "Method not allowed" }, 405);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Database request failed";
+        const clientError = error instanceof SyntaxError || /invalid|must contain|too large/i.test(message);
+        if (clientError) return appDataJson({ ok: false, error: message }, 400);
+        console.error("[preview-data] Request failed", error);
+        return appDataJson({ ok: false, error: "Database request failed" }, 500);
+    }
+}
+
 const STATIC_CONTENT_TYPES: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -114,7 +233,8 @@ const STATIC_CONTENT_TYPES: Record<string, string> = {
 async function servePersistentDeployment(
     request: NextRequest,
     projectId: string,
-    segments: string[]
+    segments: string[],
+    writeCapability?: string
 ): Promise<NextResponse> {
     const requestedPath = segments.length > 0 ? segments.join("/") : "index.html";
     let file = await durableProjectStore.readDeploymentFile(projectId, requestedPath);
@@ -154,7 +274,10 @@ async function servePersistentDeployment(
 
     if (isHtml) {
         const html = Buffer.from(file.content).toString("utf8");
-        return new NextResponse(injectAgent(rewriteHtml(html, base), base), { status: 200, headers });
+        return new NextResponse(
+            injectWriteCapability(injectAgent(rewriteHtml(html, base), base), writeCapability),
+            { status: 200, headers }
+        );
     }
     if (contentType.includes("text/css")) {
         return new NextResponse(rewriteCss(Buffer.from(file.content).toString("utf8"), base), { status: 200, headers });
@@ -163,6 +286,106 @@ async function servePersistentDeployment(
         return new NextResponse(rewriteJavaScript(Buffer.from(file.content).toString("utf8"), base), { status: 200, headers });
     }
     return new NextResponse(file.content, { status: 200, headers });
+}
+
+async function proxyLocalDevelopment(
+    request: NextRequest,
+    projectId: string,
+    segments: string[],
+    origin: string,
+    writeCapability?: string
+): Promise<NextResponse> {
+    const target = new URL(origin);
+    target.pathname = `/${segments.join("/")}`;
+    target.search = request.nextUrl.search;
+
+    const requestHeaders = new Headers();
+    request.headers.forEach((value, key) => {
+        if (!STRIPPED_REQUEST_HEADERS.has(key.toLowerCase())) requestHeaders.set(key, value);
+    });
+    requestHeaders.set("accept-encoding", "identity");
+    const body = request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer();
+
+    let upstream: Response;
+    try {
+        upstream = await fetch(target, {
+            method: request.method,
+            headers: requestHeaders,
+            body,
+            redirect: "manual",
+            cache: "no-store",
+            signal: AbortSignal.timeout(10_000),
+        });
+    } catch {
+        const wantsDocument = request.method === "GET" &&
+            (request.headers.get("accept") || "").includes("text/html");
+        return wantsDocument
+            ? previewBootPage()
+            : NextResponse.json(
+                { ok: false, error: "Local preview is unavailable" },
+                { status: 502, headers: { "cache-control": "no-store" } }
+            );
+    }
+
+    const headers = new Headers();
+    upstream.headers.forEach((value, key) => {
+        if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) headers.set(key, value);
+    });
+    headers.set("access-control-allow-origin", "*");
+    headers.set("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS");
+    headers.set("access-control-allow-headers", "*");
+    headers.set("cache-control", "no-store");
+    headers.set("x-content-type-options", "nosniff");
+    headers.set(
+        "content-security-policy",
+        "frame-ancestors *; sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+    );
+    const base = `/api/preview/${encodeURIComponent(projectId)}`;
+    const location = headers.get("location");
+    if (location) {
+        try {
+            const resolvedLocation = new URL(location, target);
+            if (resolvedLocation.origin !== target.origin) {
+                return NextResponse.json(
+                    { ok: false, error: "The local preview attempted an unsafe redirect" },
+                    { status: 502, headers: { "cache-control": "no-store" } }
+                );
+            }
+            headers.set("location", `${base}${resolvedLocation.pathname}${resolvedLocation.search}`);
+        } catch {
+            headers.delete("location");
+        }
+    }
+    if (request.method === "HEAD") return new NextResponse(null, { status: upstream.status, headers });
+
+    const contentType = headers.get("content-type") || "";
+    const bytes = await upstream.arrayBuffer();
+    if (contentType.includes("text/html")) {
+        return new NextResponse(
+            injectWriteCapability(
+                injectAgent(rewriteHtml(new TextDecoder().decode(bytes), base), base),
+                writeCapability
+            ),
+            { status: upstream.status, headers }
+        );
+    }
+    if (contentType.includes("text/css")) {
+        return new NextResponse(rewriteCss(new TextDecoder().decode(bytes), base), { status: upstream.status, headers });
+    }
+    if (contentType.includes("javascript")) {
+        return new NextResponse(rewriteJavaScript(new TextDecoder().decode(bytes), base), { status: upstream.status, headers });
+    }
+    return new NextResponse(bytes, { status: upstream.status, headers });
+}
+
+function injectWriteCapability(html: string, capability?: string): string {
+    if (!capability) return html;
+    const script = `<script>window.__BIGBAG_WRITE_CAPABILITY__=${JSON.stringify(capability)};</script>`;
+    return /<head(?:\s[^>]*)?>/i.test(html)
+        ? html.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${script}`)
+        : `${script}${html}`;
 }
 
 const STRIPPED_REQUEST_HEADERS = new Set([
@@ -353,15 +576,24 @@ async function handle(
     // resumes, or contacts a sandbox.
     if (IS_LOCAL) {
         const trustedEditor = request.nextUrl.searchParams.get("editor") === "1";
+        let writeCapability: string | undefined;
         if (trustedEditor) {
-            const { localProjectStore } = await import("@/lib/local-orchestrator/project-store");
-            const { resolveLocalTenant } = await import("@/lib/local-orchestrator/tenant-context");
             const tenant = resolveLocalTenant(request);
             if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
                 return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
             }
+            writeCapability = createPreviewWriteCapability(projectId, tenant.tenantId);
         }
-        return servePersistentDeployment(request, projectId, targetSegments);
+        if (targetSegments[0] === APP_DATA_PATH) {
+            return serveAppData(request, projectId, targetSegments);
+        }
+        const localRecord = localProjectStore.getRecord(projectId);
+        const runningOrigin = localSandboxManager.getRunningOrigin(projectId) ||
+            (localRecord?.serverStatus === "Active" ? `http://127.0.0.1:${localRecord.port}` : null);
+        if (runningOrigin) {
+            return proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability);
+        }
+        return servePersistentDeployment(request, projectId, targetSegments, writeCapability);
     }
 
     const resolved = await resolvePreviewOrigin(projectId, auth?.ctx);

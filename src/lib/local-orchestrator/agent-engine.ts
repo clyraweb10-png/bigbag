@@ -23,7 +23,7 @@ const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer.
 
 **OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
 
-1. Runtime — This is a browser-only Vite React app. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or backend-only code.
+1. Runtime — This is a Vite React client backed by platform server APIs. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, import the browser-safe client from @/lib/db; it calls the platform's server-side database without exposing credentials.
 
 2. Output Format — Each file with markdown heading + code block:
 ### File: src/app/page.tsx
@@ -34,17 +34,19 @@ import { useState } from 'react';
 
 The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Keep the complete implementation self-contained in src/app/page.tsx by default. Do not import a custom local component unless you also output its complete file in the same response. Put optional components after those required entry files so a token limit can never leave the app disconnected.
 
-3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, and @/lib/utils (cn) — they already exist.
+3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (durable CRUD) — they already exist.
 
 4. Styling — Use Tailwind utilities and src/app/globals.css for tokens, keyframes, and special effects. NO styled-jsx, CSS modules, or @apply rules. Keep @import "tailwindcss" as the first non-comment rule in globals.css. All CSS properties MUST be inside a selector.
 
 5. Structure — src/app/page.tsx is the main app and src/app/globals.css contains global styles. Prefer small helper components in page.tsx so the response cannot be truncated between files. Use src/components/*.tsx only when the complete page and every imported component fit in this response. The runtime entrypoint already exists; do not output src/main.tsx.
 
-6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, or TODOs. Use semantic HTML, accessible labels, keyboard focus states, and responsive layouts at mobile/tablet/desktop sizes.
+6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, TODOs, fake save buttons, or in-memory-only persistence when the request needs data. Use semantic HTML, accessible labels, keyboard focus states, loading/empty/error states, and responsive layouts at mobile/tablet/desktop sizes.
 
 7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids. Honor every concrete detail in the user's prompt.
 
-8. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO external images/fonts (use gradients or lucide-react icons). NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+8. Images — Use user-supplied asset URLs exactly when relevant and preserve their descriptions as meaningful alt text. If the user supplied no suitable image, use original CSS/SVG artwork or lucide-react icons. Never invent, scrape, or hotlink an external image URL.
+
+9. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:

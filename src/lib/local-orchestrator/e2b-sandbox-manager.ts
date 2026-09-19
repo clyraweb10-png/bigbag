@@ -257,6 +257,9 @@ class E2BSandboxManager {
         deployment: { status: "deploying", createdAt: new Date().toISOString() },
       });
       try {
+        if (options.rebuild) {
+          await this.stopDevServer(projectId);
+        }
         const previewUrl = await localSandboxManager.startDevServer(projectId);
         localProjectStore.update(projectId, {
           previewUrl,

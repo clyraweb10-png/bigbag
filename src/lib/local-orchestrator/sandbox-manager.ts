@@ -9,6 +9,7 @@ import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template
 const activeProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
 const startLocks = new Map<string, Promise<string>>();
+const LOCAL_BUILD_TIMEOUT_MS = 120_000;
 
 function killProcessTree(proc: ChildProcess): void {
   if (!proc.pid) return;
@@ -110,6 +111,40 @@ async function findFreePort(preferred: number): Promise<number> {
   return port;
 }
 
+async function buildWorkspace(dir: string, viteBin: string, projectId: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const build = spawn(process.execPath, [viteBin, "build"], {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...process.env, NODE_ENV: "production" },
+    });
+    let output = "";
+    const collect = (data: Buffer) => {
+      output = (output + data.toString()).slice(-8_000);
+    };
+    build.stdout?.on("data", collect);
+    build.stderr?.on("data", collect);
+    const timer = setTimeout(() => {
+      killProcessTree(build);
+      reject(new Error(`Generated app build timed out after ${LOCAL_BUILD_TIMEOUT_MS / 1000}s`));
+    }, LOCAL_BUILD_TIMEOUT_MS);
+    build.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    build.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        console.log(`[local-sandbox] Production build completed for ${projectId}`);
+        resolve();
+      } else {
+        reject(new Error(`Generated app failed to compile${output.trim() ? `:\n${output.trim()}` : ""}`));
+      }
+    });
+  });
+}
+
 export const localSandboxManager = {
   ensureProjectTemplate(projectId: string): void {
     const dir = localProjectStore.getWorkspaceDir(projectId);
@@ -179,10 +214,11 @@ export const localSandboxManager = {
     if (!fs.existsSync(viteBin)) {
       throw new Error(`Vite CLI not found at ${workspaceVite} or ${rootVite}`);
     }
-    console.log(`[local-sandbox] Starting Vite dev server for ${projectId} on port ${record.port}...`);
+    console.log(`[local-sandbox] Building ${projectId} before starting its preview on port ${record.port}...`);
 
     try {
-      const devProc = spawn(process.execPath, [viteBin, "--host", "127.0.0.1", "--port", String(record.port)], {
+      await buildWorkspace(dir, viteBin, projectId);
+      const devProc = spawn(process.execPath, [viteBin, "preview", "--host", "127.0.0.1", "--port", String(record.port)], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -221,7 +257,7 @@ export const localSandboxManager = {
         previewUrl: `/api/preview/${projectId}`
       });
 
-      console.log(`[local-sandbox] Dev server process started for ${projectId} on port ${record.port}, waiting for ready...`);
+      console.log(`[local-sandbox] Production preview started for ${projectId} on port ${record.port}, waiting for ready...`);
       
       // Wait for server to be ready before returning
       const readyPromise = waitForServerReady(record.port)
