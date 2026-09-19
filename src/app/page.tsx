@@ -18,7 +18,7 @@ import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
 import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
 import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
-import { AttachPaperclipIcon } from "@/components/prompt/ComposerIcons";
+import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import {
   Plus, Loader2, Trash2, ArrowRight, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
@@ -719,10 +719,10 @@ export default function DashboardPage() {
 
                   <div className="flex items-center justify-between bg-transparent px-3 py-3 sm:px-4">
                     <div className="flex items-center gap-1.5">
-                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-white/90 hover:text-white dark:text-muted-foreground dark:hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-white/10 dark:hover:bg-white/5">
+                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#0A2540] hover:text-[#051726] dark:text-muted-foreground dark:hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
                         <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
-                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-white dark:text-muted-foreground" /> : <AttachPaperclipIcon className="w-4 h-4" />}
-                        <span className="hidden sm:inline">Attach</span>
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0A2540] dark:text-muted-foreground" /> : <AttachChainIcon className="w-4 h-4 text-[#0A2540] dark:text-white" />}
+                        <span className="hidden sm:inline font-medium">Attach</span>
                       </label>
 
                       <FigmaPromptButton

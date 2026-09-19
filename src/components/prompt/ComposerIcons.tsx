@@ -1,25 +1,31 @@
 import * as React from "react";
 
 /**
- * Blue paperclip attachment icon matching the requested design (Image 1).
+ * Chain link attachment icon matching the requested design (media_1789844203793.png).
  */
-export function AttachPaperclipIcon({ className = "w-4 h-4", ...props }: React.ComponentProps<"svg">) {
+export function AttachChainIcon({ className = "w-4 h-4", ...props }: React.ComponentProps<"svg">) {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
-      stroke="#1B62B5"
-      strokeWidth="2.4"
+      stroke="currentColor"
+      strokeWidth="2.5"
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
       aria-hidden="true"
       {...props}
     >
-      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+      <g transform="rotate(-45 12 12)">
+        <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+        <path d="M15 7h2a5 5 0 0 1 5 5 5 5 0 0 1-5 5h-2" />
+        <line x1="8" y1="12" x2="16" y2="12" />
+      </g>
     </svg>
   );
 }
+
+export const AttachPaperclipIcon = AttachChainIcon;
 
 /**
  * Official multicolor Figma logo matching Image 2.

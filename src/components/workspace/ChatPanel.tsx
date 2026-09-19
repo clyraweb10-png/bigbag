@@ -8,7 +8,7 @@ import {
   Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
   Lightbulb,
 } from "lucide-react";
-import { AttachPaperclipIcon } from "@/components/prompt/ComposerIcons";
+import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import { vcaasApi } from "@/lib/vcaas";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { GithubPromptButton } from "@/components/prompt/GithubPromptButton";
@@ -866,9 +866,9 @@ export function ChatPanel({
             <div className="flex items-center gap-0.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-white/10 dark:hover:bg-accent text-white/90 hover:text-white dark:text-muted-foreground dark:hover:text-foreground transition-colors">
+                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-accent text-[#0A2540] hover:text-[#051726] dark:text-muted-foreground dark:hover:text-foreground transition-colors">
                     <input type="file" multiple className="hidden" onChange={handleFileUpload} accept="image/*,.pdf,.svg" disabled={isBuilding} />
-                    {uploading ? <Loader2 className="w-4 h-4 text-white dark:text-muted-foreground animate-spin" /> : <AttachPaperclipIcon className="w-4 h-4" />}
+                    {uploading ? <Loader2 className="w-4 h-4 text-[#0A2540] dark:text-muted-foreground animate-spin" /> : <AttachChainIcon className="w-4 h-4 text-[#0A2540] dark:text-white" />}
                     <span className="sr-only">{t("prompt.attachments.attach")}</span>
                   </label>
                 </TooltipTrigger>
