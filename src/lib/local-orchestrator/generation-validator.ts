@@ -16,6 +16,21 @@ const FORBIDDEN_OUTPUTS = new Set([
   "src/main.tsx",
   "src/app/layout.tsx",
 ]);
+
+/**
+ * Files owned by the generated-app runtime rather than by the model. The
+ * validator still reports these when called directly, while the generation
+ * pipeline uses this predicate to discard harmless extra blocks before a
+ * valid page is assessed.
+ */
+export function isRuntimeOwnedGeneratedPath(value: string): boolean {
+  const normalized = normalizeGeneratedPath(value);
+  return (
+    FORBIDDEN_OUTPUTS.has(normalized) ||
+    normalized.endsWith(".html") ||
+    /^src\/app\/layout\.[cm]?[jt]sx?$/.test(normalized)
+  );
+}
 const PLACEHOLDER_MARKERS = [
   "Generation Issue",
   "Awaiting Retry",
@@ -309,7 +324,7 @@ export function generationValidationIssues(
     }
     if (generatedPaths.has(file.path)) issues.push(`duplicate file block: ${file.path}`);
     generatedPaths.add(file.path);
-    if (FORBIDDEN_OUTPUTS.has(file.path)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
+    if (isRuntimeOwnedGeneratedPath(file.path)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);

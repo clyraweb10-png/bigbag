@@ -101,6 +101,10 @@ SANDBOX_PROVIDER=e2b
 GEMINI_API_KEY=your_gemini_api_key
 TELNYX_API_KEY=your_telnyx_api_key
 
+# Fast chat and planning tier:
+GROQ_API_KEY=your_groq_api_key
+GLM_API_KEY=your_zhipu_bigmodel_api_key
+
 E2B_API_KEY=your_e2b_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
 TURSO_DATABASE_URL=libsql://your-database.turso.io
@@ -127,6 +131,8 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
 | `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
 | `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
+| `GROQ_API_KEY` | ⬜ Optional | Primary fast provider for chat, implementation planning, and plan refinement. |
+| `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
 | `TURSO_DATABASE_URL` | ✅ Local orchestrator | Durable metadata, complete generated source, and compiled preview artifacts. |
