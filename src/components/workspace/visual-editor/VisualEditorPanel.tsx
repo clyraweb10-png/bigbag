@@ -9,7 +9,6 @@ import {
     LoaderIcon,
     MousePointerClickIcon,
     PaletteIcon,
-    PencilIcon,
     SparklesIcon,
     TypeIcon,
     UploadIcon,
@@ -162,7 +161,12 @@ export function VisualEditorPanel({
         >
             <header className="border-border/60 flex shrink-0 items-center gap-2 border-b px-3 py-2">
                 {/* The pencil, matching the composer's toggle — one icon means one feature. */}
-                <PencilIcon className="text-primary size-4 shrink-0" aria-hidden />
+                <span className="relative flex items-center justify-center size-4 shrink-0" aria-hidden>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/pencil-icon.png" alt="" className="size-4 object-contain block dark:hidden" />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/pencil-icon-dark.png" alt="" className="size-4 object-contain hidden dark:block" />
+                </span>
                 <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
                     {t("workspace.visualEditor.title")}
                 </h2>

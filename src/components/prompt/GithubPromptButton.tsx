@@ -5,7 +5,6 @@ import {
     ArrowDownToLineIcon,
     ExternalLinkIcon,
     FileKey2Icon,
-    GithubIcon,
     LoaderIcon,
     SettingsIcon,
     TriangleAlertIcon,
@@ -164,7 +163,12 @@ export function GithubPromptButton({
                         onClick={onOpenModal}
                         aria-label={t("workspace.github.title")}
                     >
-                        <GithubIcon className="size-4" aria-hidden />
+                        <span className="relative flex items-center justify-center size-4">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src="/github-light.png" alt="GitHub" className="size-4 object-contain block dark:hidden" />
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src="/github-dark.png" alt="GitHub" className="size-4 object-contain hidden dark:block" />
+                        </span>
                     </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t("workspace.github.connect")}</TooltipContent>
@@ -212,10 +216,12 @@ export function GithubPromptButton({
                         >
                             {/* Pulling is the one thing that happens *to* the button
                                 rather than being a state of it — so it animates. */}
-                            <GithubIcon
-                                className={cn("size-4", pulling && "animate-pulse")}
-                                aria-hidden
-                            />
+                            <span className="relative flex items-center justify-center size-4">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src="/github-light.png" alt="GitHub" className={cn("size-4 object-contain block dark:hidden", pulling && "animate-pulse")} />
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src="/github-dark.png" alt="GitHub" className={cn("size-4 object-contain hidden dark:block", pulling && "animate-pulse")} />
+                            </span>
                             <span className="sr-only">
                                 {t(
                                     needsAttention

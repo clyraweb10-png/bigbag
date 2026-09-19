@@ -5,14 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import {
   ArrowRight, Square, Loader2, CodeXml, AlertCircle,
   KeyRound, FileDiff, ChevronDown, ChevronUp, X, Check,
-  Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
+  Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight,
   Lightbulb,
 } from "lucide-react";
 import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import { vcaasApi } from "@/lib/vcaas";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { GithubPromptButton } from "@/components/prompt/GithubPromptButton";
-import { RunOptionsMenu, RunOptionsChips, useRunOptions } from "@/components/workspace/RunOptionsMenu";
+import { RunOptionsChips, useRunOptions } from "@/components/workspace/RunOptionsMenu";
 import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
 import { filesFromClipboard } from "@/lib/attachments";
 import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
@@ -894,8 +894,6 @@ export function ChatPanel({
                   disabled={isBuilding}
                 />
               )}
-              {/* ⭐ MODEL · EFFORT · FAST MODE for the NEXT prompt — the platform's menu. */}
-              <RunOptionsMenu value={runOptions} onChange={setRunOptions} disabled={isBuilding} />
               {visualEditAvailable && onToggleVisualEdit && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -908,7 +906,12 @@ export function ChatPanel({
                       aria-pressed={visualEditActive}
                       onClick={onToggleVisualEdit}
                     >
-                      <PencilIcon className="size-4" />
+                      <span className="relative flex items-center justify-center size-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/pencil-icon.png" alt="Edit" className="size-4 object-contain block dark:hidden" />
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/pencil-icon-dark.png" alt="Edit" className="size-4 object-contain hidden dark:block" />
+                      </span>
                       <span className="sr-only">{t(visualEditActive ? "workspace.visualEditor.close" : "workspace.visualEditor.open")}</span>
                     </Button>
                   </TooltipTrigger>
