@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { AUTH_COOKIE, isCloudOperator, verifyAuthSession } from "./lib/auth-session";
+import { isLocalOrchestratorEnabled } from "./lib/orchestrator-mode";
 
 const isProduction = process.env.NODE_ENV === "production";
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
@@ -9,6 +11,7 @@ const appOrigin = appUrl ? new URL(appUrl).origin : "";
 const extraAllowedOrigins = new Set(
   (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean)
 );
+const CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Requested-With, X-BigBag-Capability";
 
 /**
  * Check if an origin is allowed for CORS.
@@ -38,7 +41,7 @@ function addCorsHeaders(response: NextResponse, request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/preview/")) {
     response.headers.set("Access-Control-Allow-Origin", origin === "null" ? "*" : (origin || "*"));
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    response.headers.set("Access-Control-Allow-Headers", CORS_ALLOWED_HEADERS);
     response.headers.set("Access-Control-Max-Age", "86400");
     return response;
   }
@@ -46,7 +49,7 @@ function addCorsHeaders(response: NextResponse, request: NextRequest) {
   if (origin && isAllowedOrigin(origin, request)) {
     response.headers.set("Access-Control-Allow-Origin", origin);
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    response.headers.set("Access-Control-Allow-Headers", CORS_ALLOWED_HEADERS);
     response.headers.set("Access-Control-Allow-Credentials", "true");
     response.headers.set("Access-Control-Max-Age", "86400");
     response.headers.set("Vary", "Origin");
@@ -64,9 +67,8 @@ function addCspHeaders(response: NextResponse, request: NextRequest) {
   return response;
 }
 
-// NOTE: Authentication has been removed — the platform is fully open and every
-// route is public. No user account is required. This proxy now only handles
-// CORS and CSP headers (needed for the live preview iframe and custom domains).
+// API authentication is an optimistic signed-cookie check here and is repeated
+// through tenant ownership at the data boundary. Preview documents remain public.
 export async function proxy(request: NextRequest) {
   // Handle CORS preflight requests
   if (request.method === "OPTIONS") {
@@ -76,7 +78,25 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  // Every route is public — just attach CORS + CSP headers and continue.
+  const path = request.nextUrl.pathname;
+  const protectedApi = path === "/api/planner" || path.startsWith("/api/vcaas/") || path.startsWith("/api/visual-edit/");
+  const session = protectedApi ? verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value) : null;
+  if (protectedApi && !session) {
+    const response = NextResponse.json({ ok: false, error: "Sign in with Google to continue" }, { status: 401 });
+    addCorsHeaders(response, request);
+    addCspHeaders(response, request);
+    return response;
+  }
+  const usesOperatorCredential = path.startsWith("/api/vcaas/") || path.startsWith("/api/visual-edit/");
+  if (session && usesOperatorCredential && !isLocalOrchestratorEnabled() && !isCloudOperator(session)) {
+    const response = NextResponse.json({ ok: false, error: "This account is not enrolled as a cloud operator" }, { status: 403 });
+    addCorsHeaders(response, request);
+    addCspHeaders(response, request);
+    return response;
+  }
+
+  // Browser pages render the client auth gate; sensitive APIs also enforce the
+  // signed HttpOnly session above so bypassing the UI cannot spend provider keys.
   const response = NextResponse.next();
   addCorsHeaders(response, request);
   addCspHeaders(response, request);

@@ -126,6 +126,87 @@ function sourceSyntaxIssue(filePath: string, content: string): string | null {
   return diagnostic ? ts.flattenDiagnosticMessageText(diagnostic.messageText, " ") : null;
 }
 
+const UNSUPPORTED_DIRECT_DATABASE_METHODS = new Set([
+  "list", "get", "create", "update", "remove", "putMany", "query", "insert", "delete",
+]);
+
+function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): boolean {
+  const compilerOptions: ts.CompilerOptions = {
+    noLib: true,
+    noResolve: true,
+    target: ts.ScriptTarget.Latest,
+    jsx: ts.JsxEmit.ReactJSX,
+  };
+  const parsedSource = sourceFileFor(filePath, content);
+  const host = ts.createCompilerHost(compilerOptions, true);
+  host.fileExists = (name) => name === filePath;
+  host.readFile = (name) => name === filePath ? content : undefined;
+  host.getSourceFile = (name) => name === filePath ? parsedSource : undefined;
+  const program = ts.createProgram([filePath], compilerOptions, host);
+  const sourceFile = program.getSourceFile(filePath) || parsedSource;
+  const checker = program.getTypeChecker();
+  const bindings = new Set<ts.Symbol>();
+  const addBinding = (identifier: ts.Identifier | undefined) => {
+    const symbol = identifier && checker.getSymbolAtLocation(identifier);
+    if (symbol) bindings.add(symbol);
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== "@/lib/db"
+    ) continue;
+    const clause = statement.importClause;
+    addBinding(clause?.name);
+    if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+      for (const element of clause.namedBindings.elements) {
+        if ((element.propertyName?.text || element.name.text) === "db") addBinding(element.name);
+      }
+    }
+  }
+  if (bindings.size === 0) return false;
+
+  // Follow simple local aliases (`const store = client`) so renaming the import
+  // cannot bypass validation. Repeat because aliases may form a short chain.
+  let addedAlias = true;
+  while (addedAlias) {
+    addedAlias = false;
+    const visitAliases = (node: ts.Node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        ts.isIdentifier(node.initializer)
+      ) {
+        const sourceSymbol = checker.getSymbolAtLocation(node.initializer);
+        const aliasSymbol = checker.getSymbolAtLocation(node.name);
+        if (sourceSymbol && aliasSymbol && bindings.has(sourceSymbol) && !bindings.has(aliasSymbol)) {
+          bindings.add(aliasSymbol);
+          addedAlias = true;
+        }
+      }
+      ts.forEachChild(node, visitAliases);
+    };
+    visitAliases(sourceFile);
+  }
+
+  let unsupported = false;
+  const visitCalls = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      Boolean(checker.getSymbolAtLocation(node.expression.expression) &&
+        bindings.has(checker.getSymbolAtLocation(node.expression.expression)!)) &&
+      UNSUPPORTED_DIRECT_DATABASE_METHODS.has(node.expression.name.text)
+    ) unsupported = true;
+    if (!unsupported) ts.forEachChild(node, visitCalls);
+  };
+  visitCalls(sourceFile);
+  return unsupported;
+}
+
 function importSpecifiers(filePath: string, content: string): string[] {
   if (filePath.endsWith(".css")) return cssImportSpecifiers(content);
 
@@ -233,6 +314,9 @@ export function generationValidationIssues(
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
       if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);
+      if (hasUnsupportedDirectDatabaseCall(file.path, file.content)) {
+        issues.push(`${file.path} invents a database method; use db.collection(name).list/get/create/update/remove`);
+      }
     }
   }
 

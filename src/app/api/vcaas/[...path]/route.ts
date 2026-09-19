@@ -15,12 +15,13 @@ import {
   requireDurablePersistence,
 } from "@/lib/local-orchestrator/durable-project-store";
 import type { AppRecord } from "@/lib/local-orchestrator/durable-project-store";
-import type { DbProperty, DbTable } from "@/lib/vcaas-types";
+import type { ConversationMessage, DbProperty, DbTable } from "@/lib/vcaas-types";
 import {
   attachLocalTenantCookie,
   isPreviewInitiatedRequest,
-  resolveLocalTenant,
+  tenantContextForIdentity,
 } from "@/lib/local-orchestrator/tenant-context";
+import { AUTH_COOKIE, isCloudOperator, verifyAuthSession } from "@/lib/auth-session";
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 const LOCAL_REBUILD_TIMEOUT_MS = 10 * 60_000;
@@ -289,6 +290,35 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       );
     }
 
+    // Local-only planner messages must survive navigation and refresh just like
+    // code-engine messages. Cloud mode never calls this endpoint.
+    if (subRoute === "agent/conversation" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const rawMessages = Array.isArray(body.messages) ? body.messages.slice(0, 4) : [];
+      const messages: ConversationMessage[] = rawMessages.flatMap((entry: unknown) => {
+        if (!entry || typeof entry !== "object") return [];
+        const value = entry as Record<string, unknown>;
+        if ((value.author !== "user" && value.author !== "agent") || typeof value.message !== "string") return [];
+        const message = value.message.trim().slice(0, 16_000);
+        if (!message) return [];
+        return [{
+          author: value.author,
+          message,
+          messageType: "regular",
+          createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
+        } as ConversationMessage];
+      });
+      if (messages.length === 0) {
+        return NextResponse.json({ ok: false, error: "No valid conversation messages" }, { status: 400 });
+      }
+      const record = localProjectStore.getRecord(projectId);
+      localProjectStore.update(projectId, {
+        conversation: [...(record?.conversation || []), ...messages],
+      });
+      await localProjectStore.flush(projectId);
+      return NextResponse.json({ ok: true, data: { saved: messages.length } }, { status: 200 });
+    }
+
     // /projects/:id/agent/start
     if (subRoute === "agent/start" && method === "POST") {
       const body = await req.json().catch(() => ({}));
@@ -506,6 +536,10 @@ async function handleRequest(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   try {
+    const session = verifyAuthSession(req.cookies.get(AUTH_COOKIE)?.value);
+    if (!session) {
+      return NextResponse.json({ ok: false, error: "Sign in with Google to continue" }, { status: 401 });
+    }
     const { path } = await params;
 
     // Route to local orchestrator when in local mode
@@ -513,9 +547,16 @@ async function handleRequest(
       if (isPreviewInitiatedRequest(req)) {
         return NextResponse.json({ ok: false, error: "Preview applications cannot access builder APIs" }, { status: 403 });
       }
-      const tenant = resolveLocalTenant(req);
+      const tenant = tenantContextForIdentity(session.sub);
       const response = await handleLocalRequest(req, path, tenant.tenantId);
       return attachLocalTenantCookie(response, tenant);
+    }
+
+    // Cloud mode forwards one privileged operator credential. It is deliberately
+    // single-operator until a deployment supplies its own user/project mapping;
+    // never expose that key's complete project set to any signed-in user.
+    if (!isCloudOperator(session)) {
+      return NextResponse.json({ ok: false, error: "This account is not enrolled as a cloud operator" }, { status: 403 });
     }
 
     // Upstream Totalum fallback

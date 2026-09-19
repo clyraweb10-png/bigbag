@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Loader2, Trash2, SendHorizontal, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
-  AlertCircle, MoreVertical, AlertTriangle, CodeXml,
+  AlertCircle, MoreVertical, AlertTriangle, CodeXml, Sparkles, Bot,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -33,7 +33,9 @@ import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADV
 import { SetupBanners } from "@/components/SetupBanners";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { AuthUserMenu } from "@/components/auth/AuthProvider";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
+import { classifyIntent, type ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 type ViewMode = "cards" | "table";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -153,12 +155,36 @@ function normalizeId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 35);
 }
 
+type LandingMessage = { role: "user" | "assistant"; content: string };
+
+function LandingMessageContent({ text }: { text: string }) {
+  return (
+    <div className="space-y-1 text-sm leading-relaxed">
+      {text.split("\n").map((line, index) => {
+        const key = `${index}-${line.slice(0, 12)}`;
+        if (line.startsWith("## ")) return <h3 key={key} className="pt-2 text-base font-semibold text-foreground">{line.slice(3)}</h3>;
+        if (line.startsWith("**") && line.endsWith("**")) return <p key={key} className="pt-1 font-semibold text-foreground">{line.slice(2, -2)}</p>;
+        if (line.startsWith("- ") || line.startsWith("✓ ") || line.startsWith("✗ ")) {
+          return <p key={key} className="flex gap-2"><span className="text-primary">•</span><span>{line.replace(/^[-✓✗]\s*/, "")}</span></p>;
+        }
+        if (line === "---") return <hr key={key} className="my-3 border-border" />;
+        if (!line.trim()) return <div key={key} className="h-1" />;
+        return <p key={key}>{line.replace(/\*\*/g, "")}</p>;
+      })}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [firstPrompt, setFirstPrompt] = useState("");
   const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
+  const [landingMessages, setLandingMessages] = useState<LandingMessage[]>([]);
+  const [landingStage, setLandingStage] = useState<ProjectStage>("idle");
+  const [plannerRunning, setPlannerRunning] = useState(false);
+  const [approvedPrompt, setApprovedPrompt] = useState("");
 
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; imageDescription: string; file: File }[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -280,13 +306,66 @@ export default function DashboardPage() {
   const safePage = Math.min(page, totalPages);
   const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const openBuildModal = () => {
-    if (!firstPrompt.trim() && attachedFiles.length === 0) return;
-    const words = firstPrompt.trim().split(/\s+/).slice(0, 4).join("-");
+  const openBuildModal = (promptOverride?: string) => {
+    const buildPrompt = promptOverride?.trim() || approvedPrompt.trim();
+    if (!buildPrompt && attachedFiles.length === 0) return;
+    const words = buildPrompt.split(/\s+/).slice(0, 4).join("-");
     const auto = normalizeId(words) || `app-${Math.random().toString(36).slice(2, 7)}`;
     setBuildName(auto);
     setBuildError(null);
     setNameModalOpen(true);
+  };
+
+  const submitLandingMessage = async () => {
+    const message = firstPrompt.trim();
+    if ((!message && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
+    if (!message) {
+      const attachmentPrompt = "Build a complete application using the attached files as the primary product and visual reference.";
+      setApprovedPrompt(attachmentPrompt);
+      setFirstPrompt("");
+      openBuildModal(attachmentPrompt);
+      return;
+    }
+
+    const lastAgentMessage = [...landingMessages].reverse().find((entry) => entry.role === "assistant")?.content;
+    const intent = classifyIntent(message, landingStage, lastAgentMessage);
+    if (intent === "confirm_build") {
+      setFirstPrompt("");
+      openBuildModal();
+      return;
+    }
+
+    const plannerIntent = intent === "direct_edit" ? "plan" : intent;
+    if (plannerIntent !== "chat" && plannerIntent !== "plan" && plannerIntent !== "update_plan") return;
+
+    const nextHistory = [...landingMessages, { role: "user" as const, content: message }];
+    setLandingMessages(nextHistory);
+    setFirstPrompt("");
+    setPlannerRunning(true);
+    if (plannerIntent === "plan") {
+      setLandingStage("planning");
+      setApprovedPrompt(message);
+    }
+
+    try {
+      const response = await fetch("/api/planner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: plannerIntent, message, history: landingMessages.slice(-10) }),
+      });
+      const payload = await response.json() as { ok: boolean; data?: { text?: string }; error?: string };
+      if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "The assistant is unavailable.");
+
+      setLandingMessages((current) => [...current, { role: "assistant", content: payload.data!.text! }]);
+      if (plannerIntent === "plan" || plannerIntent === "update_plan") setLandingStage("awaiting_confirmation");
+    } catch (error) {
+      setLandingMessages(landingMessages);
+      setFirstPrompt(message);
+      setLandingStage(landingMessages.length === 0 ? "idle" : landingStage);
+      toast.error(error instanceof Error ? error.message : "The assistant is unavailable.");
+    } finally {
+      setPlannerRunning(false);
+    }
   };
 
   const confirmBuild = async () => {
@@ -302,40 +381,12 @@ export default function DashboardPage() {
 
     setBuildCreating(true);
     setBuildError(null);
+    const latestPlan = [...landingMessages].reverse().find((entry) => entry.role === "assistant" && entry.content.includes("Implementation Plan"))?.content;
+    const buildInstruction = latestPlan
+      ? `Build the complete application from this approved request and implementation plan.\n\nOriginal request:\n${approvedPrompt}\n\n${latestPlan}`
+      : approvedPrompt;
 
-    if (attachedFiles.length === 0) {
-      const launched = await vcaasApi.projects.launch({
-        projectId: id,
-        prompt: firstPrompt.trim(),
-        description: firstPrompt.trim().slice(0, 200),
-        ...(figmaToken ? { figma: { token: figmaToken } } : {}),
-      });
-      setFigmaToken(null);
-
-      if (!launched.ok || !launched.data) {
-        setBuildError(launched.error || `Could not create "${id}". Please try a different name.`);
-        setBuildCreating(false);
-        return;
-      }
-
-      const created = launched.data.projectId;
-      if (launched.data.requestedProjectId && launched.data.requestedProjectId !== created) {
-        toast.info(`"${launched.data.requestedProjectId}" was taken — your project is "${created}".`);
-      }
-      if (!launched.data.agent?.started) {
-        launched.data.warnings?.forEach(w => w?.step !== "figma" && w?.message && toast.warning(w.message));
-        try {
-          sessionStorage.setItem(`bigbag:pendingPrompt:${created}`, firstPrompt.trim());
-        } catch { /* ignore */ }
-      }
-      if (launched.data.warnings?.some(w => w?.step === "figma")) {
-        toast.warning(t("workspace.figma.pendingConnectFailed"));
-      }
-      router.push(`/project/${created}`);
-      return;
-    }
-
-    const res = await vcaasApi.projects.create({ projectId: id, description: firstPrompt.trim().slice(0, 200) });
+    const res = await vcaasApi.projects.create({ projectId: id, description: approvedPrompt.slice(0, 200) });
     if (!res.ok) {
       setBuildError(res.error || `Could not create "${id}".`);
       setBuildCreating(false);
@@ -358,7 +409,8 @@ export default function DashboardPage() {
       toast.error(`${failure.name}: ${failure.reason}`, { description: "The agent will not see this file." });
     }
     try {
-      sessionStorage.setItem(`bigbag:pendingPrompt:${id2}`, firstPrompt.trim());
+      sessionStorage.setItem(`bigbag:pendingPrompt:${id2}`, buildInstruction);
+      sessionStorage.setItem(`bigbag:pendingDisplayPrompt:${id2}`, approvedPrompt);
       if (uploadedFiles.length > 0) sessionStorage.setItem(`bigbag:pendingFiles:${id2}`, JSON.stringify(uploadedFiles));
     } catch { /* ignore */ }
     router.push(`/project/${id2}`);
@@ -393,6 +445,7 @@ export default function DashboardPage() {
           <BigBagLogo size="md" />
           <div className="flex items-center gap-2">
             <ThemeToggle showLabel={false} />
+            <AuthUserMenu />
           </div>
         </div>
       </header>
@@ -403,20 +456,55 @@ export default function DashboardPage() {
           <div className={hasProjects || keyConfigured === false ? "mb-10" : "flex flex-col items-center justify-center min-h-[50vh]"}>
             <div className="w-full max-w-2xl mx-auto">
               {!hasProjects && (
-                <div className="mb-6 flex justify-center">
-                  <BigBagLogo size="lg" />
+                <div className="mb-6 text-center">
+                  <div className="mb-4 flex justify-center"><BigBagLogo size="lg" /></div>
+                  <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">What do you want to build?</h1>
+                  <p className="mt-2 text-sm text-muted-foreground">Chat through the idea, approve the plan, then watch the real app come alive.</p>
                 </div>
               )}
 
               {/* Simple & Modern Floating Card */}
               <div className="rounded-2xl border border-border/80 dark:border-white/10 bg-card/80 dark:bg-[#121210]/90 backdrop-blur-xl shadow-lg transition-all duration-300 hover:border-border dark:hover:border-white/20 focus-within:border-foreground/30 dark:focus-within:border-white/30 focus-within:ring-2 focus-within:ring-ring/20 overflow-hidden">
+                {landingMessages.length > 0 && (
+                  <div className="max-h-[430px] space-y-4 overflow-y-auto border-b border-border/60 px-4 py-5 sm:px-5">
+                    {landingMessages.map((message, index) => message.role === "user" ? (
+                      <div key={index} className="flex justify-end">
+                        <div className="max-w-[88%] rounded-2xl rounded-br-sm bg-secondary px-4 py-2.5 text-sm text-foreground">
+                          {message.content}
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={index} className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <Bot className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1 text-muted-foreground">
+                          <LandingMessageContent text={message.content} />
+                        </div>
+                      </div>
+                    ))}
+                    {plannerRunning && (
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary"><Sparkles className="h-4 w-4 animate-pulse" /></div>
+                        <span>{landingStage === "planning" ? "Creating a focused implementation plan…" : "Thinking…"}</span>
+                      </div>
+                    )}
+                    {landingStage === "awaiting_confirmation" && !plannerRunning && (
+                      <div className="pl-10">
+                        <Button onClick={() => openBuildModal()} className="rounded-xl" variant="glow">
+                          <Sparkles className="mr-2 h-4 w-4" /> Proceed to build
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <textarea
                   ref={heroTextareaRef}
                   value={firstPrompt}
                   onChange={(e) => setFirstPrompt(e.target.value)}
-                  placeholder="Describe your app... e.g. 'A modern task management app with kanban boards and AI analytics'"
-                  className="w-full min-h-[95px] sm:min-h-[115px] resize-none text-[15px] p-5 pb-2 outline-none placeholder:text-muted-foreground/60 bg-transparent text-foreground leading-relaxed"
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); openBuildModal(); } }}
+                  placeholder={landingStage === "awaiting_confirmation" ? "Tell me what to change, or click Proceed…" : "Say hi, or describe the app you want to build…"}
+                  className={`w-full resize-none text-[15px] p-5 pb-2 outline-none placeholder:text-muted-foreground/60 bg-transparent text-foreground leading-relaxed ${landingMessages.length ? "min-h-[82px]" : "min-h-[95px] sm:min-h-[115px]"}`}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                   onPaste={handleHeroPaste}
                 />
 
@@ -449,13 +537,13 @@ export default function DashboardPage() {
                   </div>
 
                   <Button
-                    onClick={openBuildModal}
-                    disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || buildCreating}
+                    onClick={() => void submitLandingMessage()}
+                    disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                     size="sm"
                     className="flex items-center gap-1.5 font-medium px-4 h-8 rounded-xl bg-foreground text-background hover:opacity-90 dark:bg-white dark:text-black dark:hover:bg-white/90 transition-all active:scale-[0.98] disabled:opacity-40 shadow-xs"
                   >
-                    <SendHorizontal className="w-3.5 h-3.5" />
-                    <span>Build App</span>
+                    {plannerRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="w-3.5 h-3.5" />}
+                    <span>Send</span>
                   </Button>
                 </div>
               </div>

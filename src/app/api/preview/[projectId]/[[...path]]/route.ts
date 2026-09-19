@@ -594,8 +594,11 @@ async function handle(
             return serveAppData(request, projectId, targetSegments);
         }
         const localRecord = localProjectStore.getRecord(projectId);
+        const usesDisposableE2b = process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b";
         const runningOrigin = localSandboxManager.getRunningOrigin(projectId) ||
-            (localRecord?.serverStatus === "Active" ? `http://127.0.0.1:${localRecord.port}` : null);
+            (!usesDisposableE2b && localRecord?.serverStatus === "Active"
+                ? `http://127.0.0.1:${localRecord.port}`
+                : null);
         if (runningOrigin) {
             return proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability);
         }

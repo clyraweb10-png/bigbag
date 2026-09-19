@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
 
 export const TENANT_COOKIE = "bigbag_tenant";
@@ -75,6 +75,17 @@ function parseCookie(value: string | undefined): string | null {
 export interface LocalTenantContext {
   tenantId: string;
   cookieValue?: string;
+}
+
+export function tenantContextForIdentity(identity: string): LocalTenantContext {
+  const bytes = createHash("sha256").update(`firebase:${identity}`).digest().subarray(0, 16);
+  // RFC 4122 variant/version bits keep the deterministic identifier compatible
+  // with the existing UUID-only tenant storage contract.
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  const tenantId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return { tenantId, cookieValue: `${tenantId}.${signature(tenantId)}` };
 }
 
 export function resolveLocalTenant(request: NextRequest): LocalTenantContext {

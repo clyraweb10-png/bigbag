@@ -55,12 +55,29 @@ const CONFIRM_PHRASES: string[] = [
  * Checked before deciding to generate a plan.
  */
 const CHAT_PHRASES: RegExp[] = [
-  /^(hi|hello|hey|howdy|yo|sup)\b/,
-  /^(thanks|thank you|thx|ty)\b/,
-  /^(ok|okay|got it|sounds good|great|nice|cool|awesome)\b/,
-  /^(what|how|why|when|where|who|can you|do you)\b/,
-  /^(help|what can you|what do you)\b/,
+  /^(hi|hello|hey|howdy|yo|sup)[\s!?.]*$/,
+  /^(thanks|thank you|thx|ty)[\s!?.]*$/,
+  /^(ok|okay|got it|sounds good|great|nice|cool|awesome)[\s!?.]*$/,
+  /^(help|what can you do|what do you do)[\s!?.]*$/,
 ];
+
+const BUILD_ACTION = /\b(build|create|make|develop|design|generate|recreate|clone|implement|add|change|remove|update|fix|replace|redesign)\b/i;
+const APP_SUBJECT = /\b(app|application|website|site|page|landing page|dashboard|portal|platform|store|shop|saas|crm|portfolio|blog|navbar|header|hero|section|form|auth|login|checkout|database)\b/i;
+const QUESTION_START = /^(what|how|why|when|where|who|can you|could you|would you|do you|is there)\b/i;
+const EXPLANATORY_QUESTION_START = /^(what|how|why|when|where|who)\b/i;
+const IMPLICIT_EDIT = /\b(should|needs?|must|want|prefer|hate|(?:do not|don't) like|too (?:big|small|dark|light|busy|plain)|more|less|bigger|smaller|different|wrong|broken)\b/i;
+
+function isCasualChat(message: string): boolean {
+  if (CHAT_PHRASES.some((re) => re.test(message))) return true;
+  if (BUILD_ACTION.test(message) && APP_SUBJECT.test(message)) return false;
+  return QUESTION_START.test(message);
+}
+
+function isActiveEditRequest(message: string): boolean {
+  if (EXPLANATORY_QUESTION_START.test(message)) return false;
+  if (BUILD_ACTION.test(message)) return true;
+  return APP_SUBJECT.test(message) && IMPLICIT_EDIT.test(message);
+}
 
 /**
  * Classify the user's intent based on their message and the current project stage.
@@ -76,9 +93,6 @@ export function classifyIntent(
 ): UserIntent {
   const norm = message.trim().toLowerCase();
 
-  // Active project always goes to the code engine.
-  if (stage === "active") return "direct_edit";
-
   // Code engine is already running — don't re-route.
   if (stage === "building") return "chat";
 
@@ -89,13 +103,27 @@ export function classifyIntent(
   if (stage === "awaiting_confirmation") {
     const isConfirm = CONFIRM_PHRASES.some((phrase) => norm.includes(phrase));
     if (isConfirm) return "confirm_build";
+    if (isCasualChat(norm)) return "chat";
     // Anything else refines the plan.
     return "update_plan";
   }
 
+  // An active project still deserves a normal conversational assistant. Only
+  // change code when the message actually asks for a product or UI change.
+  if (stage === "active") return isActiveEditRequest(norm) ? "direct_edit" : "chat";
+
   // Idle stage: distinguish chat from a real app idea.
   // Confirm phrases at idle still go to plan (they have no plan to confirm yet).
-  if (CHAT_PHRASES.some((re) => re.test(norm))) return "chat";
+  if (isCasualChat(norm)) return "chat";
+
+  // URLs are explicit build/reference requests even when the surrounding text
+  // is short (for example, "clone https://example.com").
+  if (/https?:\/\//i.test(norm)) return "plan";
+
+  if (BUILD_ACTION.test(norm) && APP_SUBJECT.test(norm)) return "plan";
+
+  // Compact ideas such as "portfolio website" should not be mistaken for chat.
+  if (APP_SUBJECT.test(norm) && norm.split(/\s+/).filter(Boolean).length >= 2) return "plan";
 
   // Very short messages are chitchat.
   const wordCount = norm.split(/\s+/).filter(Boolean).length;
@@ -134,4 +162,39 @@ export function inferStageFromConversation(
   }
 
   return "idle";
+}
+
+/**
+ * Turn an approved planning conversation into the instruction consumed by the
+ * code engine. Confirmation copy such as "proceed" is UI intent, not a useful
+ * generation prompt, so the engine receives the actual request and latest plan.
+ */
+export function approvedBuildInstruction(
+  messages: Array<{ author: string; message: string }>,
+  fallback: string
+): string {
+  let planIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.author === "agent" && message.message.includes("Implementation Plan")) {
+      planIndex = index;
+      break;
+    }
+  }
+  if (planIndex < 0) return fallback;
+
+  const plan = messages[planIndex].message.trim();
+  const requestContext = messages
+    .slice(0, planIndex)
+    .filter((message) => message.author === "user" && message.message.trim())
+    .map((message) => message.message.trim());
+  const originalRequest = requestContext.length === 1
+    ? requestContext[0]
+    : requestContext.map((message, index) => `${index + 1}. ${message}`).join("\n");
+
+  return [
+    "Build the complete application from the approved request and implementation plan.",
+    originalRequest ? `Original request:\n${originalRequest}` : "",
+    plan,
+  ].filter(Boolean).join("\n\n");
 }
