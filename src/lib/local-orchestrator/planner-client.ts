@@ -99,6 +99,7 @@ export async function callPlanner(
 
   const glmApiKey = process.env.GLM_API_KEY;
   const glmBaseUrl = process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
+  const glmModel = process.env.GLM_MODEL || "GLM-4.7-Flash";
 
   const fullMessages: OpenAIMessage[] = [
     { role: "system", content: systemPrompt },
@@ -129,7 +130,7 @@ export async function callPlanner(
       const text = await callOpenAICompat(
         glmBaseUrl,
         glmApiKey,
-        "GLM-4.7-Flash",
+        glmModel,
         fullMessages,
         1500 // GLM-4.7-Flash is a reasoning model; needs 1000+ tokens minimum
       );
