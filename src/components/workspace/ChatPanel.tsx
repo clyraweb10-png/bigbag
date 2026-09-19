@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
-  SendHorizontal, Square, Loader2, CodeXml, AlertCircle,
+  ArrowRight, Square, Loader2, CodeXml, AlertCircle,
   KeyRound, FileDiff, ChevronDown, ChevronUp, Paperclip, X, Check,
   Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
   Lightbulb,
@@ -919,8 +919,9 @@ export function ChatPanel({
               <button onClick={() => setConfirmingStop(true)} aria-label={t("workspace.chat.stop")} className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors"><Square className="w-3 h-3 text-white" /></button>
             ) : (
               <button onClick={handleSend} disabled={(!prompt.trim() && attachedFiles.length === 0) || sending}
-                className="w-8 h-8 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-40 shadow-xs flex items-center justify-center transition-all cursor-pointer">
-                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-foreground" /> : <SendHorizontal className="w-3.5 h-3.5 text-primary-foreground" />}
+                aria-label={t("workspace.chat.send")}
+                className="w-8 h-8 rounded-full bg-[#007ACC] hover:bg-[#006bb3] text-white disabled:opacity-40 shadow-xs flex items-center justify-center transition-all cursor-pointer">
+                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> : <ArrowRight className="w-3.5 h-3.5 text-white" />}
               </button>
             )}
           </div>

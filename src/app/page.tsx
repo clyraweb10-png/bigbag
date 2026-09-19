@@ -20,7 +20,7 @@ import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Plus, Loader2, Trash2, SendHorizontal, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
+  Plus, Loader2, Trash2, ArrowRight, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
   AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb,
 } from "lucide-react";
@@ -721,15 +721,15 @@ export default function DashboardPage() {
                       />
                     </div>
 
-                    <Button
+                    <button
+                      type="button"
                       onClick={() => void submitLandingMessage()}
                       disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
-                      size="sm"
-                      className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 font-medium text-primary-foreground shadow-md shadow-primary/15 transition-all hover:bg-primary/90 active:scale-[0.98] disabled:opacity-40"
+                      aria-label="Send"
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#007ACC] text-white shadow-xs transition-all hover:bg-[#006bb3] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
-                      {plannerRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="w-3.5 h-3.5" />}
-                      <span>Send</span>
-                    </Button>
+                      {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <ArrowRight className="h-4 w-4 text-white" />}
+                    </button>
                   </div>
                 </div>
               </div>
