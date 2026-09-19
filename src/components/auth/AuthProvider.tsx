@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "misconfigured";
@@ -200,6 +201,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: string | null; onSignIn: () => Promise<void> }) {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isDark = mounted ? resolvedTheme !== "light" : true;
+  const theme = isDark ? "dark" : "light";
+  const emblemBg = isDark ? "#1d1d1c" : "#ffffff";
+
   return (
     <main className="relative min-h-[100dvh] w-full overflow-hidden bg-white dark:bg-[#1d1d1c] text-zinc-900 dark:text-white flex flex-col justify-between select-none transition-colors duration-200">
       {/* ═══ 6 DISTINCT FLOATING MOCKUP CARDS (3 LEFT, 3 RIGHT, RESPONSIVE) ═══ */}
@@ -272,12 +283,16 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
       {/* ═══ CENTER AUTH HERO ═══ */}
       <div className="relative z-20 flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2 sm:pb-16">
         {/* 3D Rotating Emblem iframe */}
-        <div className="w-[180px] h-[130px] sm:w-[210px] sm:h-[150px] relative flex items-center justify-center -mb-2 bg-transparent">
+        <div
+          className="w-[180px] h-[130px] sm:w-[210px] sm:h-[150px] relative flex items-center justify-center -mb-2 rounded-xl overflow-hidden transition-colors duration-200"
+          style={{ backgroundColor: emblemBg }}
+        >
           <iframe
-            src="/bigbag-3d-emblem.html"
+            key={theme}
+            src={`/bigbag-3d-emblem.html?theme=${theme}`}
             allowTransparency={true}
-            style={{ backgroundColor: "transparent", background: "transparent" }}
-            className="w-full h-full border-0 bg-transparent"
+            style={{ backgroundColor: emblemBg, background: emblemBg }}
+            className="w-full h-full border-0 transition-colors duration-200"
             title="3D Bigbag Rotating Emblem"
           />
         </div>

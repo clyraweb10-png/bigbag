@@ -389,6 +389,23 @@
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     }
 
+    window.addEventListener('message', (e) => {
+      if (e.data && (e.data.theme === 'dark' || e.data.theme === 'light')) {
+        applyThemeColors(e.data.theme);
+      }
+    });
+
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          if (!params.get('theme')) {
+            applyThemeColors(e.matches ? 'light' : 'dark');
+          }
+        } catch (err) {}
+      });
+    }
+
     window.addEventListener('load', () => {
       initScene();
       animate();
