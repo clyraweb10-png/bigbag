@@ -83,7 +83,7 @@ function previewBootPage(): NextResponse {
     body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
       font-family: ui-sans-serif, system-ui, sans-serif; background:#1d1d1c; color:#a1a1aa; }
     .card { text-align:center; }
-    .spin { width:28px; height:28px; margin:0 auto 12px; border:2px solid #3f3f46; border-top-color:#818cf8;
+    .spin { width:28px; height:28px; margin:0 auto 12px; border:2px solid #3f3f46; border-top-color:#948be8;
       border-radius:50%; animation:s .8s linear infinite; }
     @keyframes s { to { transform: rotate(360deg); } }
   </style>

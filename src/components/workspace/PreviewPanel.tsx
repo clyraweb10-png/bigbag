@@ -56,7 +56,7 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
           <div className="flex flex-col items-center justify-center text-center px-8">
             {loading ? (
               <>
-                <Loader2 className="w-8 h-8 text-gray-400 animate-spin mb-4" />
+                <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
                 <p className="text-sm font-medium text-gray-500 mb-1">Building your app...</p>
                 <p className="text-xs text-gray-400">Preview will appear when ready</p>
               </>
@@ -74,7 +74,7 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
           }`}>
             {iframeLoading && (
               <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
-                <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+                <Loader2 className="w-6 h-6 text-primary animate-spin" />
               </div>
             )}
             <iframe

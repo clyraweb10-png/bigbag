@@ -18,7 +18,6 @@ import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
 import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
 import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Loader2, Trash2, ArrowRight, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
@@ -1003,7 +1002,26 @@ export default function DashboardPage() {
 
         {!chatOpen && loading && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-            {[1, 2, 3].map((i) => <Skeleton key={i} className="h-48 rounded-xl bg-card/60" />)}
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="rounded-xl border border-border bg-[#252525] p-0 overflow-hidden flex flex-col h-full animate-pulse shadow-xs"
+              >
+                <div className="h-32 bg-[#1d1d1c]/80 flex items-center justify-center border-b border-border/40">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+                <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                  <div className="space-y-2">
+                    <div className="h-3.5 w-3/5 rounded-md bg-[#333332]" />
+                    <div className="h-2.5 w-4/5 rounded-md bg-[#333332]/60" />
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-border/40">
+                    <div className="h-2.5 w-1/4 rounded-md bg-[#333332]/50" />
+                    <div className="h-3 w-3 rounded-full bg-[#333332]/50" />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -13,7 +13,7 @@ export function SkeletonBox({ className, ...props }: React.ComponentProps<"div">
   return (
     <div
       aria-hidden
-      className={cn("bg-muted relative overflow-hidden rounded-md", className)}
+      className={cn("bg-[#252525] border border-border/40 relative overflow-hidden rounded-md animate-pulse", className)}
       {...props}
     >
       <span className="tp-shimmer absolute inset-0" />

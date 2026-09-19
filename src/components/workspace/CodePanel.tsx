@@ -35,7 +35,7 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => (
     <div className="h-full w-full flex items-center justify-center">
-      <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+      <Loader2 className="w-5 h-5 animate-spin text-primary" />
     </div>
   ),
 });
@@ -858,7 +858,7 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
   if (loading) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-6 h-6 animate-spin text-violet-500" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
         <p className="text-sm text-gray-400">{"Loading source code..."}</p>
       </div>
     );
@@ -1078,7 +1078,7 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={imageUrl} alt={selected} className="max-w-full max-h-full object-contain rounded shadow-lg bg-white/10" />
                     ) : (
-                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                      <Loader2 className="w-6 h-6 animate-spin text-primary" />
                     )}
                   </div>
                 ) : (
