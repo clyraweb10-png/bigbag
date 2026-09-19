@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { FigmaIcon } from "lucide-react";
+import { FigmaColorLogo } from "@/components/prompt/ComposerIcons";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -235,7 +235,7 @@ export function FigmaPromptButton({
               disabled={disabled}
               aria-label={t("workspace.figma.addToPrompt")}
             >
-              <FigmaIcon className="size-4" aria-hidden />
+              <FigmaColorLogo className="size-4" />
               {connected ? (
                 <span className="sr-only">
                   {t("workspace.figma.statusConnected")}

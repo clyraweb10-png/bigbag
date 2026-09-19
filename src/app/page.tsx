@@ -18,8 +18,9 @@ import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
 import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
 import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
+import { AttachPaperclipIcon } from "@/components/prompt/ComposerIcons";
 import {
-  Plus, Loader2, Trash2, ArrowRight, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
+  Plus, Loader2, Trash2, ArrowRight, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
   AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb,
 } from "lucide-react";
@@ -698,13 +699,13 @@ export default function DashboardPage() {
                 )}
 
                 {/* Prompt area - colour + rounded only */}
-                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-[#252525] overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-[#878672] dark:bg-[#252525] overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
                   <textarea
                     ref={heroTextareaRef}
                     value={firstPrompt}
                     onChange={(e) => setFirstPrompt(e.target.value)}
                     placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
-                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
+                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-white dark:text-foreground outline-none placeholder:text-white/70 dark:placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                     onPaste={handleHeroPaste}
                   />
@@ -718,9 +719,9 @@ export default function DashboardPage() {
 
                   <div className="flex items-center justify-between bg-transparent px-3 py-3 sm:px-4">
                     <div className="flex items-center gap-1.5">
-                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-white/5">
+                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-white/90 hover:text-white dark:text-muted-foreground dark:hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-white/10 dark:hover:bg-white/5">
                         <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
-                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-white dark:text-muted-foreground" /> : <AttachPaperclipIcon className="w-4 h-4" />}
                         <span className="hidden sm:inline">Attach</span>
                       </label>
 

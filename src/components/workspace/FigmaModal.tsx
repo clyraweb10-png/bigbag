@@ -6,11 +6,11 @@ import {
     ExternalLinkIcon,
     EyeIcon,
     EyeOffIcon,
-    FigmaIcon,
     LoaderIcon,
     ShieldAlertIcon,
     TriangleAlertIcon,
 } from "lucide-react";
+import { FigmaColorLogo } from "@/components/prompt/ComposerIcons";
 import { ConfirmDialog, ErrorState, Modal, StatusPill } from "@/components/primitives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -277,7 +277,7 @@ export function FigmaModal({
                                         />
                                     ) : (
                                         <span className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-full">
-                                            <FigmaIcon className="size-4" aria-hidden />
+                                            <FigmaColorLogo className="size-4" />
                                         </span>
                                     )}
 

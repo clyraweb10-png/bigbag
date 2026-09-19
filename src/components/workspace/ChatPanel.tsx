@@ -4,10 +4,11 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowRight, Square, Loader2, CodeXml, AlertCircle,
-  KeyRound, FileDiff, ChevronDown, ChevronUp, Paperclip, X, Check,
+  KeyRound, FileDiff, ChevronDown, ChevronUp, X, Check,
   Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
   Lightbulb,
 } from "lucide-react";
+import { AttachPaperclipIcon } from "@/components/prompt/ComposerIcons";
 import { vcaasApi } from "@/lib/vcaas";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
 import { GithubPromptButton } from "@/components/prompt/GithubPromptButton";
@@ -851,10 +852,10 @@ export function ChatPanel({
 
 
       <div className="shrink-0 px-3 pb-3 pt-2">
-        <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs" style={{ background: "var(--textarea-bg, #FFFFFF)" }}>
+        <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs bg-[#878672] dark:bg-[#252525]">
           <textarea data-chat-input ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
             placeholder={isBuilding ? "Agent is working..." : "Ask anything..."}
-            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-muted-foreground min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed text-foreground"
+            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-white/70 dark:placeholder:text-muted-foreground min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed text-white dark:text-foreground"
             disabled={isBuilding} rows={1} />
           <div className="flex items-center justify-between px-2 pb-2">
             {/*
@@ -865,9 +866,9 @@ export function ChatPanel({
             <div className="flex items-center gap-0.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
+                  <label className="cursor-pointer size-8 inline-flex items-center justify-center rounded-lg hover:bg-white/10 dark:hover:bg-accent text-white/90 hover:text-white dark:text-muted-foreground dark:hover:text-foreground transition-colors">
                     <input type="file" multiple className="hidden" onChange={handleFileUpload} accept="image/*,.pdf,.svg" disabled={isBuilding} />
-                    {uploading ? <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" /> : <Paperclip className="w-4 h-4 text-muted-foreground" />}
+                    {uploading ? <Loader2 className="w-4 h-4 text-white dark:text-muted-foreground animate-spin" /> : <AttachPaperclipIcon className="w-4 h-4" />}
                     <span className="sr-only">{t("prompt.attachments.attach")}</span>
                   </label>
                 </TooltipTrigger>
