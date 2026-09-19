@@ -202,8 +202,6 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
   return (
     <main className="studio-auth relative min-h-[100dvh] overflow-hidden bg-background text-foreground">
       <div className="studio-grid pointer-events-none absolute inset-0 opacity-55 dark:opacity-25" />
-      <div className="pointer-events-none absolute -right-32 top-16 h-80 w-80 rounded-full bg-[color:var(--studio-coral)]/10 blur-3xl" />
-      <div className="pointer-events-none absolute -left-24 bottom-8 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
 
       <header className="relative z-10 mx-auto flex h-20 w-full max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-12">
         <BigBagLogo size="lg" />

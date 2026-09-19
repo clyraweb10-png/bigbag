@@ -98,7 +98,7 @@
 }
 
 .dark {
-  --background: #0f0f14;
+  --background: #151513;
   --foreground: #f4f4f7;
   --card: #18181f;
   --card-foreground: #f4f4f7;
@@ -121,7 +121,7 @@
   --chart-3: #47d6ae;
   --chart-4: #75aaff;
   --chart-5: #3a3a46;
-  --sidebar: #131319;
+  --sidebar: #151513;
   --sidebar-foreground: #f4f4f7;
   --sidebar-primary: #a298ff;
   --sidebar-primary-foreground: #171322;
@@ -138,7 +138,7 @@
   --studio-mint: #47d6ae;
   --studio-blue: #75aaff;
   --user-bubble: #2b2845;
-  --textarea-bg: #18181f;
+  --textarea-bg: #252525;
 }
 
 @layer base {

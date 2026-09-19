@@ -1464,8 +1464,8 @@ export default function WorkspacePage() {
    */
   const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#0B0B0A" : "#FAFAF7";
-  const cardBg = darkMode ? "#151513" : "#FFFFFF";
+  const pageBg = darkMode ? "#151513" : "#FAFAF7";
+  const cardBg = darkMode ? "#1c1c1a" : "#FFFFFF";
   const btnBorder = darkMode ? "border-[#3A3A3A]" : "border-[#DDDDD5]";
 
   if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;

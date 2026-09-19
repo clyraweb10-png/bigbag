@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Loader2, Trash2, SendHorizontal, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
-  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb, Sparkles,
+  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -555,10 +555,8 @@ export default function DashboardPage() {
 
   return (
     <div className={`${chatOpen ? "h-[100dvh] overflow-hidden" : "min-h-screen overflow-hidden"} relative bg-background text-foreground transition-colors duration-200`}>
-      {/* Background ambient lighting */}
+      {/* Background */}
       <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
-      <div className="fixed top-[-10%] left-[20%] w-[600px] h-[350px] bg-primary/10 blur-[120px] rounded-full pointer-events-none" />
-      <div className="fixed bottom-[-10%] right-[15%] w-[500px] h-[300px] bg-accent/40 dark:bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
 
       {/* Header */}
       {chatOpen ? (
@@ -604,9 +602,9 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              <div className={`${chatOpen ? "flex min-h-0 flex-1 flex-col rounded-[1.75rem]" : "rounded-[1.5rem]"} overflow-hidden border border-border bg-card shadow-[0_24px_70px_-38px_rgba(36,30,84,0.55)] transition-shadow focus-within:ring-2 focus-within:ring-ring/25`}>
+              <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : "flex flex-col"}>
                 {landingMessages.length > 0 && (
-                  <div className={`${chatOpen ? "min-h-0 flex-1" : "max-h-[430px]"} space-y-6 overflow-y-auto border-b border-border px-4 py-6 sm:px-7`}>
+                  <div className={`${chatOpen ? "min-h-0 flex-1" : "max-h-[430px]"} space-y-6 overflow-y-auto px-1 py-4 sm:px-2 bg-transparent`}>
                     {landingMessages.map((message, index) => message.role === "user" ? (
                       <div key={index} className="flex items-end justify-end gap-2.5">
                         <div className="max-w-[82%] rounded-2xl rounded-br-md bg-[color:var(--user-bubble)] px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
@@ -636,8 +634,22 @@ export default function DashboardPage() {
                     )}
                     {landingStage === "awaiting_confirmation" && !plannerRunning && (
                       <div className="pl-11">
-                        <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4" variant="glow">
-                          <Sparkles className="mr-2 h-4 w-4" /> Proceed to build
+                        <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium">
+                          <svg
+                            className="mr-2 h-4 w-4 shrink-0"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <polyline points="7 8 3 12 7 16" />
+                            <line x1="14" y1="4" x2="10" y2="20" strokeWidth="2.2" />
+                            <polyline points="17 8 21 12 17 16" />
+                          </svg>
+                          Proceed to build
                         </Button>
                       </div>
                     )}
@@ -668,53 +680,57 @@ export default function DashboardPage() {
                     <div ref={conversationEndRef} />
                   </div>
                 )}
-                <textarea
-                  ref={heroTextareaRef}
-                  value={firstPrompt}
-                  onChange={(e) => setFirstPrompt(e.target.value)}
-                  placeholder={landingStage === "awaiting_confirmation" ? "Tell me what to change, or click Proceed…" : "Say hi, or describe the app you want to build…"}
-                  className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
-                  onPaste={handleHeroPaste}
-                />
 
-                {/* Attachments */}
-                <AttachmentPreviews
-                  className="px-5 pb-2"
-                  items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
-                  onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
-                />
+                {/* Prompt area - colour + rounded only */}
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-[#252525] overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                  <textarea
+                    ref={heroTextareaRef}
+                    value={firstPrompt}
+                    onChange={(e) => setFirstPrompt(e.target.value)}
+                    placeholder={landingStage === "awaiting_confirmation" ? "Tell me what to change, or click Proceed…" : "Say hi, or describe the app you want to build…"}
+                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
+                    onPaste={handleHeroPaste}
+                  />
 
-                <div className="flex items-center justify-between border-t border-border bg-secondary/45 px-3 py-3 sm:px-4">
-                  <div className="flex items-center gap-1.5">
-                    <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-secondary/60 dark:hover:bg-white/5">
-                      <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
-                      {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
-                      <span className="hidden sm:inline">Attach</span>
-                    </label>
+                  {/* Attachments */}
+                  <AttachmentPreviews
+                    className="px-5 pb-2"
+                    items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
+                    onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
+                  />
 
-                    <FigmaPromptButton
-                      onAdd={appendToPrompt}
-                      hasText={firstPrompt.trim().length > 0}
-                      onConnect={() => setFigmaModalOpen(true)}
-                      connected={!!figmaToken}
-                      onDisconnect={() => {
-                        setFigmaToken(null);
-                        toast.success(t("workspace.figma.pendingForgotten"));
-                      }}
-                      disconnectConfirm={t("workspace.figma.disconnectPendingConfirm")}
-                    />
+                  <div className="flex items-center justify-between bg-transparent px-3 py-3 sm:px-4">
+                    <div className="flex items-center gap-1.5">
+                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-white/5">
+                        <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Paperclip className="w-3.5 h-3.5" />}
+                        <span className="hidden sm:inline">Attach</span>
+                      </label>
+
+                      <FigmaPromptButton
+                        onAdd={appendToPrompt}
+                        hasText={firstPrompt.trim().length > 0}
+                        onConnect={() => setFigmaModalOpen(true)}
+                        connected={!!figmaToken}
+                        onDisconnect={() => {
+                          setFigmaToken(null);
+                          toast.success(t("workspace.figma.pendingForgotten"));
+                        }}
+                        disconnectConfirm={t("workspace.figma.disconnectPendingConfirm")}
+                      />
+                    </div>
+
+                    <Button
+                      onClick={() => void submitLandingMessage()}
+                      disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
+                      size="sm"
+                      className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 font-medium text-primary-foreground shadow-md shadow-primary/15 transition-all hover:bg-primary/90 active:scale-[0.98] disabled:opacity-40"
+                    >
+                      {plannerRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="w-3.5 h-3.5" />}
+                      <span>Send</span>
+                    </Button>
                   </div>
-
-                  <Button
-                    onClick={() => void submitLandingMessage()}
-                    disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
-                    size="sm"
-                    className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 font-medium text-primary-foreground shadow-md shadow-primary/15 transition-all hover:bg-primary/90 active:scale-[0.98] disabled:opacity-40"
-                  >
-                    {plannerRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="w-3.5 h-3.5" />}
-                    <span>Send</span>
-                  </Button>
                 </div>
               </div>
 
