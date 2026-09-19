@@ -166,12 +166,14 @@ const ERROR_BOUNDARY_SCRIPT = `<script data-error-boundary>
 
   window.addEventListener('error', function(e) {
     var source = e.filename ? e.filename.replace(/.*\\//, '') + ':' + e.lineno : '';
-    addError(e.message || 'Unknown error', source);
+    var msg = (e.error && (e.error.message || e.error.stack)) || e.message || 'Unknown error';
+    addError(msg, source);
   });
 
   window.addEventListener('unhandledrejection', function(e) {
-    var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled promise rejection';
-    addError(msg, '');
+    var reason = e.reason;
+    var msg = reason ? (reason.stack || reason.message || String(reason)) : 'Unhandled promise rejection';
+    addError(msg, 'Promise');
   });
 
   // Intercept Next.js runtime errors shown as full-page overlays
