@@ -1,13 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { createClient, type Client, type InStatement } from "@libsql/client";
 import type { LocalProjectRecord } from "./types";
 
 export type PersistedFile = { path: string; content: Uint8Array };
+export type AppRecord = Record<string, unknown> & {
+  _id: string;
+  createdAt: string;
+  updatedAt: string;
+};
 
 const SOURCE_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
 let client: Client | null = null;
 let schemaReady: Promise<void> | null = null;
+const PERSISTENCE_ERROR =
+  "Persistent project storage is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN before using the hosted local orchestrator.";
 
 function databaseConfig(): { url: string; authToken?: string } | null {
   const url = process.env.TURSO_DATABASE_URL?.trim();
@@ -50,6 +58,18 @@ async function ensureSchema(): Promise<Client | null> {
         )`,
         `CREATE INDEX IF NOT EXISTS builder_project_files_lookup
           ON builder_project_files (project_id, kind, path)`,
+        `CREATE TABLE IF NOT EXISTS builder_app_records (
+          project_id TEXT NOT NULL,
+          collection_name TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          data_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (project_id, collection_name, record_id),
+          FOREIGN KEY (project_id) REFERENCES builder_projects(project_id) ON DELETE CASCADE
+        )`,
+        `CREATE INDEX IF NOT EXISTS builder_app_records_collection
+          ON builder_app_records (project_id, collection_name, updated_at DESC)`,
       ],
       "write"
     ).then(() => undefined).catch((error) => {
@@ -58,6 +78,12 @@ async function ensureSchema(): Promise<Client | null> {
     });
   }
   await schemaReady;
+  return db;
+}
+
+async function requireSchema(): Promise<Client> {
+  const db = await ensureSchema();
+  if (!db) throw new Error(PERSISTENCE_ERROR);
   return db;
 }
 
@@ -86,15 +112,39 @@ function rowBytes(value: unknown): Uint8Array {
   return Buffer.from(rowText(value), "base64");
 }
 
+export function assertAppCollectionName(value: string): string {
+  const name = value.trim();
+  if (!/^[a-z][a-z0-9_-]{0,63}$/i.test(name)) {
+    throw new Error("Invalid collection name");
+  }
+  return name;
+}
+
+function appRecordFromRow(row: Record<string, unknown>): AppRecord {
+  const parsed = JSON.parse(rowText(row.data_json)) as Record<string, unknown>;
+  return {
+    ...parsed,
+    _id: rowText(row.record_id),
+    createdAt: rowText(row.created_at),
+    updatedAt: rowText(row.updated_at),
+  };
+}
+
+function appRecordData(value: Record<string, unknown>): Record<string, unknown> {
+  const data = { ...value };
+  delete data._id;
+  delete data.createdAt;
+  delete data.updatedAt;
+  return data;
+}
+
 export function durablePersistenceConfigured(): boolean {
   return databaseConfig() !== null;
 }
 
 export function requireDurablePersistence(): void {
   if (!durablePersistenceConfigured()) {
-    throw new Error(
-      "Persistent project storage is not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN before using the hosted local orchestrator."
-    );
+    throw new Error(PERSISTENCE_ERROR);
   }
 }
 
@@ -337,6 +387,153 @@ export const durableProjectStore = {
     return row ? { path: rowText(row.path), content: rowBytes(row.content) } : null;
   },
 
+  async listAppCollections(projectId: string): Promise<Array<{ name: string; count: number }>> {
+    const db = await requireSchema();
+    const result = await db.execute({
+      sql: `SELECT records.collection_name, COUNT(*) AS record_count
+        FROM builder_app_records AS records
+        INNER JOIN builder_projects AS projects ON projects.project_id = records.project_id
+        WHERE records.project_id = ?
+        GROUP BY records.collection_name ORDER BY records.collection_name`,
+      args: [projectId],
+    });
+    return result.rows.map((row) => ({
+      name: rowText(row.collection_name),
+      count: Number(row.record_count) || 0,
+    }));
+  },
+
+  async listAppRecords(
+    projectId: string,
+    collectionName: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<{ records: AppRecord[]; total: number }> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)));
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+    const [rows, count] = await Promise.all([
+      db.execute({
+        sql: `SELECT record_id, data_json, created_at, updated_at
+          FROM builder_app_records
+          WHERE project_id = ? AND collection_name = ?
+          ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+        args: [projectId, collection, limit, offset],
+      }),
+      db.execute({
+        sql: `SELECT COUNT(*) AS record_count FROM builder_app_records
+          WHERE project_id = ? AND collection_name = ?`,
+        args: [projectId, collection],
+      }),
+    ]);
+    return {
+      records: rows.rows.map((row) => appRecordFromRow(row as Record<string, unknown>)),
+      total: Number(count.rows[0]?.record_count) || 0,
+    };
+  },
+
+  /** Owner-facing database queries apply filters/sorts before pagination. */
+  async listAllAppRecords(projectId: string, collectionName: string): Promise<AppRecord[]> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const result = await db.execute({
+      sql: `SELECT record_id, data_json, created_at, updated_at
+        FROM builder_app_records
+        WHERE project_id = ? AND collection_name = ?
+        ORDER BY updated_at DESC`,
+      args: [projectId, collection],
+    });
+    return result.rows.map((row) => appRecordFromRow(row as Record<string, unknown>));
+  },
+
+  async getAppRecord(projectId: string, collectionName: string, recordId: string): Promise<AppRecord | null> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const result = await db.execute({
+      sql: `SELECT record_id, data_json, created_at, updated_at
+        FROM builder_app_records
+        WHERE project_id = ? AND collection_name = ? AND record_id = ? LIMIT 1`,
+      args: [projectId, collection, recordId],
+    });
+    const row = result.rows[0];
+    return row ? appRecordFromRow(row as Record<string, unknown>) : null;
+  },
+
+  async createAppRecord(
+    projectId: string,
+    collectionName: string,
+    value: Record<string, unknown>
+  ): Promise<AppRecord> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const recordId = randomUUID();
+    const now = new Date().toISOString();
+    const data = appRecordData(value);
+    const result = await db.execute({
+      sql: `INSERT INTO builder_app_records
+        (project_id, collection_name, record_id, data_json, created_at, updated_at)
+        SELECT project_id, ?, ?, ?, ?, ? FROM builder_projects WHERE project_id = ?`,
+      args: [collection, recordId, JSON.stringify(data), now, now, projectId],
+    });
+    if (result.rowsAffected !== 1) throw new Error("Project not found");
+    return { ...data, _id: recordId, createdAt: now, updatedAt: now };
+  },
+
+  async updateAppRecord(
+    projectId: string,
+    collectionName: string,
+    recordId: string,
+    patch: Record<string, unknown>
+  ): Promise<AppRecord | null> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const transaction = await db.transaction("write");
+    try {
+      const result = await transaction.execute({
+        sql: `SELECT record_id, data_json, created_at, updated_at
+          FROM builder_app_records
+          WHERE project_id = ? AND collection_name = ? AND record_id = ? LIMIT 1`,
+        args: [projectId, collection, recordId],
+      });
+      const row = result.rows[0];
+      if (!row) {
+        await transaction.rollback();
+        return null;
+      }
+
+      const current = appRecordFromRow(row as Record<string, unknown>);
+      const data = appRecordData({ ...current, ...patch });
+      const updatedAt = new Date().toISOString();
+      const update = await transaction.execute({
+        sql: `UPDATE builder_app_records SET data_json = ?, updated_at = ?
+          WHERE project_id = ? AND collection_name = ? AND record_id = ?`,
+        args: [JSON.stringify(data), updatedAt, projectId, collection, recordId],
+      });
+      if (update.rowsAffected !== 1) {
+        await transaction.rollback();
+        return null;
+      }
+      await transaction.commit();
+      return { ...data, _id: recordId, createdAt: current.createdAt, updatedAt };
+    } catch (error) {
+      if (!transaction.closed) await transaction.rollback().catch(() => undefined);
+      throw error;
+    } finally {
+      transaction.close();
+    }
+  },
+
+  async deleteAppRecord(projectId: string, collectionName: string, recordId: string): Promise<boolean> {
+    const db = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const result = await db.execute({
+      sql: `DELETE FROM builder_app_records
+        WHERE project_id = ? AND collection_name = ? AND record_id = ?`,
+      args: [projectId, collection, recordId],
+    });
+    return result.rowsAffected > 0;
+  },
+
   async remove(projectId: string, tenantId: string): Promise<boolean> {
     const db = await ensureSchema();
     if (!db) return false;
@@ -347,12 +544,17 @@ export const durableProjectStore = {
           args: [projectId, tenantId],
         },
         {
+          sql: `DELETE FROM builder_app_records WHERE project_id = ?
+            AND EXISTS (SELECT 1 FROM builder_projects WHERE project_id = ? AND tenant_id = ?)`,
+          args: [projectId, projectId, tenantId],
+        },
+        {
           sql: "DELETE FROM builder_projects WHERE project_id = ? AND tenant_id = ?",
           args: [projectId, tenantId],
         },
       ],
       "write"
     );
-    return results[1].rowsAffected > 0;
+    return results[2].rowsAffected > 0;
   },
 };

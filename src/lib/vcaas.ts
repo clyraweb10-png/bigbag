@@ -561,8 +561,8 @@ export const vcaasApi = {
     query: (
       projectId: string,
       body: { tableName: string; queryOptions: Record<string, unknown> }
-    ): Promise<VcaasResponse<{ results: Record<string, unknown>[] }>> =>
-      proxy.post<{ results: Record<string, unknown>[] }>(`${project(projectId)}/database/query`, body),
+    ): Promise<VcaasResponse<{ results: Record<string, unknown>[]; count?: number }>> =>
+      proxy.post<{ results: Record<string, unknown>[]; count?: number }>(`${project(projectId)}/database/query`, body),
 
     /** POST …/database/records — create one record in `tableName`. */
     createRecord: (

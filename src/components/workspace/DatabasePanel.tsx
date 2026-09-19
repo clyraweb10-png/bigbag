@@ -351,7 +351,11 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
         if (response.ok && response.data) {
             const results = response.data.results || [];
             setRecords(results);
-            setTotal(extractTotal(results, page, pageSize));
+            setTotal(
+                typeof response.data.count === "number"
+                    ? response.data.count
+                    : extractTotal(results, page, pageSize)
+            );
         } else {
             setRecordsError(response.error || t("workspace.database.recordsFailedDescription"));
             setRecords([]);
@@ -404,7 +408,11 @@ export function DatabasePanel({ projectId }: DatabasePanelProps) {
             if (cancelled || !mounted.current) return;
             setCounting(false);
             setMatchCount(
-                response.ok && response.data ? extractTotal(response.data.results || [], 1) : null
+                response.ok && response.data
+                    ? typeof response.data.count === "number"
+                        ? response.data.count
+                        : extractTotal(response.data.results || [], 1)
+                    : null
             );
         }, 400);
 
@@ -1236,7 +1244,10 @@ function TablesAside({
                     queryOptions: { _limit: 1, _count: true },
                 });
                 const rows = response.ok && response.data ? response.data.results || [] : [];
-                return [candidate.type, extractTotal(rows, 1, 1) ?? 0] as const;
+                const count = response.ok && typeof response.data?.count === "number"
+                    ? response.data.count
+                    : extractTotal(rows, 1, 1) ?? 0;
+                return [candidate.type, count] as const;
             })
         );
 

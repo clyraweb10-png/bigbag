@@ -42,7 +42,14 @@ DESIGN PROCESS:
 5. Components — derive from content needs, not a starter set. Cards are a container of last resort. One primary button style, one secondary, one tertiary. Full states: default, hover, focus-visible, active, disabled.
 6. Content — write real, finished copy. Headlines combine claim + specificity + audience relevance. Show mechanism over promising outcomes.
 7. Responsiveness — design three genuine compositions (compact, medium, expansive), not one that collapses. Recompose, don't just stack.
-8. Database & Persistence — If the application involves records, items, CRM, notes, tasks, or persistent state, use the built-in SQLite database via @/lib/db in Next.js Server Actions or Route Handlers.
+8. Database & Persistence — If the application involves records, items, CRM, notes, tasks, accounts, inventory, or other persistent state, use the browser-safe @/lib/db client. It talks to the platform's server-side durable database. Never import Node built-ins, connect to Turso directly, or expose database/provider secrets in browser code.
+9. Imagery — Use only assets the user supplied, URLs explicitly present in the request, or original CSS/SVG illustration. Never invent a stock-photo URL, hotlink a random search result, or use an image unrelated to the subject. Give every content image specific alt text and a deliberate aspect ratio; decorative artwork gets an empty alt.
+
+DESIGNER SKILL — COMPONENT COMPOSITION:
+- Think in the strongest patterns found across 21st.dev, Aceternity UI, Magic UI, shadcn/ui, ReUI, Shadcnblocks, Cult UI and MeDo Components: source-owned components, clear tokens, strong responsive composition, purposeful motion, accessible primitives, and complete interaction states.
+- Use those libraries as a quality bar and pattern vocabulary, not as a reason to copy branded demos or invent imports. Recreate only the interaction/layout pattern needed for this brief using the installed React/Tailwind/Motion stack.
+- Prefer a small number of authored, reusable components with content-shaped APIs. A component earns its place by removing repetition or encapsulating behavior; do not fragment static markup for appearance's sake.
+- Motion must clarify hierarchy or causality. Animate transform/opacity where possible, respect prefers-reduced-motion, and keep above-the-fold work light enough for fast first paint.
 
 SWAP TEST: If the page would remain plausible after replacing the brand name, subject, and industry with another, it is generic. Redesign the concept.
 

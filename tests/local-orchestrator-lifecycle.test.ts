@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,8 +14,18 @@ const testDatabase = createClient({ url: process.env.TURSO_DATABASE_URL });
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
-const { isPreviewInitiatedRequest } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
+const {
+  createPreviewWriteCapability,
+  isPreviewInitiatedRequest,
+  verifyPreviewWriteCapability,
+} = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const { multiModelRouter } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
+const { GEMINI_MAX_RETRIES } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
+const {
+  GENERATED_DB_CLIENT_SOURCE,
+  LEGACY_GENERATED_DB_CLIENT_SOURCE,
+  writeStarterTemplate,
+} = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 type LocalProjectRecord = import("../src/lib/local-orchestrator/types").LocalProjectRecord;
@@ -176,12 +187,221 @@ test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
       "gemini-flash",
       "telnyx-glm",
     ]);
+    assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
+    assert.equal(GEMINI_MAX_RETRIES, 5);
   } finally {
     if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = previousGemini;
     if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
     else process.env.TELNYX_API_KEY = previousTelnyx;
   }
+});
+
+test("generated apps use a browser-safe durable data client", async () => {
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /\/__bigbag\/data\//);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /X-BigBag-Capability/);
+  assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /@libsql|node:|process\.env|process\.cwd|from ["'](?:fs|path)["']/);
+
+  const tenantId = "11111111-1111-4111-8111-111111111111";
+  const projectId = `data-${randomUUID()}`;
+  const project = record(tenantId, projectId);
+  try {
+    await durableProjectStore.saveRecord(project);
+    const created = await durableProjectStore.createAppRecord(projectId, "tasks", {
+      title: "Ship a working preview",
+      done: false,
+    });
+    assert.equal(created.title, "Ship a working preview");
+    assert.equal(typeof created._id, "string");
+
+    await Promise.all(Array.from({ length: 105 }, (_, index) =>
+      durableProjectStore.createAppRecord(projectId, "tasks", { title: `Task ${index}` })
+    ));
+    const listed = await durableProjectStore.listAppRecords(projectId, "tasks", { limit: 100 });
+    assert.equal(listed.total, 106);
+    assert.equal(listed.records.length, 100);
+    assert.equal((await durableProjectStore.listAllAppRecords(projectId, "tasks")).length, 106);
+    assert.equal((await durableProjectStore.getAppRecord(projectId, "tasks", created._id))?._id, created._id);
+
+    const updated = await durableProjectStore.updateAppRecord(projectId, "tasks", created._id, {
+      done: true,
+      _id: "cannot-overwrite-system-fields",
+    });
+    assert.equal(updated?.done, true);
+    assert.equal(updated?._id, created._id);
+
+    const collections = await durableProjectStore.listAppCollections(projectId);
+    assert.deepEqual(collections, [{ name: "tasks", count: 106 }]);
+    assert.equal(await durableProjectStore.deleteAppRecord(projectId, "tasks", created._id), true);
+    assert.equal((await durableProjectStore.listAppRecords(projectId, "tasks")).total, 105);
+  } finally {
+    assert.equal(await durableProjectStore.remove(projectId, tenantId), true);
+  }
+});
+
+test("preview write capabilities are project-scoped, signed, and expiring", () => {
+  const tenantId = "11111111-1111-4111-8111-111111111111";
+  const issuedAt = 1_000_000;
+  const capability = createPreviewWriteCapability("capability-demo", tenantId, issuedAt);
+  assert.equal(verifyPreviewWriteCapability(capability, "capability-demo", issuedAt), tenantId);
+  assert.equal(verifyPreviewWriteCapability(capability, "another-project", issuedAt), null);
+  assert.equal(verifyPreviewWriteCapability(`${capability}x`, "capability-demo", issuedAt), null);
+  assert.equal(
+    verifyPreviewWriteCapability(capability, "capability-demo", issuedAt + 15 * 60_000 + 1_000),
+    null
+  );
+});
+
+test("restored workspaces preserve package mode and customized database clients", () => {
+  const workspace = path.join(tempRoot, "custom-restored-workspace");
+  const customDbClient = `import { createClient } from "@libsql/client";\nexport const customized = true;\n`;
+  fs.mkdirSync(path.join(workspace, "src", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({
+    name: "custom-restored-workspace",
+    type: "commonjs",
+  }));
+  fs.writeFileSync(path.join(workspace, "src", "lib", "db.ts"), customDbClient);
+  fs.writeFileSync(
+    path.join(workspace, "vite.config.ts"),
+    `import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { defineConfig } from "vite";
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: { allowedHosts: [".e2b.app"] },
+  resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+});
+`
+  );
+
+  writeStarterTemplate(workspace, "custom-restored-workspace");
+
+  const restoredPackage = JSON.parse(fs.readFileSync(path.join(workspace, "package.json"), "utf8"));
+  assert.equal(restoredPackage.type, "commonjs");
+  assert.equal(restoredPackage.dependencies["@libsql/client"], "^0.18.0");
+  assert.equal(fs.readFileSync(path.join(workspace, "src", "lib", "db.ts"), "utf8"), customDbClient);
+  const viteConfig = fs.readFileSync(path.join(workspace, "vite.config.ts"), "utf8");
+  assert.match(viteConfig, /fileURLToPath\(import\.meta\.url\)/);
+  assert.match(viteConfig, /pathToFileURL, fileURLToPath/);
+  assert.doesNotMatch(viteConfig, /\b__dirname\b/);
+
+  const incompleteWorkspace = path.join(tempRoot, "incomplete-vite-migration");
+  const incompleteViteConfig = `import path from "node:path";\nexport default { resolve: { alias: { "@": path.resolve(__dirname, "./src") } } };\n`;
+  fs.mkdirSync(path.join(incompleteWorkspace, "src", "app"), { recursive: true });
+  fs.writeFileSync(path.join(incompleteWorkspace, "package.json"), JSON.stringify({
+    name: "incomplete-vite-migration",
+  }));
+  fs.writeFileSync(path.join(incompleteWorkspace, "vite.config.ts"), incompleteViteConfig);
+  writeStarterTemplate(incompleteWorkspace, "incomplete-vite-migration");
+  assert.equal(
+    fs.readFileSync(path.join(incompleteWorkspace, "vite.config.ts"), "utf8"),
+    incompleteViteConfig
+  );
+});
+
+test("legacy database clients remain only for server-exclusive consumers", () => {
+  const browserWorkspace = path.join(tempRoot, "legacy-db-browser-consumer");
+  fs.mkdirSync(path.join(browserWorkspace, "src", "lib"), { recursive: true });
+  fs.mkdirSync(path.join(browserWorkspace, "src", "app"), { recursive: true });
+  fs.mkdirSync(path.join(browserWorkspace, "src", "server"), { recursive: true });
+  fs.writeFileSync(path.join(browserWorkspace, "package.json"), JSON.stringify({
+    name: "legacy-db-browser-consumer",
+    dependencies: { "@libsql/client": "^0.14.0" },
+  }));
+  fs.writeFileSync(path.join(browserWorkspace, "src", "lib", "db.ts"), LEGACY_GENERATED_DB_CLIENT_SOURCE);
+  fs.writeFileSync(
+    path.join(browserWorkspace, "src", "server", "bridge.ts"),
+    `import db from "@/lib/db";\nexport const forwardedDatabaseClient = db;\n`
+  );
+  fs.writeFileSync(
+    path.join(browserWorkspace, "src", "app", "page.tsx"),
+    `export { forwardedDatabaseClient } from "@/server/bridge";\nconst queue = { batch: () => "ok" };\nexport const unrelatedBatch = queue.batch();\n`
+  );
+
+  writeStarterTemplate(browserWorkspace, "legacy-db-browser-consumer");
+  assert.equal(
+    fs.readFileSync(path.join(browserWorkspace, "src", "lib", "db.ts"), "utf8"),
+    GENERATED_DB_CLIENT_SOURCE
+  );
+  const browserPackage = JSON.parse(fs.readFileSync(path.join(browserWorkspace, "package.json"), "utf8"));
+  assert.equal(browserPackage.dependencies["@libsql/client"], undefined);
+
+  const incompatibleWorkspace = path.join(tempRoot, "legacy-db-browser-sql");
+  fs.mkdirSync(path.join(incompatibleWorkspace, "src", "lib"), { recursive: true });
+  fs.mkdirSync(path.join(incompatibleWorkspace, "src", "app"), { recursive: true });
+  fs.mkdirSync(path.join(incompatibleWorkspace, "src", "server"), { recursive: true });
+  fs.writeFileSync(path.join(incompatibleWorkspace, "package.json"), JSON.stringify({
+    name: "legacy-db-browser-sql",
+    dependencies: { "@libsql/client": "^0.14.0" },
+  }));
+  fs.writeFileSync(
+    path.join(incompatibleWorkspace, "src", "lib", "db.ts"),
+    LEGACY_GENERATED_DB_CLIENT_SOURCE
+  );
+  fs.writeFileSync(
+    path.join(incompatibleWorkspace, "src", "server", "bridge.ts"),
+    `import { default as database } from "@/lib/db";\nexport const forwardedDatabase = database;\n`
+  );
+  fs.writeFileSync(
+    path.join(incompatibleWorkspace, "src", "app", "page.tsx"),
+    `import { forwardedDatabase } from "@/server/bridge";\nexport const load = () => forwardedDatabase.execute("SELECT 1");\n`
+  );
+  assert.throws(
+    () => writeStarterTemplate(incompatibleWorkspace, "legacy-db-browser-sql"),
+    /Migrate those calls to db\.collection\(\)/
+  );
+  assert.equal(
+    fs.readFileSync(path.join(incompatibleWorkspace, "src", "lib", "db.ts"), "utf8"),
+    LEGACY_GENERATED_DB_CLIENT_SOURCE
+  );
+
+  const serverWorkspace = path.join(tempRoot, "legacy-db-server-consumer");
+  fs.mkdirSync(path.join(serverWorkspace, "src", "lib"), { recursive: true });
+  fs.mkdirSync(path.join(serverWorkspace, "src", "app", "api", "records"), { recursive: true });
+  fs.writeFileSync(path.join(serverWorkspace, "package.json"), JSON.stringify({
+    name: "legacy-db-server-consumer",
+    dependencies: { "@libsql/client": "^0.14.0" },
+  }));
+  fs.writeFileSync(path.join(serverWorkspace, "src", "lib", "db.ts"), LEGACY_GENERATED_DB_CLIENT_SOURCE);
+  fs.writeFileSync(
+    path.join(serverWorkspace, "src", "lib", "repository.ts"),
+    `import db from "@/lib/db";\nexport const serverDatabaseClient = db;\n`
+  );
+  fs.writeFileSync(
+    path.join(serverWorkspace, "src", "app", "api", "records", "route.ts"),
+    `export { serverDatabaseClient } from "@/lib/repository";\n`
+  );
+
+  writeStarterTemplate(serverWorkspace, "legacy-db-server-consumer");
+  assert.equal(
+    fs.readFileSync(path.join(serverWorkspace, "src", "lib", "db.ts"), "utf8"),
+    LEGACY_GENERATED_DB_CLIENT_SOURCE
+  );
+  const serverPackage = JSON.parse(fs.readFileSync(path.join(serverWorkspace, "package.json"), "utf8"));
+  assert.equal(serverPackage.dependencies["@libsql/client"], "^0.14.0");
+
+  const unusedWorkspace = path.join(tempRoot, "unused-legacy-db");
+  fs.mkdirSync(path.join(unusedWorkspace, "src", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(unusedWorkspace, "package.json"), JSON.stringify({
+    name: "unused-legacy-db",
+    dependencies: { "@libsql/client": "^0.14.0" },
+  }));
+  fs.writeFileSync(path.join(unusedWorkspace, "src", "lib", "db.ts"), LEGACY_GENERATED_DB_CLIENT_SOURCE);
+  fs.mkdirSync(path.join(unusedWorkspace, "src", "server"), { recursive: true });
+  fs.writeFileSync(
+    path.join(unusedWorkspace, "src", "server", "direct-libsql.ts"),
+    `import { createClient } from "@libsql/client";\nexport const createDirectClient = createClient;\n`
+  );
+
+  writeStarterTemplate(unusedWorkspace, "unused-legacy-db");
+  assert.equal(
+    fs.readFileSync(path.join(unusedWorkspace, "src", "lib", "db.ts"), "utf8"),
+    GENERATED_DB_CLIENT_SOURCE
+  );
+  const unusedPackage = JSON.parse(fs.readFileSync(path.join(unusedWorkspace, "package.json"), "utf8"));
+  assert.equal(unusedPackage.dependencies["@libsql/client"], "^0.14.0");
 });
 
 test.after(async () => {

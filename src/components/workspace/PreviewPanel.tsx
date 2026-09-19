@@ -37,7 +37,7 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
   const base = (proxiedSrc || previewUrl || "").replace(/\/$/, "");
   const iframeRoute = base ? (iframePath === "/" ? `${base}/` : `${base}${iframePath}`) : null;
   const fullIframeUrl = iframeRoute && trustedEditor
-    ? `${iframeRoute}${iframeRoute.includes("?") ? "&" : "?"}editor=1`
+    ? `${iframeRoute}${iframeRoute.includes("?") ? "&" : "?"}editor=1&__ve_channel=${encodeURIComponent(editorChannel)}`
     : iframeRoute;
 
   return (

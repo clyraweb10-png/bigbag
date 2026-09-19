@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import ts from "typescript";
 
 /**
  * Packages every generated app can import without waiting on npm.
@@ -26,7 +27,6 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
-  "@libsql/client": "^0.14.0",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {
@@ -45,6 +45,427 @@ export const ALWAYS_AVAILABLE_PACKAGES = new Set([
   ...Object.keys(PREINSTALLED_DEPENDENCIES),
   ...Object.keys(PREINSTALLED_DEV_DEPENDENCIES),
 ]);
+
+/**
+ * Browser-only client for the platform's project-scoped durable datastore.
+ * Provider/database credentials stay in the builder server; generated bundles
+ * contain only same-origin HTTP calls.
+ */
+export const GENERATED_DB_CLIENT_SOURCE = `export type DbRecord = Record<string, unknown> & {
+  _id: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export interface ListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+function collectionPath(name: string): string {
+  if (!/^[a-z][a-z0-9_-]{0,63}$/i.test(name)) {
+    throw new Error("Collection names must start with a letter and contain only letters, numbers, _ or -");
+  }
+  const preview = window.location.pathname.match(/^\\/api\\/preview\\/[^/]+/);
+  if (!preview) throw new Error("The data client must run inside a BigBag preview");
+  return preview[0] + "/__bigbag/data/" + encodeURIComponent(name);
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const capability = (window as Window & { __BIGBAG_WRITE_CAPABILITY__?: string })
+    .__BIGBAG_WRITE_CAPABILITY__;
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(capability ? { "X-BigBag-Capability": capability } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => null) as { data?: T; error?: string } | null;
+  if (!response.ok || !payload?.data) {
+    throw new Error(payload?.error || "Database request failed (" + response.status + ")");
+  }
+  return payload.data;
+}
+
+export function collection(name: string) {
+  const url = collectionPath(name);
+  return {
+    async list(options: ListOptions = {}): Promise<{ records: DbRecord[]; total: number }> {
+      const query = new URLSearchParams();
+      if (options.limit !== undefined) query.set("limit", String(options.limit));
+      if (options.offset !== undefined) query.set("offset", String(options.offset));
+      return request(url + (query.size ? "?" + query.toString() : ""));
+    },
+    async get(id: string): Promise<DbRecord> {
+      return request(url + "/" + encodeURIComponent(id));
+    },
+    async create(data: Record<string, unknown>): Promise<DbRecord> {
+      return request(url, { method: "POST", body: JSON.stringify({ data }) });
+    },
+    async update(id: string, data: Record<string, unknown>): Promise<DbRecord> {
+      return request(url + "/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: JSON.stringify({ data }),
+      });
+    },
+    async remove(id: string): Promise<{ deleted: boolean }> {
+      return request(url + "/" + encodeURIComponent(id), { method: "DELETE" });
+    },
+  };
+}
+
+export const db = { collection, from: collection };
+export default db;
+`;
+
+export const LEGACY_GENERATED_DB_CLIENT_SOURCE = `import { createClient } from "@libsql/client";
+import path from "path";
+import fs from "fs";
+
+const dataDir = path.join(process.cwd(), "data");
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const localDbPath = path.join(dataDir, "app.db").replace(/\\\\/g, "/");
+const url = process.env.TURSO_DATABASE_URL || \`file:\${localDbPath}\`;
+const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
+
+export const db = createClient({
+  url,
+  authToken,
+});
+
+export default db;
+`;
+
+function workspaceLegacyDatabaseReferences(
+  dir: string,
+  dbClientPath: string
+): { any: boolean; browser: boolean; browserUsesLegacyApi: boolean; importsLibsql: boolean } {
+  const sourceRoot = path.join(dir, "src");
+  if (!fs.existsSync(sourceRoot)) {
+    return { any: false, browser: false, browserUsesLegacyApi: false, importsLibsql: false };
+  }
+  const pending = [sourceRoot];
+  const sourceExtension = /\.[cm]?[jt]sx?$/i;
+
+  try {
+    const sources = new Map<string, { fullPath: string; relativePath: string; content: string }>();
+    const moduleKey = (fullPath: string) => path
+      .relative(sourceRoot, fullPath)
+      .replace(/\\/g, "/")
+      .replace(/\.[cm]?[jt]sx?$/i, "")
+      .replace(/\/index$/, "");
+    const resolveModuleKey = (
+      source: { fullPath: string },
+      specifier: string
+    ): string | null => {
+      if (specifier.startsWith("@/")) {
+        return specifier.slice(2).replace(/\.[cm]?[jt]sx?$/i, "").replace(/\/index$/, "");
+      }
+      if (specifier.startsWith(".")) {
+        return moduleKey(path.resolve(path.dirname(source.fullPath), specifier));
+      }
+      return null;
+    };
+
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          pending.push(fullPath);
+        } else if (entry.isFile() && sourceExtension.test(entry.name)) {
+          sources.set(moduleKey(fullPath), {
+            fullPath,
+            relativePath: path.relative(sourceRoot, fullPath).replace(/\\/g, "/"),
+            content: fs.readFileSync(fullPath, "utf-8"),
+          });
+        }
+      }
+    }
+
+    const dbKey = moduleKey(dbClientPath);
+    const directConsumers = new Set<string>();
+    const reverseImports = new Map<string, Set<string>>();
+    let importsLibsql = false;
+    for (const [sourceKey, source] of sources) {
+      if (source.fullPath === dbClientPath) continue;
+      const importPattern = /(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']|(?:require|import)\s*\(\s*["']([^"']+)["']\s*\)/g;
+      for (const match of source.content.matchAll(importPattern)) {
+        const specifier = match[1] || match[2];
+        if (specifier === "@libsql/client") importsLibsql = true;
+        const targetKey = resolveModuleKey(source, specifier);
+        if (!targetKey) continue;
+        if (!reverseImports.has(targetKey)) reverseImports.set(targetKey, new Set());
+        reverseImports.get(targetKey)!.add(sourceKey);
+        if (targetKey === dbKey) directConsumers.add(sourceKey);
+      }
+    }
+
+    const isServerOnly = (sourceKey: string) => {
+      const sourcePath = sources.get(sourceKey)?.relativePath || sourceKey;
+      return sourcePath.startsWith("app/api/") ||
+        sourcePath.startsWith("server/") ||
+        sourcePath.includes("/server/") ||
+        /\.server\.[cm]?[jt]sx?$/i.test(sourcePath);
+    };
+    const exclusivelyServerReachable = (sourceKey: string, visiting = new Set<string>()): boolean => {
+      if (visiting.has(sourceKey)) return false;
+      const importers = reverseImports.get(sourceKey);
+      if (!importers?.size) return isServerOnly(sourceKey);
+      const nextVisiting = new Set(visiting).add(sourceKey);
+      return [...importers].every((importer) => exclusivelyServerReachable(importer, nextVisiting));
+    };
+
+    const browserConsumers = [...directConsumers]
+      .filter((consumer) => !exclusivelyServerReachable(consumer));
+    const browserReachable = new Set<string>();
+    const collectImporters = (sourceKey: string) => {
+      if (browserReachable.has(sourceKey)) return;
+      browserReachable.add(sourceKey);
+      reverseImports.get(sourceKey)?.forEach(collectImporters);
+    };
+    browserConsumers.forEach(collectImporters);
+    const legacyMethods = new Set([
+      "execute", "executeMultiple", "prepare", "transaction", "batch", "sync",
+    ]);
+    const parsedSources = new Map<string, ts.SourceFile>();
+    const parsedSource = (sourceKey: string): ts.SourceFile | null => {
+      const source = sources.get(sourceKey);
+      if (!source) return null;
+      const existing = parsedSources.get(sourceKey);
+      if (existing) return existing;
+      const parsed = ts.createSourceFile(
+        source.relativePath,
+        source.content,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX
+      );
+      parsedSources.set(sourceKey, parsed);
+      return parsed;
+    };
+    const legacyExports = new Map<string, Set<string>>([
+      [dbKey, new Set(["default", "db"])],
+    ]);
+    const clientBindingsFor = (sourceKey: string): Set<string> => {
+      const source = sources.get(sourceKey);
+      const sourceFile = parsedSource(sourceKey);
+      const bindings = new Set<string>();
+      if (!source || !sourceFile) return bindings;
+
+      const collect = (node: ts.Node): void => {
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+          const targetKey = resolveModuleKey(source, node.moduleSpecifier.text);
+          const targetExports = targetKey ? legacyExports.get(targetKey) : undefined;
+          const clause = node.importClause;
+          if (targetExports && clause) {
+            if (clause.name && targetExports.has("default")) bindings.add(clause.name.text);
+            if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+              bindings.add(clause.namedBindings.name.text);
+            } else if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+              clause.namedBindings.elements.forEach((element) => {
+                const imported = element.propertyName?.text || element.name.text;
+                if (targetExports.has(imported)) bindings.add(element.name.text);
+              });
+            }
+          }
+        }
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.initializer &&
+          ts.isCallExpression(node.initializer) &&
+          ts.isIdentifier(node.initializer.expression) &&
+          node.initializer.expression.text === "require" &&
+          node.initializer.arguments.length === 1 &&
+          ts.isStringLiteral(node.initializer.arguments[0])
+        ) {
+          const targetKey = resolveModuleKey(source, node.initializer.arguments[0].text);
+          if (targetKey && legacyExports.has(targetKey)) bindings.add(node.name.text);
+        }
+        ts.forEachChild(node, collect);
+      };
+      collect(sourceFile);
+
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const collectAliases = (node: ts.Node): void => {
+          if (
+            ts.isVariableDeclaration(node) &&
+            ts.isIdentifier(node.name) &&
+            node.initializer &&
+            ts.isIdentifier(node.initializer) &&
+            bindings.has(node.initializer.text) &&
+            !bindings.has(node.name.text)
+          ) {
+            bindings.add(node.name.text);
+            changed = true;
+          }
+          ts.forEachChild(node, collectAliases);
+        };
+        collectAliases(sourceFile);
+      }
+      return bindings;
+    };
+
+    for (let pass = 0; pass <= sources.size; pass += 1) {
+      let changed = false;
+      for (const [sourceKey, source] of sources) {
+        if (sourceKey === dbKey) continue;
+        const sourceFile = parsedSource(sourceKey);
+        if (!sourceFile) continue;
+        const bindings = clientBindingsFor(sourceKey);
+        const exported = legacyExports.get(sourceKey) || new Set<string>();
+        const addExport = (name: string) => {
+          if (!exported.has(name)) {
+            exported.add(name);
+            changed = true;
+          }
+        };
+        const collectExports = (node: ts.Node): void => {
+          if (ts.isExportDeclaration(node) && node.exportClause && ts.isNamedExports(node.exportClause)) {
+            const targetKey = node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)
+              ? resolveModuleKey(source, node.moduleSpecifier.text)
+              : null;
+            const targetExports = targetKey ? legacyExports.get(targetKey) : undefined;
+            node.exportClause.elements.forEach((element) => {
+              const imported = element.propertyName?.text || element.name.text;
+              if (targetExports?.has(imported) || (!targetKey && bindings.has(imported))) {
+                addExport(element.name.text);
+              }
+            });
+          }
+          if (ts.isExportAssignment(node) && ts.isIdentifier(node.expression) && bindings.has(node.expression.text)) {
+            addExport("default");
+          }
+          if (
+            ts.isVariableStatement(node) &&
+            node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+          ) {
+            node.declarationList.declarations.forEach((declaration) => {
+              if (ts.isIdentifier(declaration.name) && bindings.has(declaration.name.text)) {
+                addExport(declaration.name.text);
+              }
+            });
+          }
+          ts.forEachChild(node, collectExports);
+        };
+        collectExports(sourceFile);
+        if (exported.size > 0) legacyExports.set(sourceKey, exported);
+      }
+      if (!changed) break;
+    }
+
+    const browserSourceUsesLegacyApi = (sourceKey: string): boolean => {
+      const source = sources.get(sourceKey);
+      if (!source) return false;
+      const sourceFile = parsedSource(sourceKey);
+      if (!sourceFile) return false;
+      const clientBindings = clientBindingsFor(sourceKey);
+      const methodBindings = new Set<string>();
+
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const collectAliases = (node: ts.Node): void => {
+          if (ts.isVariableDeclaration(node) && node.initializer) {
+            if (
+              ts.isIdentifier(node.name) &&
+              ts.isIdentifier(node.initializer) &&
+              clientBindings.has(node.initializer.text) &&
+              !clientBindings.has(node.name.text)
+            ) {
+              clientBindings.add(node.name.text);
+              changed = true;
+            }
+            if (
+              ts.isIdentifier(node.name) &&
+              ts.isPropertyAccessExpression(node.initializer) &&
+              ts.isIdentifier(node.initializer.expression) &&
+              clientBindings.has(node.initializer.expression.text) &&
+              legacyMethods.has(node.initializer.name.text) &&
+              !methodBindings.has(node.name.text)
+            ) {
+              methodBindings.add(node.name.text);
+              changed = true;
+            }
+            if (
+              ts.isObjectBindingPattern(node.name) &&
+              ts.isIdentifier(node.initializer) &&
+              clientBindings.has(node.initializer.text)
+            ) {
+              node.name.elements.forEach((element) => {
+                const imported = element.propertyName && ts.isIdentifier(element.propertyName)
+                  ? element.propertyName.text
+                  : element.name.getText(sourceFile);
+                if (legacyMethods.has(imported) && ts.isIdentifier(element.name)) {
+                  if (!methodBindings.has(element.name.text)) changed = true;
+                  methodBindings.add(element.name.text);
+                }
+              });
+            }
+          }
+          ts.forEachChild(node, collectAliases);
+        };
+        collectAliases(sourceFile);
+      }
+
+      let found = false;
+      const rootBinding = (expression: ts.Expression): string | null => {
+        if (ts.isIdentifier(expression)) return expression.text;
+        if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+          return rootBinding(expression.expression);
+        }
+        return null;
+      };
+      const findCalls = (node: ts.Node): void => {
+        if (found) return;
+        if (ts.isCallExpression(node)) {
+          if (ts.isIdentifier(node.expression) && methodBindings.has(node.expression.text)) {
+            found = true;
+            return;
+          }
+          const expression = node.expression;
+          const method = ts.isPropertyAccessExpression(expression)
+            ? expression.name.text
+            : ts.isElementAccessExpression(expression) &&
+                expression.argumentExpression &&
+                ts.isStringLiteral(expression.argumentExpression)
+              ? expression.argumentExpression.text
+              : null;
+          const receiver = ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)
+            ? rootBinding(expression.expression)
+            : null;
+          if (method && receiver && legacyMethods.has(method) && clientBindings.has(receiver)) {
+            found = true;
+            return;
+          }
+        }
+        ts.forEachChild(node, findCalls);
+      };
+      findCalls(sourceFile);
+      return found;
+    };
+
+    return {
+      any: directConsumers.size > 0,
+      browser: browserConsumers.length > 0,
+      browserUsesLegacyApi: [...browserReachable]
+        .some(browserSourceUsesLegacyApi),
+      importsLibsql,
+    };
+  } catch {
+    // A Node-only client must not leak into a browser bundle when the scan is
+    // incomplete. Prefer the browser-safe migration in this uncertain case.
+    return { any: true, browser: true, browserUsesLegacyApi: true, importsLibsql: true };
+  }
+}
 
 function write(dir: string, relative: string, content: string) {
   const full = path.join(dir, relative);
@@ -85,6 +506,29 @@ function readLayoutMetadata(
  */
 function ensureViteRuntime(dir: string, projectId: string): void {
   const pkgPath = path.join(dir, "package.json");
+  const dbClientPath = path.join(dir, "src/lib/db.ts");
+  const currentDbClient = fs.existsSync(dbClientPath)
+    ? fs.readFileSync(dbClientPath, "utf-8")
+    : null;
+  const legacyReferences = workspaceLegacyDatabaseReferences(dir, dbClientPath);
+  if (
+    currentDbClient === LEGACY_GENERATED_DB_CLIENT_SOURCE &&
+    legacyReferences.browserUsesLegacyApi
+  ) {
+    throw new Error(
+      "This restored app uses legacy server-only database methods in browser code. Migrate those calls to db.collection() before rebuilding."
+    );
+  }
+  const preserveLegacyDbClient =
+    currentDbClient === LEGACY_GENERATED_DB_CLIENT_SOURCE &&
+    legacyReferences.any &&
+    !legacyReferences.browser;
+  const migrateLegacyDbClient =
+    currentDbClient === LEGACY_GENERATED_DB_CLIENT_SOURCE &&
+    !preserveLegacyDbClient;
+  const keepLibsqlDependency =
+    legacyReferences.importsLibsql ||
+    (Boolean(currentDbClient?.includes("@libsql/client")) && !migrateLegacyDbClient);
   let pkg: Record<string, unknown> = {};
   try {
     pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
@@ -95,6 +539,7 @@ function ensureViteRuntime(dir: string, projectId: string): void {
   const scripts = (pkg.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {}) as Record<string, string>;
   const dependencies = (pkg.dependencies && typeof pkg.dependencies === "object" ? pkg.dependencies : {}) as Record<string, string>;
   const devDependencies = (pkg.devDependencies && typeof pkg.devDependencies === "object" ? pkg.devDependencies : {}) as Record<string, string>;
+  const { "@libsql/client": legacyDbDependency, ...browserDependencies } = dependencies;
 
   pkg = {
     ...pkg,
@@ -109,7 +554,10 @@ function ensureViteRuntime(dir: string, projectId: string): void {
     },
     dependencies: {
       ...PREINSTALLED_DEPENDENCIES,
-      ...dependencies,
+      ...browserDependencies,
+      ...(keepLibsqlDependency
+        ? { "@libsql/client": legacyDbDependency || "^0.18.0" }
+        : {}),
     },
     devDependencies: {
       ...PREINSTALLED_DEV_DEPENDENCIES,
@@ -146,6 +594,12 @@ export default {
 
   writeIfMissing(dir, "src/app/globals.css", `@import "tailwindcss";\n`);
 
+  if (!fs.existsSync(dbClientPath)) {
+    write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
+  } else if (migrateLegacyDbClient) {
+    write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
+  }
+
   writeIfMissing(
     dir,
     "index.html",
@@ -169,18 +623,74 @@ export default {
     dir,
     "vite.config.ts",
     `import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
   plugins: [react()],
-  server: { allowedHosts: [".e2b.app"] },
+  server: { allowedHosts: [".e2b.app"], hmr: false },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: { "@": path.resolve(configDir, "./src") },
   },
 });
 `
   );
+
+  const viteConfigPath = path.join(dir, "vite.config.ts");
+  const currentViteConfig = fs.readFileSync(viteConfigPath, "utf-8");
+  let updatedViteConfig = currentViteConfig;
+  const legacyAlias = /alias:\s*\{\s*["']@["']:\s*path\.resolve\(\s*__dirname\s*,\s*["']\.\/src["']\s*\)\s*\}/;
+  if (legacyAlias.test(updatedViteConfig)) {
+    let migrationCandidate = updatedViteConfig;
+    const nodeUrlImport = /import\s*{\s*([^}]*)}\s*from\s*(["'])node:url\2\s*;/;
+    const nodeUrlMatch = migrationCandidate.match(nodeUrlImport);
+    const hasFileUrlBinding = nodeUrlMatch?.[1]
+      .split(",")
+      .some((binding) => binding.trim() === "fileURLToPath") || false;
+    if (!hasFileUrlBinding) {
+      if (nodeUrlMatch) {
+        migrationCandidate = migrationCandidate.replace(
+          nodeUrlImport,
+          (_full, bindings: string, quote: string) =>
+            `import { ${bindings.trim()}${bindings.trim() ? ", " : ""}fileURLToPath } from ${quote}node:url${quote};`
+        );
+      } else {
+        migrationCandidate = migrationCandidate.replace(
+          /import\s+path\s+from\s+["']node:path["']\s*;/,
+          (pathImport) => `${pathImport}\nimport { fileURLToPath } from "node:url";`
+        );
+      }
+    }
+    if (!migrationCandidate.includes("fileURLToPath(import.meta.url)")) {
+      migrationCandidate = migrationCandidate.replace(
+        /import\s+\w+\s+from\s+["']@vitejs\/plugin-react["']\s*;/,
+        (reactImport) => `${reactImport}\n\nconst configDir = path.dirname(fileURLToPath(import.meta.url));`
+      );
+    }
+    const completeImport = /import\s*{[^}]*\bfileURLToPath\b[^}]*}\s*from\s*["']node:url["']\s*;/
+      .test(migrationCandidate);
+    const completeDeclaration = /const\s+configDir\s*=\s*path\.dirname\(fileURLToPath\(import\.meta\.url\)\)\s*;/
+      .test(migrationCandidate);
+    if (completeImport && completeDeclaration) {
+      updatedViteConfig = migrationCandidate.replace(
+        legacyAlias,
+        'alias: { "@": path.resolve(configDir, "./src") }'
+      );
+    }
+  }
+  const templateServerConfig = 'server: { allowedHosts: [".e2b.app"] },';
+  if (updatedViteConfig.includes(templateServerConfig)) {
+    updatedViteConfig = updatedViteConfig.replace(
+      templateServerConfig,
+      'server: { allowedHosts: [".e2b.app"], hmr: false },'
+    );
+  }
+  if (updatedViteConfig !== currentViteConfig) {
+    write(dir, "vite.config.ts", updatedViteConfig);
+  }
 
   const metadata = readLayoutMetadata(dir, projectId);
   writeIfMissing(
@@ -235,6 +745,7 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
         name: projectId,
         version: "0.1.0",
         private: true,
+        type: "module",
         scripts: {
           dev: "vite --host 0.0.0.0",
           build: "vite build",
@@ -374,26 +885,7 @@ export function cn(...inputs: ClassValue[]) {
   write(
     dir,
     "src/lib/db.ts",
-    `import { createClient } from "@libsql/client";
-import path from "path";
-import fs from "fs";
-
-const dataDir = path.join(process.cwd(), "data");
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const localDbPath = path.join(dataDir, "app.db").replace(/\\\\/g, "/");
-const url = process.env.TURSO_DATABASE_URL || \`file:\${localDbPath}\`;
-const authToken = process.env.TURSO_AUTH_TOKEN || undefined;
-
-export const db = createClient({
-  url,
-  authToken,
-});
-
-export default db;
-`
+    GENERATED_DB_CLIENT_SOURCE
   );
 
   write(

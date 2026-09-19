@@ -3,6 +3,7 @@ import type { NextRequest, NextResponse } from "next/server";
 
 export const TENANT_COOKIE = "bigbag_tenant";
 const TENANT_ID = /^[a-f0-9-]{36}$/;
+const PREVIEW_WRITE_TTL_MS = 15 * 60_000;
 
 function signingSecret(): string {
   const secret = process.env.TENANT_COOKIE_SECRET?.trim();
@@ -15,6 +16,47 @@ function signingSecret(): string {
 
 function signature(tenantId: string): string {
   return createHmac("sha256", signingSecret()).update(tenantId).digest("base64url");
+}
+
+function previewWriteSignature(payload: string): string {
+  return createHmac("sha256", signingSecret())
+    .update(`preview-write:${payload}`)
+    .digest("base64url");
+}
+
+export function createPreviewWriteCapability(
+  projectId: string,
+  tenantId: string,
+  now = Date.now()
+): string {
+  if (!TENANT_ID.test(tenantId)) throw new Error("Invalid tenant id");
+  const expiresAt = Math.floor((now + PREVIEW_WRITE_TTL_MS) / 1000);
+  const payload = `${projectId}.${tenantId}.${expiresAt}`;
+  return `${payload}.${previewWriteSignature(payload)}`;
+}
+
+export function verifyPreviewWriteCapability(
+  token: string | null,
+  projectId: string,
+  now = Date.now()
+): string | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 4) return null;
+  const [tokenProjectId, tenantId, rawExpiry, received] = parts;
+  const expiresAt = Number(rawExpiry);
+  if (
+    tokenProjectId !== projectId ||
+    !TENANT_ID.test(tenantId) ||
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt * 1000 < now ||
+    expiresAt * 1000 > now + PREVIEW_WRITE_TTL_MS + 60_000
+  ) return null;
+  const payload = `${tokenProjectId}.${tenantId}.${rawExpiry}`;
+  const expected = previewWriteSignature(payload);
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b) ? tenantId : null;
 }
 
 function parseCookie(value: string | undefined): string | null {

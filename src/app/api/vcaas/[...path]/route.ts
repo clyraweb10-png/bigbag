@@ -9,7 +9,13 @@ import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { isPromptEndpoint, injectDesignPrompt } from "@/lib/design-system-prompt";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { isRoutableProjectSlug, slugify } from "@/lib/project-slug";
-import { durableProjectStore, requireDurablePersistence } from "@/lib/local-orchestrator/durable-project-store";
+import {
+  assertAppCollectionName,
+  durableProjectStore,
+  requireDurablePersistence,
+} from "@/lib/local-orchestrator/durable-project-store";
+import type { AppRecord } from "@/lib/local-orchestrator/durable-project-store";
+import type { DbProperty, DbTable } from "@/lib/vcaas-types";
 import {
   attachLocalTenantCookie,
   isPreviewInitiatedRequest,
@@ -18,6 +24,133 @@ import {
 
 const IS_LOCAL_MODE = isLocalOrchestratorEnabled();
 const LOCAL_REBUILD_TIMEOUT_MS = 10 * 60_000;
+
+type PromptAsset = { name?: unknown; url?: unknown; imageDescription?: unknown; description?: unknown };
+
+/**
+ * Keep uploaded assets in the model context without teaching the model to invent
+ * remote images. URLs are created by our upload route and remain project-scoped.
+ */
+function promptWithAssets(prompt: unknown, inputFiles: unknown): string {
+  const text = typeof prompt === "string" ? prompt : "";
+  if (!Array.isArray(inputFiles)) return text;
+
+  const assets = inputFiles
+    .slice(0, 20)
+    .map((entry: PromptAsset) => {
+      const name = typeof entry?.name === "string" ? entry.name.trim().slice(0, 160) : "asset";
+      const url = typeof entry?.url === "string" ? entry.url.trim() : "";
+      const descriptionSource = entry?.imageDescription ?? entry?.description;
+      const description = typeof descriptionSource === "string"
+        ? descriptionSource.trim().replace(/\s+/g, " ").slice(0, 300)
+        : name;
+      if (!url.startsWith(`/api/preview/`) && !/^https?:\/\//i.test(url)) return null;
+      return `- ${name}: ${url} (${description || name})`;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  if (assets.length === 0) return text;
+  return `${text}\n\nUSER-PROVIDED ASSETS (use only when relevant; do not replace them with invented URLs):\n${assets.join("\n")}`;
+}
+
+function readableLabel(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function inferredProperty(name: string, values: unknown[]): DbProperty {
+  const sample = values.find((value) => value !== null && value !== undefined);
+  const propertyType = typeof sample === "number"
+    ? "number"
+    : typeof sample === "boolean"
+      ? "boolean"
+      : typeof sample === "object"
+        ? Array.isArray(sample) ? "array" : "object"
+        : name === "createdAt" || name === "updatedAt"
+          ? "date"
+          : "string";
+  return {
+    id: name,
+    name,
+    label: readableLabel(name),
+    propertyType,
+    description: "Inferred from generated application records",
+  };
+}
+
+async function localDatabaseTables(projectId: string): Promise<DbTable[]> {
+  const collections = await durableProjectStore.listAppCollections(projectId);
+  return Promise.all(collections.map(async ({ name }) => {
+    const { records } = await durableProjectStore.listAppRecords(projectId, name, { limit: 100 });
+    const fields = new Set<string>();
+    for (const record of records) {
+      Object.keys(record).forEach((field) => {
+        if (!["_id", "createdAt", "updatedAt"].includes(field)) fields.add(field);
+      });
+    }
+    const properties = Object.fromEntries([...fields].map((field) => [
+      field,
+      inferredProperty(field, records.map((record) => record[field])),
+    ]));
+    return {
+      _id: name,
+      type: name,
+      label: readableLabel(name),
+      description: "Durable collection created by the generated application",
+      icon: "database",
+      properties,
+    };
+  }));
+}
+
+function matchesFilter(record: AppRecord, filter: unknown): boolean {
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return true;
+  for (const [field, condition] of Object.entries(filter as Record<string, unknown>)) {
+    if (field === "_or" && Array.isArray(condition)) {
+      if (!condition.some((branch) => matchesFilter(record, branch))) return false;
+      continue;
+    }
+    const actual = record[field];
+    if (condition && typeof condition === "object" && !Array.isArray(condition)) {
+      const operations = condition as Record<string, unknown>;
+      for (const [operator, expected] of Object.entries(operations)) {
+        if (operator === "options") continue;
+        const left = typeof actual === "string" ? actual : String(actual ?? "");
+        const right = String(expected ?? "");
+        if (operator === "contains" && !left.toLowerCase().includes(right.toLowerCase())) return false;
+        if (operator === "startsWith" && !left.toLowerCase().startsWith(right.toLowerCase())) return false;
+        if (operator === "endsWith" && !left.toLowerCase().endsWith(right.toLowerCase())) return false;
+        // JavaScript regular expressions can exhibit catastrophic backtracking.
+        // This filter is request-controlled, so generated apps must use one of
+        // the bounded plain-text operators above instead.
+        if (operator === "regex") return false;
+        if (operator === "eq" && actual !== expected) return false;
+        if (operator === "ne" && actual === expected) return false;
+        if (operator === "gt" && !(Number(actual) > Number(expected))) return false;
+        if (operator === "gte" && !(Number(actual) >= Number(expected))) return false;
+        if (operator === "lt" && !(Number(actual) < Number(expected))) return false;
+        if (operator === "lte" && !(Number(actual) <= Number(expected))) return false;
+      }
+    } else if (actual !== condition) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validRecordData(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function validCollectionName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    return assertAppCollectionName(value);
+  } catch {
+    return null;
+  }
+}
 
 async function availableProjectId(requested: string): Promise<string> {
   let base = slugify(requested);
@@ -61,7 +194,10 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
 
     // Start background agent run & dev sandbox
     void localAgentEngine
-      .runPrompt(proj.projectId, body.prompt || body.description || "")
+      .runPrompt(
+        proj.projectId,
+        promptWithAssets(body.prompt || body.description || "", body.files || body.inputFiles)
+      )
       .catch((error) => console.error(`[vcaas] Failed to launch agent for ${proj.projectId}:`, error));
 
     return NextResponse.json(
@@ -160,7 +296,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
         return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
       }
       void localAgentEngine
-        .runPrompt(projectId, body.prompt || "")
+        .runPrompt(projectId, promptWithAssets(body.prompt || "", body.inputFiles || body.files))
         .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
       return NextResponse.json({ ok: true, data: { started: true } }, { status: 200 });
     }
@@ -222,9 +358,72 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       );
     }
 
-    // /projects/:id/database/tables-structure
-    if (subRoute === "database/tables-structure") {
-      return NextResponse.json({ ok: true, data: { tables: [] } }, { status: 200 });
+    // /projects/:id/database/* — owner-facing CMS for generated app records.
+    if (subRoute === "database/tables-structure" && method === "GET") {
+      return NextResponse.json(
+        { ok: true, data: { tables: await localDatabaseTables(projectId) } },
+        { status: 200 }
+      );
+    }
+    if (subRoute === "database/query" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const tableName = validCollectionName(body.tableName);
+      if (!tableName) {
+        return NextResponse.json({ ok: false, error: "Invalid database query" }, { status: 400 });
+      }
+      const queryOptions = validRecordData(body.queryOptions) ? body.queryOptions : {};
+      const complete = await durableProjectStore.listAllAppRecords(projectId, tableName);
+      let results = complete.filter((record) => matchesFilter(record, queryOptions._filter));
+      const sort = validRecordData(queryOptions._sort) ? Object.entries(queryOptions._sort)[0] : undefined;
+      if (sort) {
+        const [field, direction] = sort;
+        results.sort((left, right) => {
+          const order = String(left[field] ?? "").localeCompare(String(right[field] ?? ""), undefined, { numeric: true });
+          return direction === "asc" ? order : -order;
+        });
+      }
+      const total = results.length;
+      const offset = Math.max(0, Number(queryOptions._offset) || 0);
+      const limit = Math.min(100, Math.max(1, Number(queryOptions._limit) || 25));
+      results = results.slice(offset, offset + limit);
+      if (queryOptions._count && results[0]) results[0] = { ...results[0], _count: { _total: total } };
+      return NextResponse.json(
+        { ok: true, data: { results, ...(queryOptions._count ? { count: total } : {}) } },
+        { status: 200 }
+      );
+    }
+    if (subRoute === "database/records" && method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const tableName = validCollectionName(body.tableName);
+      if (!tableName || !validRecordData(body.data)) {
+        return NextResponse.json({ ok: false, error: "Invalid record" }, { status: 400 });
+      }
+      const data = await durableProjectStore.createAppRecord(projectId, tableName, body.data);
+      return NextResponse.json({ ok: true, data }, { status: 201 });
+    }
+    if (subRoute.startsWith("database/records/") && !subRoute.endsWith("/link")) {
+      const recordId = path[4] || "";
+      if (method === "PATCH") {
+        const body = await req.json().catch(() => ({}));
+        const tableName = validCollectionName(body.tableName);
+        if (!tableName || !validRecordData(body.data)) {
+          return NextResponse.json({ ok: false, error: "Invalid record" }, { status: 400 });
+        }
+        const data = await durableProjectStore.updateAppRecord(projectId, tableName, recordId, body.data);
+        return data
+          ? NextResponse.json({ ok: true, data }, { status: 200 })
+          : NextResponse.json({ ok: false, error: "Record not found" }, { status: 404 });
+      }
+      if (method === "DELETE") {
+        const tableName = validCollectionName(url.searchParams.get("tableName"));
+        if (!tableName) {
+          return NextResponse.json({ ok: false, error: "Invalid record" }, { status: 400 });
+        }
+        const deleted = await durableProjectStore.deleteAppRecord(projectId, tableName, recordId);
+        return deleted
+          ? NextResponse.json({ ok: true, data: { deleted: true } }, { status: 200 })
+          : NextResponse.json({ ok: false, error: "Record not found" }, { status: 404 });
+      }
     }
 
     // /projects/:id/github/status

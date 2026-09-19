@@ -5,6 +5,8 @@ export interface ModelProviderConfig {
   apiKey: string;
   model: string;
   maxTokens: number;
+  /** Additional attempts after the first request for transient failures. */
+  maxRetries: number;
   reasoningEffort?: "low" | "high" | "max";
   extraHeaders?: Record<string, string>;
 }
@@ -25,8 +27,9 @@ export interface RouterCompletionOptions {
   maxTokens?: number;
 }
 
-/** How many times to retry a single provider on transient errors (503, 429, timeout). */
-const MAX_RETRIES = 2;
+/** Product policy: Gemini gets five recovery attempts before provider failover. */
+export const GEMINI_MAX_RETRIES = 5;
+const DEFAULT_MAX_RETRIES = 2;
 /** Delay in ms between retries. */
 const RETRY_DELAY_MS = 3_000;
 
@@ -107,6 +110,7 @@ class MultiModelRouter {
         apiKey: geminiKey,
         model: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
         maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
+        maxRetries: GEMINI_MAX_RETRIES,
       });
     }
 
@@ -121,6 +125,7 @@ class MultiModelRouter {
         apiKey: telnyxKey,
         model: telnyxModel,
         maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
+        maxRetries: DEFAULT_MAX_RETRIES,
         reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
       });
     }
@@ -161,7 +166,7 @@ class MultiModelRouter {
 
     let lastError = "";
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
       let remainingMs = options.deadlineAt === undefined
         ? undefined
         : options.deadlineAt - Date.now();
@@ -170,7 +175,7 @@ class MultiModelRouter {
       }
 
       if (attempt > 0) {
-        const retryMsg = `🔄 Retrying ${provider.name} (attempt ${attempt + 1}/${MAX_RETRIES + 1})...`;
+        const retryMsg = `🔄 Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`;
         console.log(`[MultiModelRouter] ${retryMsg}`);
         onStatus?.(retryMsg);
         await sleep(RETRY_DELAY_MS);
@@ -262,11 +267,13 @@ class MultiModelRouter {
 
       } catch (err: any) {
         const isTimeout = err.name === "TimeoutError" || err.message?.includes("aborted") || err.message?.includes("timeout");
+        const isNetworkFailure = err.message?.includes("fetch");
         lastError = `exception: ${err.message || String(err)}`;
         console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
 
-        // A timed-out model already consumed the provider budget; fail over now.
-        if (isTimeout || !err.message?.includes("fetch")) break;
+        // Timeouts and network failures are transient and use the provider's retry
+        // budget. Invalid/empty/truncated model output fails over immediately.
+        if (!isTimeout && !isNetworkFailure) break;
       }
     }
 
