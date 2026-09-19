@@ -63,14 +63,19 @@ const CHAT_PHRASES: RegExp[] = [
 
 const BUILD_ACTION = /\b(build|create|make|develop|design|generate|recreate|clone|implement|add|change|remove|update|fix|replace|redesign)\b/i;
 const APP_SUBJECT = /\b(app|application|website|site|page|landing page|dashboard|portal|platform|store|shop|saas|crm|portfolio|blog|navbar|header|hero|section|form|auth|login|checkout|database)\b/i;
-const QUESTION_START = /^(what|how|why|when|where|who|can you|could you|would you|do you|is there)\b/i;
+const QUESTION_START = /^(what|how|why|when|where|who|which|whose|whom|can you|could you|would you|should|do you|is there|is it|are there|tell me|explain)\b/i;
 const EXPLANATORY_QUESTION_START = /^(what|how|why|when|where|who)\b/i;
 const IMPLICIT_EDIT = /\b(should|needs?|must|want|prefer|hate|(?:do not|don't) like|too (?:big|small|dark|light|busy|plain)|more|less|bigger|smaller|different|wrong|broken)\b/i;
+const DOUBT_KEYWORDS = /\b(doubt|doubts|confused|not sure|wondering|clarify|clarification|explain|meaning|question|questions|difference between|how to|can I|can we|should I)\b/i;
 
-function isCasualChat(message: string): boolean {
-  if (CHAT_PHRASES.some((re) => re.test(message))) return true;
-  if (BUILD_ACTION.test(message) && APP_SUBJECT.test(message)) return false;
-  return QUESTION_START.test(message);
+export function isQuestionOrDoubt(message: string): boolean {
+  const norm = message.trim().toLowerCase();
+  if (!norm) return false;
+  if (norm.includes("?")) return true;
+  if (CHAT_PHRASES.some((re) => re.test(norm))) return true;
+  if (QUESTION_START.test(norm)) return true;
+  if (DOUBT_KEYWORDS.test(norm)) return true;
+  return false;
 }
 
 function isActiveEditRequest(message: string): boolean {
@@ -99,38 +104,22 @@ export function classifyIntent(
   // Planning in progress — don't re-plan.
   if (stage === "planning") return "chat";
 
-  // Awaiting confirmation: check for a confirm phrase first.
-  if (stage === "awaiting_confirmation") {
-    const isConfirm = CONFIRM_PHRASES.some((phrase) => norm.includes(phrase));
-    if (isConfirm) return "confirm_build";
-    if (isCasualChat(norm)) return "chat";
-    // Anything else refines the plan.
-    return "update_plan";
+  // Awaiting confirmation or confirm phrases: proceed immediately.
+  if (CONFIRM_PHRASES.some((phrase) => norm.includes(phrase))) {
+    return "confirm_build";
   }
 
   // An active project still deserves a normal conversational assistant. Only
   // change code when the message actually asks for a product or UI change.
   if (stage === "active") return isActiveEditRequest(norm) ? "direct_edit" : "chat";
 
-  // Idle stage: distinguish chat from a real app idea.
-  // Confirm phrases at idle still go to plan (they have no plan to confirm yet).
-  if (isCasualChat(norm)) return "chat";
+  // If user is chatting or asking a doubt / question -> chat mode to answer them
+  if (isQuestionOrDoubt(norm)) {
+    return "chat";
+  }
 
-  // URLs are explicit build/reference requests even when the surrounding text
-  // is short (for example, "clone https://example.com").
-  if (/https?:\/\//i.test(norm)) return "plan";
-
-  if (BUILD_ACTION.test(norm) && APP_SUBJECT.test(norm)) return "plan";
-
-  // Compact ideas such as "portfolio website" should not be mistaken for chat.
-  if (APP_SUBJECT.test(norm) && norm.split(/\s+/).filter(Boolean).length >= 2) return "plan";
-
-  // Very short messages are chitchat.
-  const wordCount = norm.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 4) return "chat";
-
-  // Long enough to be an app idea → generate plan.
-  return "plan";
+  // If prompt has no question, user wants to create a build -> directly proceed to build
+  return "confirm_build";
 }
 
 /** Infer a stage from a conversation history on page load (no store persistence needed). */

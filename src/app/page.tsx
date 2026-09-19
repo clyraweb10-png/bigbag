@@ -421,7 +421,14 @@ export default function DashboardPage() {
   const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const openBuildModal = (promptOverride?: string) => {
-    const buildPrompt = promptOverride?.trim() || approvedPrompt.trim();
+    const buildPrompt =
+      promptOverride?.trim() ||
+      approvedPrompt.trim() ||
+      landingMessages
+        .filter((m) => m.role === "user")
+        .map((m) => m.content.trim())
+        .filter(Boolean)
+        .join(" ");
     if (!buildPrompt && attachedFiles.length === 0) return;
     const words = buildPrompt.split(/\s+/).slice(0, 4).join("-");
     const auto = normalizeId(words) || `app-${Math.random().toString(36).slice(2, 7)}`;
@@ -433,8 +440,7 @@ export default function DashboardPage() {
   const submitLandingMessage = async () => {
     const message = firstPrompt.trim();
     if ((!message && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
-    setChatOpen(true);
-    setLandingSuggestions([]);
+
     if (!message) {
       const attachmentPrompt = "Build a complete application using the attached files as the primary product and visual reference.";
       setApprovedPrompt(attachmentPrompt);
@@ -445,21 +451,23 @@ export default function DashboardPage() {
 
     const lastAgentMessage = [...landingMessages].reverse().find((entry) => entry.role === "assistant")?.content;
     const intent = classifyIntent(message, landingStage, lastAgentMessage);
+
+    // If prompt has no question, user wants to create a build -> directly proceed to build
     if (intent === "confirm_build") {
+      setApprovedPrompt(message);
       setFirstPrompt("");
-      openBuildModal();
+      openBuildModal(message);
       return;
     }
 
-    const plannerIntent = intent === "direct_edit" ? "plan" : intent;
-    if (plannerIntent !== "chat" && plannerIntent !== "plan" && plannerIntent !== "update_plan") return;
-
+    // User is chatting or asking a doubt / question -> open chat and reply
+    setChatOpen(true);
+    setLandingSuggestions([]);
     const nextHistory = [...landingMessages, { role: "user" as const, content: message }];
     setLandingMessages(nextHistory);
     setFirstPrompt("");
     setPlannerRunning(true);
-    if (plannerIntent === "plan") {
-      setLandingStage("planning");
+    if (!approvedPrompt) {
       setApprovedPrompt(message);
     }
 
@@ -467,20 +475,27 @@ export default function DashboardPage() {
       const response = await fetch("/api/planner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: plannerIntent, message, history: landingMessages.slice(-10) }),
+        body: JSON.stringify({ intent: "chat", message, history: landingMessages.slice(-10) }),
       });
-      const payload = await response.json() as { ok: boolean; data?: { text?: string; suggestions?: string[] }; error?: string };
+      const payload = (await response.json()) as {
+        ok: boolean;
+        data?: { text?: string; suggestions?: string[] };
+        error?: string;
+      };
       if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "The assistant is unavailable.");
 
       setTypingMessageIndex(nextHistory.length);
       setLandingMessages((current) => [...current, { role: "assistant", content: payload.data!.text! }]);
       setLandingSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
-      if (plannerIntent === "plan" || plannerIntent === "update_plan") setLandingStage("awaiting_confirmation");
+      setLandingStage("awaiting_confirmation");
     } catch (error) {
-      setLandingMessages([...nextHistory, {
-        role: "assistant",
-        content: "I couldn’t reach the planning service. Your message is saved here—try sending it again when the connection is ready.",
-      }]);
+      setLandingMessages([
+        ...nextHistory,
+        {
+          role: "assistant",
+          content: "I couldn’t reach the assistant. Your message is saved here—try sending it again when the connection is ready.",
+        },
+      ]);
       setFirstPrompt(message);
       setLandingStage(landingMessages.length === 0 ? "idle" : landingStage);
       toast.error(error instanceof Error ? error.message : "The assistant is unavailable.");
@@ -502,12 +517,14 @@ export default function DashboardPage() {
 
     setBuildCreating(true);
     setBuildError(null);
-    const latestPlan = [...landingMessages].reverse().find((entry) => entry.role === "assistant" && entry.content.includes("Implementation Plan"))?.content;
-    const buildInstruction = latestPlan
-      ? `Build the complete application from this approved request and implementation plan.\n\nOriginal request:\n${approvedPrompt}\n\n${latestPlan}`
-      : approvedPrompt;
+    const userMessages = landingMessages
+      .filter((entry) => entry.role === "user")
+      .map((entry) => entry.content.trim())
+      .filter(Boolean);
+    const conversationPrompt = userMessages.length > 0 ? userMessages.join("\n\n") : "";
+    const buildInstruction = approvedPrompt.trim() || conversationPrompt || "Build a complete modern web application.";
 
-    const res = await vcaasApi.projects.create({ projectId: id, description: approvedPrompt.slice(0, 200) });
+    const res = await vcaasApi.projects.create({ projectId: id, description: buildInstruction.slice(0, 200) });
     if (!res.ok) {
       setBuildError(res.error || `Could not create "${id}".`);
       setBuildCreating(false);
@@ -573,7 +590,7 @@ export default function DashboardPage() {
             <h1 className="sr-only sm:hidden">Build something remarkable</h1>
             <div className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 text-center sm:block">
               <h1 className="text-sm font-semibold">Build something remarkable</h1>
-              <p className="hidden text-xs text-muted-foreground sm:block">Your planning conversation</p>
+              <p className="hidden text-xs text-muted-foreground sm:block">Ask questions or chat</p>
             </div>
           </div>
         </header>
@@ -598,7 +615,7 @@ export default function DashboardPage() {
                 <div className="mb-8 text-left sm:text-center">
                   <div className="mb-5 flex sm:justify-center"><BigBagLogo size="lg" /></div>
                   <h1 className="text-balance text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl">Build something remarkable.</h1>
-                  <p className="mt-4 text-base leading-7 text-foreground/65">Start with the rough idea. BigBag will help shape the plan before a single file is generated.</p>
+                  <p className="mt-4 text-base leading-7 text-foreground/65">Describe the app you want to build, or ask any questions to get started.</p>
                 </div>
               )}
 
@@ -629,10 +646,10 @@ export default function DashboardPage() {
                     {plannerRunning && (
                       <div className="flex items-center gap-3 text-sm text-foreground/65" role="status">
                         <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground"><span className="font-mono text-[10px] font-bold">&lt;/&gt;</span></div>
-                        <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />{landingStage === "planning" ? "Shaping the implementation plan…" : "Thinking through the next move…"}</span>
+                        <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />Thinking…</span>
                       </div>
                     )}
-                    {landingStage === "awaiting_confirmation" && !plannerRunning && (
+                    {landingMessages.length > 0 && !plannerRunning && (
                       <div className="pl-11">
                         <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium">
                           <svg
@@ -687,7 +704,7 @@ export default function DashboardPage() {
                     ref={heroTextareaRef}
                     value={firstPrompt}
                     onChange={(e) => setFirstPrompt(e.target.value)}
-                    placeholder={landingStage === "awaiting_confirmation" ? "Tell me what to change, or click Proceed…" : "Say hi, or describe the app you want to build…"}
+                    placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
                     className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                     onPaste={handleHeroPaste}
