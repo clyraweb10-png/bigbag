@@ -624,7 +624,7 @@ export default function DashboardPage() {
                   <div className={`${chatOpen ? "min-h-0 flex-1" : "max-h-[430px]"} space-y-6 overflow-y-auto px-1 py-4 sm:px-2 bg-transparent`}>
                     {landingMessages.map((message, index) => message.role === "user" ? (
                       <div key={index} className="flex items-end justify-end gap-2.5">
-                        <div className="max-w-[82%] rounded-2xl rounded-br-md bg-[color:var(--user-bubble)] px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
+                        <div className="max-w-[82%] rounded-2xl rounded-br-md border border-border bg-[color:var(--user-bubble)] px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
                           {message.content}
                         </div>
                         <UserAvatar user={user} className="mb-0.5 h-8 w-8 shrink-0" />

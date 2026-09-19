@@ -1464,7 +1464,7 @@ export default function WorkspacePage() {
    */
   const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#151513" : "#FAFAF7";
+  const pageBg = darkMode ? "#1d1d1c" : "#FAFAF7";
   const cardBg = darkMode ? "#1c1c1a" : "#FFFFFF";
   const btnBorder = darkMode ? "border-[#3A3A3A]" : "border-[#DDDDD5]";
 

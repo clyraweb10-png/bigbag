@@ -257,7 +257,7 @@ function UserMessage({ text, files, user }: { text: string; files?: AgentInputFi
 
   return (
     <div className="flex items-end justify-end gap-2.5">
-      <div className="max-w-[82%] rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm" style={{ background: "var(--user-bubble, #eeecea)" }}>
+      <div className="max-w-[82%] rounded-2xl rounded-br-md border border-border px-4 py-2.5 shadow-sm" style={{ background: "var(--user-bubble, #eeecea)" }}>
         {text.trim() && (
           <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">
             {isLong && !expanded ? (
