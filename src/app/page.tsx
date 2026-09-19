@@ -22,7 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Plus, Loader2, Trash2, SendHorizontal, Paperclip, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
-  AlertCircle, MoreVertical, AlertTriangle, CodeXml, Sparkles, Bot,
+  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb, Sparkles,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -33,7 +33,7 @@ import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADV
 import { SetupBanners } from "@/components/SetupBanners";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { AuthUserMenu } from "@/components/auth/AuthProvider";
+import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 import { classifyIntent, type ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
@@ -42,13 +42,14 @@ type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
 
 const PAGE_SIZE = 20;
 const VIEW_MODE_KEY = "bigbag:dashboard-view";
+const LANDING_SESSION_KEY_PREFIX = "bigbag:landing-conversation:v2";
 
 
 // --- Deterministic gradient + initials for the placeholder thumbnail ---
 const GRADIENTS: [string, string][] = [
-  ["#5B7A8C", "#3A3A3A"], ["#001f24", "#3A3A3A"], ["#4A6574", "#2B353F"],
-  ["#003842", "#0B0B0A"], ["#3A3A3A", "#1E1E1C"], ["#5B7A8C", "#001f24"],
-  ["#3A5B6A", "#1A262E"], ["#005563", "#001f24"],
+  ["#6554E8", "#3F8CFF"], ["#FF6B6B", "#8C3F8D"], ["#18A981", "#245A73"],
+  ["#4037A4", "#18182A"], ["#D95872", "#532C68"], ["#3F8CFF", "#174B6C"],
+  ["#6A5DE8", "#D15A8B"], ["#159B89", "#283C78"],
 ];
 function gradientFor(id: string): [string, string] {
   let h = 0;
@@ -162,7 +163,7 @@ function LandingMessageContent({ text }: { text: string }) {
     <div className="space-y-1 text-sm leading-relaxed">
       {text.split("\n").map((line, index) => {
         const key = `${index}-${line.slice(0, 12)}`;
-        if (line.startsWith("## ")) return <h3 key={key} className="pt-2 text-base font-semibold text-foreground">{line.slice(3)}</h3>;
+        if (line.startsWith("## ")) return <h2 key={key} className="pt-2 text-base font-semibold text-foreground">{line.slice(3)}</h2>;
         if (line.startsWith("**") && line.endsWith("**")) return <p key={key} className="pt-1 font-semibold text-foreground">{line.slice(2, -2)}</p>;
         if (line.startsWith("- ") || line.startsWith("✓ ") || line.startsWith("✗ ")) {
           return <p key={key} className="flex gap-2"><span className="text-primary">•</span><span>{line.replace(/^[-✓✗]\s*/, "")}</span></p>;
@@ -175,8 +176,56 @@ function LandingMessageContent({ text }: { text: string }) {
   );
 }
 
+function TypingAssistantMessage({
+  text,
+  active,
+  onComplete,
+}: {
+  text: string;
+  active: boolean;
+  onComplete: () => void;
+}) {
+  const [visibleLength, setVisibleLength] = useState(active ? 0 : text.length);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (!active || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVisibleLength(text.length);
+      return;
+    }
+    setVisibleLength(0);
+    const timer = window.setInterval(() => {
+      setVisibleLength((current) => Math.min(text.length, current + Math.max(2, Math.ceil(text.length / 180))));
+    }, 18);
+    return () => window.clearInterval(timer);
+  }, [active, text]);
+
+  useEffect(() => {
+    if (!active || visibleLength < text.length) return;
+    const completionTimer = window.setTimeout(() => onCompleteRef.current(), 180);
+    return () => window.clearTimeout(completionTimer);
+  }, [active, text.length, visibleLength]);
+
+  return (
+    <>
+      <div aria-hidden="true">
+      <LandingMessageContent text={text.slice(0, visibleLength)} />
+      {active && visibleLength < text.length && <span className="assistant-cursor" aria-hidden="true" />}
+      </div>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {active && visibleLength < text.length ? "" : text}
+      </p>
+    </>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [firstPrompt, setFirstPrompt] = useState("");
@@ -185,6 +234,12 @@ export default function DashboardPage() {
   const [landingStage, setLandingStage] = useState<ProjectStage>("idle");
   const [plannerRunning, setPlannerRunning] = useState(false);
   const [approvedPrompt, setApprovedPrompt] = useState("");
+  const [landingSuggestions, setLandingSuggestions] = useState<string[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [typingMessageIndex, setTypingMessageIndex] = useState<number | null>(null);
+  const [conversationHydrated, setConversationHydrated] = useState(false);
+  const [hydratedSessionKey, setHydratedSessionKey] = useState<string | null>(null);
+  const landingSessionKey = user?.uid ? `${LANDING_SESSION_KEY_PREFIX}:${user.uid}` : null;
 
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; imageDescription: string; file: File }[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -209,6 +264,65 @@ export default function DashboardPage() {
   const [deleting, setDeleting] = useState(false);
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setConversationHydrated(false);
+    if (!landingSessionKey) {
+      setHydratedSessionKey(null);
+      return;
+    }
+    try {
+      const saved = sessionStorage.getItem(landingSessionKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as {
+          messages?: LandingMessage[];
+          stage?: ProjectStage;
+          approvedPrompt?: string;
+          suggestions?: string[];
+          chatOpen?: boolean;
+        };
+        setLandingMessages(Array.isArray(parsed.messages) ? parsed.messages : []);
+        setLandingStage(parsed.stage ?? "idle");
+        setApprovedPrompt(typeof parsed.approvedPrompt === "string" ? parsed.approvedPrompt : "");
+        setLandingSuggestions(Array.isArray(parsed.suggestions) ? parsed.suggestions.slice(0, 10) : []);
+        setChatOpen(parsed.chatOpen === true);
+      } else {
+        setLandingMessages([]);
+        setLandingStage("idle");
+        setApprovedPrompt("");
+        setLandingSuggestions([]);
+        setChatOpen(false);
+      }
+    } catch {
+      setLandingMessages([]);
+      setLandingStage("idle");
+      setApprovedPrompt("");
+      setLandingSuggestions([]);
+      setChatOpen(false);
+    }
+    setHydratedSessionKey(landingSessionKey);
+    setConversationHydrated(true);
+  }, [landingSessionKey]);
+
+  useEffect(() => {
+    if (!landingSessionKey || !conversationHydrated || hydratedSessionKey !== landingSessionKey) return;
+    try {
+      sessionStorage.setItem(landingSessionKey, JSON.stringify({
+        messages: landingMessages,
+        stage: landingStage,
+        approvedPrompt,
+        suggestions: landingSuggestions,
+        chatOpen,
+      }));
+    } catch { /* storage unavailable */ }
+  }, [approvedPrompt, chatOpen, conversationHydrated, hydratedSessionKey, landingMessages, landingSessionKey, landingStage, landingSuggestions]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    window.scrollTo(0, 0);
+    conversationEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [chatOpen, landingMessages, plannerRunning, landingSuggestions]);
 
   useEffect(() => {
     api.get<{ configured: boolean }>("/api/config").then((r) => {
@@ -319,6 +433,8 @@ export default function DashboardPage() {
   const submitLandingMessage = async () => {
     const message = firstPrompt.trim();
     if ((!message && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
+    setChatOpen(true);
+    setLandingSuggestions([]);
     if (!message) {
       const attachmentPrompt = "Build a complete application using the attached files as the primary product and visual reference.";
       setApprovedPrompt(attachmentPrompt);
@@ -353,13 +469,18 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ intent: plannerIntent, message, history: landingMessages.slice(-10) }),
       });
-      const payload = await response.json() as { ok: boolean; data?: { text?: string }; error?: string };
+      const payload = await response.json() as { ok: boolean; data?: { text?: string; suggestions?: string[] }; error?: string };
       if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "The assistant is unavailable.");
 
+      setTypingMessageIndex(nextHistory.length);
       setLandingMessages((current) => [...current, { role: "assistant", content: payload.data!.text! }]);
+      setLandingSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
       if (plannerIntent === "plan" || plannerIntent === "update_plan") setLandingStage("awaiting_confirmation");
     } catch (error) {
-      setLandingMessages(landingMessages);
+      setLandingMessages([...nextHistory, {
+        role: "assistant",
+        content: "I couldn’t reach the planning service. Your message is saved here—try sending it again when the connection is ready.",
+      }]);
       setFirstPrompt(message);
       setLandingStage(landingMessages.length === 0 ? "idle" : landingStage);
       toast.error(error instanceof Error ? error.message : "The assistant is unavailable.");
@@ -433,69 +554,118 @@ export default function DashboardPage() {
   const hasProjects = projects.length > 0;
 
   return (
-    <div className="min-h-screen relative overflow-hidden bg-background text-foreground transition-colors duration-200">
+    <div className={`${chatOpen ? "h-[100dvh] overflow-hidden" : "min-h-screen overflow-hidden"} relative bg-background text-foreground transition-colors duration-200`}>
       {/* Background ambient lighting */}
       <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
       <div className="fixed top-[-10%] left-[20%] w-[600px] h-[350px] bg-primary/10 blur-[120px] rounded-full pointer-events-none" />
       <div className="fixed bottom-[-10%] right-[15%] w-[500px] h-[300px] bg-accent/40 dark:bg-primary/5 blur-[100px] rounded-full pointer-events-none" />
 
       {/* Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-background/80 border-b border-border/60">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <BigBagLogo size="md" />
-          <div className="flex items-center gap-2">
-            <ThemeToggle showLabel={false} />
-            <AuthUserMenu />
+      {chatOpen ? (
+        <header className="relative z-50 border-b border-border bg-background/92 backdrop-blur-xl">
+          <div className="mx-auto flex h-16 max-w-5xl items-center px-4 sm:px-6">
+            <button
+              type="button"
+              onClick={() => setChatOpen(false)}
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-3.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </button>
+            <h1 className="sr-only sm:hidden">Build something remarkable</h1>
+            <div className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 text-center sm:block">
+              <h1 className="text-sm font-semibold">Build something remarkable</h1>
+              <p className="hidden text-xs text-muted-foreground sm:block">Your planning conversation</p>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
+      ) : (
+        <header className="sticky top-0 z-50 border-b border-border/80 bg-background/88 backdrop-blur-xl">
+          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+            <BigBagLogo size="md" />
+            <div className="flex items-center gap-2">
+              <ThemeToggle showLabel={false} />
+              <AuthUserMenu />
+            </div>
+          </div>
+        </header>
+      )}
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
+      <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-10 sm:px-6"}>
         {/* Hero prompt */}
         {!loading && (
-          <div className={hasProjects || keyConfigured === false ? "mb-10" : "flex flex-col items-center justify-center min-h-[50vh]"}>
-            <div className="w-full max-w-2xl mx-auto">
-              {!hasProjects && (
-                <div className="mb-6 text-center">
-                  <div className="mb-4 flex justify-center"><BigBagLogo size="lg" /></div>
-                  <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">What do you want to build?</h1>
-                  <p className="mt-2 text-sm text-muted-foreground">Chat through the idea, approve the plan, then watch the real app come alive.</p>
+          <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-10" : "flex min-h-[58vh] flex-col items-center justify-center"}>
+            <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
+              {!chatOpen && !hasProjects && (
+                <div className="mb-8 text-left sm:text-center">
+                  <div className="mb-5 flex sm:justify-center"><BigBagLogo size="lg" /></div>
+                  <h1 className="text-balance text-4xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-5xl">Build something remarkable.</h1>
+                  <p className="mt-4 text-base leading-7 text-foreground/65">Start with the rough idea. BigBag will help shape the plan before a single file is generated.</p>
                 </div>
               )}
 
-              {/* Simple & Modern Floating Card */}
-              <div className="rounded-2xl border border-border/80 dark:border-white/10 bg-card/80 dark:bg-[#121210]/90 backdrop-blur-xl shadow-lg transition-all duration-300 hover:border-border dark:hover:border-white/20 focus-within:border-foreground/30 dark:focus-within:border-white/30 focus-within:ring-2 focus-within:ring-ring/20 overflow-hidden">
+              <div className={`${chatOpen ? "flex min-h-0 flex-1 flex-col rounded-[1.75rem]" : "rounded-[1.5rem]"} overflow-hidden border border-border bg-card shadow-[0_24px_70px_-38px_rgba(36,30,84,0.55)] transition-shadow focus-within:ring-2 focus-within:ring-ring/25`}>
                 {landingMessages.length > 0 && (
-                  <div className="max-h-[430px] space-y-4 overflow-y-auto border-b border-border/60 px-4 py-5 sm:px-5">
+                  <div className={`${chatOpen ? "min-h-0 flex-1" : "max-h-[430px]"} space-y-6 overflow-y-auto border-b border-border px-4 py-6 sm:px-7`}>
                     {landingMessages.map((message, index) => message.role === "user" ? (
-                      <div key={index} className="flex justify-end">
-                        <div className="max-w-[88%] rounded-2xl rounded-br-sm bg-secondary px-4 py-2.5 text-sm text-foreground">
+                      <div key={index} className="flex items-end justify-end gap-2.5">
+                        <div className="max-w-[82%] rounded-2xl rounded-br-md bg-[color:var(--user-bubble)] px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
                           {message.content}
                         </div>
+                        <UserAvatar user={user} className="mb-0.5 h-8 w-8 shrink-0" />
                       </div>
                     ) : (
                       <div key={index} className="flex items-start gap-3">
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                          <Bot className="h-4 w-4" />
+                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/15">
+                          <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
                         </div>
-                        <div className="min-w-0 flex-1 text-muted-foreground">
-                          <LandingMessageContent text={message.content} />
+                        <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-background/55 px-4 py-3 text-foreground/80">
+                          <TypingAssistantMessage
+                            text={message.content}
+                            active={typingMessageIndex === index}
+                            onComplete={() => setTypingMessageIndex(null)}
+                          />
                         </div>
                       </div>
                     ))}
                     {plannerRunning && (
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary"><Sparkles className="h-4 w-4 animate-pulse" /></div>
-                        <span>{landingStage === "planning" ? "Creating a focused implementation plan…" : "Thinking…"}</span>
+                      <div className="flex items-center gap-3 text-sm text-foreground/65" role="status">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground"><span className="font-mono text-[10px] font-bold">&lt;/&gt;</span></div>
+                        <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />{landingStage === "planning" ? "Shaping the implementation plan…" : "Thinking through the next move…"}</span>
                       </div>
                     )}
                     {landingStage === "awaiting_confirmation" && !plannerRunning && (
-                      <div className="pl-10">
-                        <Button onClick={() => openBuildModal()} className="rounded-xl" variant="glow">
+                      <div className="pl-11">
+                        <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4" variant="glow">
                           <Sparkles className="mr-2 h-4 w-4" /> Proceed to build
                         </Button>
                       </div>
                     )}
+                    {landingSuggestions.length > 0 && !plannerRunning && (
+                      <section className="pl-0 sm:pl-11" aria-labelledby="next-ideas-heading">
+                        <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground/70">
+                          <Lightbulb className="h-3.5 w-3.5 text-[color:var(--studio-coral)]" />
+                          <h3 id="next-ideas-heading">Ideas generated for this conversation</h3>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {landingSuggestions.map((suggestion, index) => (
+                            <button
+                              key={`${index}-${suggestion}`}
+                              type="button"
+                              onClick={() => {
+                                setFirstPrompt(suggestion);
+                                window.setTimeout(() => heroTextareaRef.current?.focus(), 0);
+                              }}
+                              className="group flex min-h-11 items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 text-left text-xs leading-5 text-foreground/75 transition-colors hover:border-primary/45 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <span className="mt-0.5 font-mono text-[10px] font-semibold text-primary">{String(index + 1).padStart(2, "0")}</span>
+                              <span className="group-hover:text-foreground">{suggestion}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                    <div ref={conversationEndRef} />
                   </div>
                 )}
                 <textarea
@@ -503,7 +673,7 @@ export default function DashboardPage() {
                   value={firstPrompt}
                   onChange={(e) => setFirstPrompt(e.target.value)}
                   placeholder={landingStage === "awaiting_confirmation" ? "Tell me what to change, or click Proceed…" : "Say hi, or describe the app you want to build…"}
-                  className={`w-full resize-none text-[15px] p-5 pb-2 outline-none placeholder:text-muted-foreground/60 bg-transparent text-foreground leading-relaxed ${landingMessages.length ? "min-h-[82px]" : "min-h-[95px] sm:min-h-[115px]"}`}
+                  className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                   onPaste={handleHeroPaste}
                 />
@@ -515,7 +685,7 @@ export default function DashboardPage() {
                   onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
                 />
 
-                <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/60 dark:border-white/5 bg-secondary/30 dark:bg-white/[0.02]">
+                <div className="flex items-center justify-between border-t border-border bg-secondary/45 px-3 py-3 sm:px-4">
                   <div className="flex items-center gap-1.5">
                     <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-secondary/60 dark:hover:bg-white/5">
                       <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
@@ -540,7 +710,7 @@ export default function DashboardPage() {
                     onClick={() => void submitLandingMessage()}
                     disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                     size="sm"
-                    className="flex items-center gap-1.5 font-medium px-4 h-8 rounded-xl bg-foreground text-background hover:opacity-90 dark:bg-white dark:text-black dark:hover:bg-white/90 transition-all active:scale-[0.98] disabled:opacity-40 shadow-xs"
+                    className="flex h-9 items-center gap-1.5 rounded-xl bg-primary px-4 font-medium text-primary-foreground shadow-md shadow-primary/15 transition-all hover:bg-primary/90 active:scale-[0.98] disabled:opacity-40"
                   >
                     {plannerRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="w-3.5 h-3.5" />}
                     <span>Send</span>
@@ -548,13 +718,13 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {keyConfigured === false && <SetupBanners />}
+              {!chatOpen && keyConfigured === false && <SetupBanners />}
             </div>
           </div>
         )}
 
         {/* Projects */}
-        {hasProjects && (
+        {!chatOpen && hasProjects && (
           <>
             {/* Toolbar: search, sort, view toggle */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
@@ -798,7 +968,7 @@ export default function DashboardPage() {
           </>
         )}
 
-        {loading && (
+        {!chatOpen && loading && (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
             {[1, 2, 3].map((i) => <Skeleton key={i} className="h-48 rounded-xl bg-card/60" />)}
           </div>

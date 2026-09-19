@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callPlanner } from "@/lib/local-orchestrator/planner-client";
 import { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT } from "@/lib/local-orchestrator/planner-prompts";
+import { parsePlannerOutput } from "@/lib/local-orchestrator/planner-output";
 import type { UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
 
@@ -16,6 +17,7 @@ export interface PlannerResponseData {
   durationMs: number;
   provider: string;
   intent: UserIntent;
+  suggestions: string[];
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -54,13 +56,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const result = await callPlanner(systemPrompt, messages);
+    const plannerOutput = parsePlannerOutput(result.text);
     const response: { ok: true; data: PlannerResponseData } = {
       ok: true,
       data: {
-        text: result.text,
+        text: plannerOutput.text,
         durationMs: result.durationMs,
         provider: result.provider,
         intent,
+        suggestions: plannerOutput.suggestions,
       },
     };
     return NextResponse.json(response);

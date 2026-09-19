@@ -15,6 +15,7 @@ const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-p
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
+const { parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
 const {
   createPreviewWriteCapability,
   isPreviewInitiatedRequest,
@@ -22,7 +23,7 @@ const {
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const { multiModelRouter } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
 const { GEMINI_MAX_RETRIES } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
@@ -182,11 +183,46 @@ test("intent routing keeps conversation separate from planning and code edits", 
   ], "proceed"), /1\. Build a calm travel planner[\s\S]*2\. Make it work offline too[\s\S]*Wayfinder v2/);
 });
 
+test("planner output keeps generated suggestions separate from visible chat", () => {
+  const raw = `A concise response.\n\n<!-- next-prompts\n["Make it calmer", "Add mobile navigation", "Use editorial typography", "Show a pricing view", "Add keyboard shortcuts", "Refine the color palette", "Plan the empty state", "Improve the onboarding", "Add a search flow", "Define the data model"]\n-->`;
+  const output = parsePlannerOutput(raw);
+  assert.equal(output.text, "A concise response.");
+  assert.equal(output.suggestions.length, 10);
+  assert.equal(output.suggestions[0], "Make it calmer");
+  assert.deepEqual(parsePlannerOutput("Visible only"), { text: "Visible only", suggestions: [] });
+});
+
 test("generated Tailwind CSS cannot break previews with unsupported apply utilities", () => {
   const css = '@import "tailwindcss";\nbody {\n  @apply bg-background text-foreground;\n  margin: 0;\n}\n';
   assert.equal(stripGeneratedApplyRules(css), '@import "tailwindcss";\nbody {\n\n  margin: 0;\n}\n');
   assert.equal(stripGeneratedApplyRules('body { @apply bg-background; color: black; }'), 'body {  color: black; }');
   assert.equal(stripGeneratedApplyRules('.button { @apply rounded border px-4; }'), '.button { @apply rounded border px-4; }');
+});
+
+test("runtime-owned model output is discarded without poisoning a valid page", () => {
+  const files = [
+    {
+      path: "src/app/layout.tsx",
+      content: "export default function Layout({ children }) { return <html><body>{children}</body></html>; }",
+    },
+    {
+      path: "src/app/page.tsx",
+      content: "export default function Page() { return <main>Complete app</main>; }",
+    },
+    {
+      path: "index.html",
+      content: "<div id=\"root\"></div>",
+    },
+    {
+      path: "src/app/layout.jsx",
+      content: "export default function Layout({ children }) { return children; }",
+    },
+  ];
+
+  postProcessGeneratedFiles(files);
+
+  assert.deepEqual(files.map((file) => file.path), ["src/app/page.tsx"]);
+  assert.deepEqual(generationValidationIssues(files), []);
 });
 
 test("generation validation rejects invented durable database methods", () => {

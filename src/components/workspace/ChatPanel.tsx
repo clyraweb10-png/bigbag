@@ -6,6 +6,7 @@ import {
   SendHorizontal, Square, Loader2, CodeXml, AlertCircle,
   KeyRound, FileDiff, ChevronDown, ChevronUp, Paperclip, X, Check,
   Plus, Eye, EyeOff, CheckCircle2, ArrowUpRight, PencilIcon,
+  Lightbulb,
 } from "lucide-react";
 import { vcaasApi } from "@/lib/vcaas";
 import { DiffViewer } from "@/components/workspace/DiffViewer";
@@ -26,6 +27,8 @@ import { toast } from "sonner";
 import type { ConversationMessage, VcaasSecret, AgentInputFile, AgentRunOptions } from "@/lib/vcaas-types";
 import { AIActivity, activityStepsFromBuildMsgs } from "@/components/workspace/AIActivity";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
+import { UserAvatar, useAuth } from "@/components/auth/AuthProvider";
+import type { User } from "firebase/auth";
 
 interface ChatPanelProps {
   messages: ConversationMessage[];
@@ -90,6 +93,8 @@ interface ChatPanelProps {
   stage?: ProjectStage;
   /** Called when the user clicks a suggestion pill with `action: "send"`. */
   onSuggestSend?: (text: string) => void;
+  /** Contextual next prompts authored by the planner model. */
+  suggestions?: string[];
 }
 
 interface MessageGroup {
@@ -175,6 +180,45 @@ function FormattedText({ text }: { text: string }) {
   );
 }
 
+function TypingFormattedText({ text, active, onComplete }: { text: string; active: boolean; onComplete: () => void }) {
+  const [visibleLength, setVisibleLength] = useState(active ? 0 : text.length);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    if (!active || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setVisibleLength(text.length);
+      return;
+    }
+    setVisibleLength(0);
+    const timer = window.setInterval(() => {
+      setVisibleLength((current) => Math.min(text.length, current + Math.max(2, Math.ceil(text.length / 180))));
+    }, 18);
+    return () => window.clearInterval(timer);
+  }, [active, text]);
+
+  useEffect(() => {
+    if (!active || visibleLength < text.length) return;
+    const completionTimer = window.setTimeout(() => onCompleteRef.current(), 180);
+    return () => window.clearTimeout(completionTimer);
+  }, [active, text.length, visibleLength]);
+
+  return (
+    <>
+      <div aria-hidden="true">
+        <FormattedText text={text.slice(0, visibleLength)} />
+        {active && visibleLength < text.length && <span className="assistant-cursor" aria-hidden="true" />}
+      </div>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">
+        {active && visibleLength < text.length ? "" : text}
+      </p>
+    </>
+  );
+}
+
 // --- User Message (with large-text preview + "See all") ---
 // When a user pastes/uploads a very large block of text, we don't want the chat
 // bubble to become a giant wall. Instead we show a generous preview (not too
@@ -198,7 +242,7 @@ function UserAttachments({ files }: { files: AgentInputFile[] }) {
   );
 }
 
-function UserMessage({ text, files }: { text: string; files?: AgentInputFile[] }) {
+function UserMessage({ text, files, user }: { text: string; files?: AgentInputFile[]; user: User | null }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = text.length > USER_MSG_TRUNCATE_AT;
 
@@ -212,8 +256,8 @@ function UserMessage({ text, files }: { text: string; files?: AgentInputFile[] }
   })();
 
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[88%] rounded-2xl rounded-br-sm px-4 py-2.5" style={{ background: "var(--user-bubble, #eeecea)" }}>
+    <div className="flex items-end justify-end gap-2.5">
+      <div className="max-w-[82%] rounded-2xl rounded-br-md px-4 py-2.5 shadow-sm" style={{ background: "var(--user-bubble, #eeecea)" }}>
         {text.trim() && (
           <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">
             {isLong && !expanded ? (
@@ -245,6 +289,7 @@ function UserMessage({ text, files }: { text: string; files?: AgentInputFile[] }
           </button>
         )}
       </div>
+      <UserAvatar user={user} className="mb-0.5 h-8 w-8 shrink-0" />
     </div>
   );
 }
@@ -566,8 +611,10 @@ export function ChatPanel({
   onOpenGithub, onGithubStatusChange, onGithubPull, githubPulling = false,
   visualEditAvailable = false, visualEditActive = false, visualEditBusy = false, onToggleVisualEdit,
   stage = "idle", onSuggestSend,
+  suggestions = [],
 }: ChatPanelProps) {
   const t = useT();
+  const { user } = useAuth();
   /**
    * The platform's run clock, copied: prefers the server's `startedAt`, keeps a local
    * stamp per project, so the bar resumes at the right time after a reload.
@@ -584,6 +631,18 @@ export function ChatPanel({
    * has already been paid for and cannot be resumed — only started again.
    */
   const [confirmingStop, setConfirmingStop] = useState(false);
+  const knownMessageCount = useRef(messages.length);
+  const [typingMessageKey, setTypingMessageKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (messages.length > knownMessageCount.current) {
+      const latest = messages[messages.length - 1];
+      if (latest?.author === "agent" && latest.messageType === "regular") {
+        setTypingMessageKey(latest.createdAt || `${messages.length - 1}`);
+      }
+    }
+    knownMessageCount.current = messages.length;
+  }, [messages]);
 
   // --- Load-on-demand for long conversations ---
   // Rather than rendering every message group (which gets heavy on long chats),
@@ -719,13 +778,28 @@ export function ChatPanel({
         )}
 
         {visibleGroups.map(({ group, gi }) => {
-          if (group.type === "build-group") return <BuildGroup key={gi} group={group} projectId={projectId} onTellAi={handleTellAiSecretsReady} projectSecrets={projectSecrets} />;
+          if (group.type === "build-group") return (
+            <div key={gi} className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"><span className="font-mono text-[10px] font-bold">&lt;/&gt;</span></div>
+              <div className="min-w-0 flex-1"><BuildGroup group={group} projectId={projectId} onTellAi={handleTellAiSecretsReady} projectSecrets={projectSecrets} /></div>
+            </div>
+          );
           const msg = group.messages[0];
           if (msg.author === "user") {
-            return <UserMessage key={gi} text={msg.message} files={msg.inputFiles} />;
+            return <UserMessage key={gi} text={msg.message} files={msg.inputFiles} user={user} />;
           }
-          // Agent message - NO background
-          return <div key={gi} className="max-w-full"><FormattedText text={msg.message} /></div>;
+          return (
+            <div key={gi} className="flex max-w-full items-start gap-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"><span className="font-mono text-[10px] font-bold">&lt;/&gt;</span></div>
+              <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-background/55 px-4 py-3">
+                <TypingFormattedText
+                  text={msg.message}
+                  active={typingMessageKey === (msg.createdAt || `${gi}`)}
+                  onComplete={() => setTypingMessageKey(null)}
+                />
+              </div>
+            </div>
+          );
         })}
 
         {isBuilding && (
@@ -737,50 +811,29 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* ── Suggestion Pills ─────────────────────────────────────────────── */}
-      {!isBuilding && stage !== "building" && (() => {
-        const PILLS: Record<string, { label: string; action: "send" | "fill" }[]> = {
-          idle: [
-            { label: "✨ Creative Agency Website", action: "fill" },
-            { label: "🛒 E-Commerce Store", action: "fill" },
-            { label: "📋 Kanban Task Manager", action: "fill" },
-          ],
-          planning: [],
-          awaiting_confirmation: [
-            { label: "🚀 Proceed to build", action: "send" },
-            { label: "🌙 Add dark mode", action: "fill" },
-            { label: "📊 Add a dashboard", action: "fill" },
-          ],
-          building: [],
-          active: [
-            { label: "🌐 Deploy the real site", action: "fill" },
-            { label: "📊 Add a dashboard", action: "fill" },
-            { label: "⚡ Wire up real database", action: "fill" },
-          ],
-        };
-        const pills = PILLS[stage] ?? [];
-        if (pills.length === 0) return null;
-        return (
-          <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-            {pills.map((pill) => (
+      {!isBuilding && stage !== "building" && suggestions.length > 0 && (
+        <section className="border-t border-border px-3 pb-2 pt-3" aria-label="Suggested next prompts">
+          <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-semibold text-muted-foreground">
+            <Lightbulb className="h-3.5 w-3.5 text-[color:var(--studio-coral)]" />
+            Generated for this conversation
+          </div>
+          <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+            {suggestions.map((suggestion) => (
               <button
-                key={pill.label}
+                key={suggestion}
                 type="button"
                 onClick={() => {
-                  if (pill.action === "send") {
-                    onSuggestSend?.(pill.label.replace(/^[\p{Emoji}\s]+/u, "").trim());
-                  } else {
-                    setPrompt(pill.label.replace(/^[\p{Emoji}\s]+/u, "").trim());
-                  }
+                  if (stage === "awaiting_confirmation" && /^(?:build|proceed|start building)/i.test(suggestion)) onSuggestSend?.(suggestion);
+                  else setPrompt(suggestion);
                 }}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-secondary/60 hover:bg-secondary border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className="inline-flex items-center rounded-xl border border-border bg-card px-2.5 py-1.5 text-left text-xs leading-4 text-foreground/75 transition-colors hover:border-primary/45 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {pill.label}
+                {suggestion}
               </button>
             ))}
           </div>
-        );
-      })()}
+        </section>
+      )}
 
       {/*
         ⭐ THE CHOICE IS VISIBLE AT THE MOMENT OF SENDING. A Sonnet or fast-mode prompt is

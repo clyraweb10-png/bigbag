@@ -13,6 +13,7 @@ import { analyzeWebsiteDesign, extractWebsiteUrl } from "./firecrawl-design";
 import {
   containsGenerationPlaceholder,
   generationValidationIssues,
+  isRuntimeOwnedGeneratedPath,
   normalizeGeneratedPath,
   type GeneratedSourceFile,
 } from "./generation-validator";
@@ -23,7 +24,7 @@ const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer.
 
 **OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
 
-1. Runtime — This is a Vite React client backed by platform server APIs. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, use ONLY this exact browser-safe database API: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. The only collection methods are \`list\`, \`get\`, \`create\`, \`update\`, and \`remove\`. Never invent \`db.list\`, \`db.putMany\`, \`db.query\`, or another API. When the user asks for durable/full-stack data, the platform database is authoritative; do not silently substitute localStorage or in-memory state for failed writes.
+1. Runtime — This is a Vite React client backed by platform server APIs, even though its editable entry file is named src/app/page.tsx. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, use ONLY this exact browser-safe database API: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. The only collection methods are \`list\`, \`get\`, \`create\`, \`update\`, and \`remove\`. Never invent \`db.list\`, \`db.putMany\`, \`db.query\`, or another API. When the user asks for durable/full-stack data, the platform database is authoritative; do not silently substitute localStorage or in-memory state for failed writes.
 
 2. Output Format — Each file with markdown heading + code block:
 ### File: src/app/page.tsx
@@ -32,7 +33,7 @@ import { useState } from 'react';
 // code
 \`\`\`
 
-The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Keep the complete implementation self-contained in src/app/page.tsx by default. Do not import a custom local component unless you also output its complete file in the same response. Put optional components after those required entry files so a token limit can never leave the app disconnected.
+The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Keep the complete implementation self-contained in src/app/page.tsx by default. Do not import a custom local component unless you also output its complete file in the same response. Put optional components after those required entry files so a token limit can never leave the app disconnected. The runtime already owns index.html, src/main.tsx, src/app/layout.tsx, package.json, and build configuration. Never output or replace them.
 
 3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (durable CRUD) — they already exist.
 
@@ -40,11 +41,11 @@ The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css w
 
 5. Structure — src/app/page.tsx is the main app and src/app/globals.css contains global styles. Prefer small helper components in page.tsx so the response cannot be truncated between files. Use src/components/*.tsx only when the complete page and every imported component fit in this response. The runtime entrypoint already exists; do not output src/main.tsx.
 
-6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, TODOs, fake save buttons, or in-memory-only persistence when the request needs data. Use semantic HTML, accessible labels, keyboard focus states, loading/empty/error states, and responsive layouts at mobile/tablet/desktop sizes.
+6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, TODOs, fake save buttons, or in-memory-only persistence when the request needs data. Use semantic HTML, accessible labels, keyboard focus states, loading/empty/error states, and responsive layouts at mobile/tablet/desktop sizes. If the user requests multiple pages, implement every named page as working client-side routes/views with real navigation and URL history; do not return one long landing page or create Next.js route files that this Vite runtime will not mount.
 
-7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids. Honor every concrete detail in the user's prompt.
+7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids when the request is a site; use information-dense task layouts when it is an app. Honor every concrete detail in the user's prompt. Explicit user constraints outrank all default design guidance: never add sections, effects, colours, copy, or features the user excluded.
 
-8. Images — Use user-supplied asset URLs exactly when relevant and preserve their descriptions as meaningful alt text. If the user supplied no suitable image, use original CSS/SVG artwork or lucide-react icons. Never invent, scrape, or hotlink an external image URL.
+8. Images and icons — Use user-supplied and reference-analysis image URLs exactly when relevant and licensing permits, preserving meaningful alt text. When the brief benefits from photography and supplies no asset, use a stable, direct, known-valid royalty-free image URL rather than substituting a generic CSS/SVG geometric illustration; never use dynamic random-image endpoints or pretend a decorative mockup is a real product screenshot. Use lucide-react icons with accessible labels; never use emoji or text glyphs as UI icons.
 
 9. Build efficiency — Prefer lightweight CSS and responsive inline SVG for decorative data visualizations. Import a charting library only when the user explicitly requires that library or the requested interaction cannot reasonably be built with SVG; large chart bundles can exhaust small preview workers.
 
@@ -58,7 +59,7 @@ const RETRY_PROMPT = `Your previous response did not contain valid code files. Y
 // complete code here
 \`\`\`
 
-Return one complete, self-contained src/app/page.tsx with all custom sections defined in that file. You may import installed packages and the existing @/components/ui/button, @/components/ui/card, and @/lib/utils modules, but do not import any other local component. Then output src/app/globals.css if needed. Do not abbreviate code with ellipses. Generate the complete application now.`;
+Return one complete, self-contained src/app/page.tsx with all requested views and custom sections defined in that file. You may import installed packages and the existing @/components/ui/button, @/components/ui/card, and @/lib/utils modules, but do not import any other local component. Then output src/app/globals.css if needed. Do not output runtime-owned files such as src/app/layout.tsx, src/main.tsx, index.html, package.json, or build configuration. Do not abbreviate code with ellipses. Generate the complete application now.`;
 
 /**
  * Appended to the system prompt when the user is iterating on an existing project.
@@ -411,13 +412,14 @@ export function stripGeneratedApplyRules(css: string): string {
  * This is a safety net — the system prompt should prevent these, but the AI
  * sometimes ignores instructions.
  */
-function postProcessGeneratedFiles(files: Array<{ path: string; content: string }>): void {
-  // Generated output must never replace the Vite runtime document. This also
-  // drops JSX fragments that a model incorrectly labels as HTML.
+export function postProcessGeneratedFiles(files: Array<{ path: string; content: string }>): void {
+  // A useful model response can include a complete page plus an unnecessary
+  // runtime file. Drop those runtime-owned extras instead of allowing one
+  // disallowed block to poison an otherwise valid generation and its retry.
   for (let i = files.length - 1; i >= 0; i--) {
     const file = files[i];
-    if (file.path.endsWith(".html")) {
-      console.log(`[localAgentEngine] Dropped generated HTML file: ${file.path}`);
+    if (isRuntimeOwnedGeneratedPath(file.path)) {
+      console.log(`[localAgentEngine] Dropped runtime-owned generated file: ${file.path}`);
       files.splice(i, 1);
     }
   }
@@ -460,12 +462,6 @@ export default function Page() {
   );
 }
 `;
-    }
-
-    // Skip layout files — they should be Server Components
-    if (file.path.includes("layout.tsx") || file.path.includes("layout.jsx")) {
-      file.content = content;
-      continue;
     }
 
     // Remove react-dom/client imports (never needed in Next.js App Router)

@@ -426,8 +426,11 @@ export default function WorkspacePage() {
   const [stage, setStage] = useState<ProjectStage>("idle");
   /** True while the Groq/GLM planner is running — shows a brief "thinking" state. */
   const [plannerRunning, setPlannerRunning] = useState(false);
+  /** Model-authored next prompts for the current planning conversation. */
+  const [plannerSuggestions, setPlannerSuggestions] = useState<string[]>([]);
 
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { setPlannerSuggestions([]); }, [projectId]);
 
 
 
@@ -511,6 +514,7 @@ export default function WorkspacePage() {
   ): Promise<void> {
     if (!mountedRef.current) return;
     setPlannerRunning(true);
+    setPlannerSuggestions([]);
 
     // Build a short history from the last 10 messages for context.
     const history = messages
@@ -528,7 +532,7 @@ export default function WorkspacePage() {
         body: JSON.stringify({ intent, message: userMessage, history }),
       });
       if (!mountedRef.current) return;
-      const data = await res.json() as { ok: boolean; data?: { text: string }; error?: string };
+      const data = await res.json() as { ok: boolean; data?: { text: string; suggestions?: string[] }; error?: string };
 
       if (data.ok && data.data?.text) {
         const userCreatedAt = new Date().toISOString();
@@ -539,6 +543,7 @@ export default function WorkspacePage() {
           createdAt: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, plannerMsg]);
+        setPlannerSuggestions(Array.isArray(data.data.suggestions) ? data.data.suggestions.slice(0, 10) : []);
         const persisted = await vcaasApi.agent.appendConversation(projectId, [
           { author: "user", message: userMessage, messageType: "regular", createdAt: userCreatedAt },
           plannerMsg,
@@ -777,6 +782,7 @@ export default function WorkspacePage() {
       setStage("building");
     }
 
+    setPlannerSuggestions([]);
     sendingRef.current = true;
     setSending(true);
     const hasFiles = !!files && files.length > 0;
@@ -1624,6 +1630,7 @@ export default function WorkspacePage() {
               onToggleVisualEdit={handleToggleVisualEdit}
               stage={stage}
               onSuggestSend={handleSuggestSend}
+              suggestions={plannerSuggestions}
             />
           </div>
           {!chatCollapsed && (
@@ -1747,7 +1754,7 @@ export default function WorkspacePage() {
           {mobileTab === "chat" ? (
             <div className="flex flex-col h-full">
               {/* ⚠️ No pencil here: the visual editor is a desktop surface (see the frame-ref note). */}
-              <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} />
+              <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} suggestions={plannerSuggestions} />
             </div>
           ) : (
             <div className="h-full overflow-hidden">
