@@ -12,7 +12,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { AlertTriangle, Loader2, LogOut, Mail, Smartphone } from "lucide-react";
+import { AlertTriangle, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -270,34 +270,6 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
               <span>{status === "loading" ? "Connecting securely…" : "Continue with Google"}</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={() => void onSignIn()}
-            disabled={status === "loading"}
-            className="w-full h-11 sm:h-12 rounded-full bg-[#1c1c1f] text-white font-medium text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 border border-white/10 hover:bg-[#28282d] hover:border-white/20 active:scale-[0.99] transition-all cursor-pointer"
-          >
-            <Mail className="h-4 w-4 text-zinc-300" />
-            <span>Continue with Email</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void onSignIn()}
-            disabled={status === "loading"}
-            className="w-full h-11 sm:h-12 rounded-full bg-[#1c1c1f] text-white font-medium text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 border border-white/10 hover:bg-[#28282d] hover:border-white/20 active:scale-[0.99] transition-all cursor-pointer"
-          >
-            <Smartphone className="h-4 w-4 text-zinc-300" />
-            <span>Continue with Phone</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void onSignIn()}
-            className="pt-1 text-xs text-zinc-400 hover:text-white transition-colors underline-offset-4 hover:underline cursor-pointer"
-          >
-            View more
-          </button>
 
           {error && (
             <p className="text-center text-xs text-red-400" role="alert">
