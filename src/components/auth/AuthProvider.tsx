@@ -200,20 +200,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: string | null; onSignIn: () => Promise<void> }) {
   return (
-    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#000000] text-white flex flex-col justify-between select-none">
-      {/* ═══ BACKGROUND VIDEO ONLY ═══ */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden bg-black">
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          className="h-full w-full object-cover opacity-80"
-          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260319_055001_8e16d972-3b2b-441c-86ad-2901a54682f9.mp4"
-        />
-        {/* Soft center vignette gradient for text contrast */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(0,0,0,0.85)_0%,rgba(0,0,0,0.45)_55%,rgba(0,0,0,0.2)_100%)]" />
+    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#1d1d1c] text-white flex flex-col justify-between select-none">
+      {/* ═══ 6 DISTINCT FLOATING MOCKUP CARDS (3 LEFT, 3 RIGHT, RESPONSIVE) ═══ */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
+        {/* Ambient subtle background */}
+        <div className="absolute inset-0 bg-[#1d1d1c]" />
+
+        {/* ─── LEFT SIDE CARDS (3 CARDS) ─── */}
+        {/* Card 1 (Left Top): Pulse Analytics Dashboard */}
+        <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[12deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-left-1.png" alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* Card 2 (Left Middle): Aura E-Commerce Store */}
+        <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[15deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-left-2.png" alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* Card 3 (Left Bottom): Video Ad Studio */}
+        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[8deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-left-3.png" alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* ─── RIGHT SIDE CARDS (3 CARDS) ─── */}
+        {/* Card 4 (Right Top): Build Unicorns Founder Platform */}
+        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[14deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-right-1.png" alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* Card 5 (Right Middle): Synthesis AI Video Studio */}
+        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[17deg] opacity-50 sm:opacity-70 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-right-3.png" alt="AI Video Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* Card 6 (Right Bottom): Mobile Health & Finance App */}
+        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[270px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[22deg] opacity-60 sm:opacity-75 md:opacity-85 lg:opacity-90 transition-all">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/mockups/card-right-2.png" alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-white/10" />
+        </div>
+
+        {/* Center radial overlay so text and login button are 100% readable */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(29,29,28,0.96)_0%,rgba(29,29,28,0.65)_55%,rgba(29,29,28,0.1)_100%)]" />
       </div>
 
       {/* ═══ TOP HEADER ═══ */}
