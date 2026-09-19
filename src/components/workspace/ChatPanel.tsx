@@ -920,7 +920,7 @@ export function ChatPanel({
             ) : (
               <button onClick={handleSend} disabled={(!prompt.trim() && attachedFiles.length === 0) || sending}
                 aria-label={t("workspace.chat.send")}
-                className="w-8 h-8 rounded-full bg-[#007ACC] hover:bg-[#006bb3] text-white disabled:opacity-40 shadow-xs flex items-center justify-center transition-all cursor-pointer">
+                className="w-8 h-8 rounded-full bg-[#948BE8] hover:bg-[#8379dc] text-white disabled:opacity-40 shadow-xs flex items-center justify-center transition-all cursor-pointer">
                 {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin text-white" /> : <ArrowRight className="w-3.5 h-3.5 text-white" />}
               </button>
             )}

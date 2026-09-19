@@ -726,7 +726,7 @@ export default function DashboardPage() {
                       onClick={() => void submitLandingMessage()}
                       disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                       aria-label="Send"
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#007ACC] text-white shadow-xs transition-all hover:bg-[#006bb3] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#948BE8] text-white shadow-xs transition-all hover:bg-[#8379dc] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <ArrowRight className="h-4 w-4 text-white" />}
                     </button>
