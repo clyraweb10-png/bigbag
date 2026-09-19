@@ -1,9 +1,20 @@
 <!DOCTYPE html>
-<html lang="en" style="background: transparent !important; background-color: transparent !important;">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3D Bigbag Rotating Emblem</title>
+  <script>
+    (function() {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var t = params.get('theme');
+        var isLight = t === 'light' || (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+        var bg = isLight ? '#ffffff' : '#1d1d1c';
+        document.documentElement.style.backgroundColor = bg;
+      } catch(e) {}
+    })();
+  </script>
   <!-- Three.js 3D Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <!-- OrbitControls for fluid touch and mouse interaction -->
@@ -18,9 +29,7 @@
       margin: 0;
       padding: 0;
       overflow: hidden;
-      background: transparent !important;
-      background-color: transparent !important;
-      color-scheme: light;
+      background-color: #1d1d1c;
     }
     * {
       box-sizing: border-box;
@@ -33,16 +42,15 @@
       height: 100%;
       display: block;
       cursor: grab;
-      background: transparent !important;
-      background-color: transparent !important;
+      background-color: #1d1d1c;
     }
     #webgl-canvas:active {
       cursor: grabbing;
     }
   </style>
 </head>
-<body style="background: transparent !important; background-color: transparent !important;">
-  <canvas id="webgl-canvas" style="background: transparent !important; background-color: transparent !important;"></canvas>
+<body>
+  <canvas id="webgl-canvas"></canvas>
 
   <script>
     /* Global Application State */
@@ -52,12 +60,57 @@
     let spinDirection = -1; // -1 for continuous leftward spin
     let rotationSpeed = 0.022; // Steady, uniform constant speed
 
+    const DARK_BG_HEX = '#1d1d1c';
+    const DARK_BG_INT = 0x1d1d1c;
+    const LIGHT_BG_HEX = '#ffffff';
+    const LIGHT_BG_INT = 0xffffff;
+
+    function getInitialTheme() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const t = params.get('theme');
+        if (t === 'dark' || t === 'light') return t;
+      } catch (e) {}
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'light';
+      }
+      return 'dark';
+    }
+
+    let activeTheme = getInitialTheme();
+
+    function applyThemeColors(theme) {
+      activeTheme = theme;
+      const isDark = activeTheme === 'dark';
+      const hex = isDark ? DARK_BG_HEX : LIGHT_BG_HEX;
+      const intColor = isDark ? DARK_BG_INT : LIGHT_BG_INT;
+
+      document.documentElement.style.backgroundColor = hex;
+      document.body.style.backgroundColor = hex;
+      const canvas = document.getElementById('webgl-canvas');
+      if (canvas) canvas.style.backgroundColor = hex;
+
+      if (renderer) {
+        renderer.setClearColor(intColor, 1);
+      }
+      if (scene) {
+        scene.background = new THREE.Color(intColor);
+      }
+    }
+
     function initScene() {
       const canvas = document.getElementById('webgl-canvas');
       
+      const isDark = activeTheme === 'dark';
+      const initialHex = isDark ? DARK_BG_HEX : LIGHT_BG_HEX;
+      const initialInt = isDark ? DARK_BG_INT : LIGHT_BG_INT;
+
+      document.documentElement.style.backgroundColor = initialHex;
+      document.body.style.backgroundColor = initialHex;
+      canvas.style.backgroundColor = initialHex;
+
       scene = new THREE.Scene();
-      // Transparent background so it blends into the page
-      scene.background = null;
+      scene.background = new THREE.Color(initialInt);
 
       camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
       camera.position.set(0, 0, 11.2);
@@ -65,10 +118,10 @@
       renderer = new THREE.WebGLRenderer({
         canvas: canvas,
         antialias: true,
-        alpha: true,
+        alpha: false,
         powerPreference: 'high-performance'
       });
-      renderer.setClearColor(0x000000, 0);
+      renderer.setClearColor(initialInt, 1);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
