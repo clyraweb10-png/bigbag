@@ -276,7 +276,7 @@ function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: 
           <iframe
             src="/bigbag-3d-emblem.html"
             allowTransparency={true}
-            style={{ backgroundColor: "transparent", colorScheme: "normal" }}
+            style={{ backgroundColor: "transparent", background: "transparent" }}
             className="w-full h-full border-0 bg-transparent"
             title="3D Bigbag Rotating Emblem"
           />
