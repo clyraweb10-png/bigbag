@@ -201,60 +201,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; error: string | null; onSignIn: () => Promise<void> }) {
   return (
     <main className="relative min-h-[100dvh] w-full overflow-hidden bg-[#000000] text-white flex flex-col justify-between select-none">
-      {/* ═══ AMBIENT BACKDROP & FLOATING CARDS ═══ */}
-      <div className="pointer-events-none absolute inset-0 bg-[#000000]" />
-
-      {/* Floating mockup backdrop */}
-      <div
-        className="pointer-events-none absolute inset-0 bg-center bg-cover bg-no-repeat opacity-40 mix-blend-screen"
-        style={{ backgroundImage: 'url("/landing-backdrop.png")' }}
-      />
-
-      {/* Floating Mockup Cards around edges */}
-      {/* Top Left Card - Dark Dashboard */}
-      <div className="pointer-events-none absolute -top-4 left-[16%] hidden sm:block w-[180px] lg:w-[220px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[10deg] opacity-85 transition-transform hover:scale-105">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-dash.png" alt="" className="w-full h-auto object-cover" />
+      {/* ═══ BACKGROUND VIDEO ONLY ═══ */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden bg-black">
+        <video
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          className="h-full w-full object-cover opacity-80"
+          src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260319_055001_8e16d972-3b2b-441c-86ad-2901a54682f9.mp4"
+        />
+        {/* Soft center vignette gradient for text contrast */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_65%_65%_at_50%_50%,rgba(0,0,0,0.85)_0%,rgba(0,0,0,0.45)_55%,rgba(0,0,0,0.2)_100%)]" />
       </div>
-
-      {/* Top Right Card - Unicorns Landing */}
-      <div className="pointer-events-none absolute -top-2 right-[8%] hidden sm:block w-[240px] lg:w-[280px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 rotate-[14deg] opacity-85 transition-transform hover:scale-105">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-unicorns.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Mid Left Card - Agency */}
-      <div className="pointer-events-none absolute top-[28%] left-[3%] hidden md:block w-[170px] lg:w-[200px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[14deg] opacity-85">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-agency.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Far Left Card */}
-      <div className="pointer-events-none absolute top-[10%] left-[-2%] hidden xl:block w-[120px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[6deg] opacity-70">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-community.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Bottom Left Card */}
-      <div className="pointer-events-none absolute bottom-[10%] left-[2%] hidden xl:block w-[130px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 -rotate-[8deg] opacity-75">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-botleft.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Bottom Right Card - Mobile Phone UI */}
-      <div className="pointer-events-none absolute bottom-[6%] right-[10%] hidden sm:block w-[200px] lg:w-[240px] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 rotate-[22deg] opacity-90">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-mobile.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Far Right Card - Analytics */}
-      <div className="pointer-events-none absolute bottom-[10%] right-[-1%] hidden lg:block w-[150px] rounded-xl overflow-hidden shadow-2xl shadow-black/80 rotate-[12deg] opacity-75">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/card-analytics.png" alt="" className="w-full h-auto object-cover" />
-      </div>
-
-      {/* Center soft vignette gradient for maximum text contrast */}
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_60%_at_50%_50%,rgba(0,0,0,0.88)_0%,rgba(0,0,0,0.4)_50%,transparent_80%)]" />
 
       {/* ═══ TOP HEADER ═══ */}
       <header className="relative z-30 flex h-16 sm:h-20 w-full items-center justify-between px-6 sm:px-10">
