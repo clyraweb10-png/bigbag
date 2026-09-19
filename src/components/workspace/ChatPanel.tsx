@@ -852,10 +852,10 @@ export function ChatPanel({
 
 
       <div className="shrink-0 px-3 pb-3 pt-2">
-        <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs bg-[#878672] dark:bg-[#252525]">
+        <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs bg-card dark:bg-[#252525]">
           <textarea data-chat-input ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
             placeholder={isBuilding ? "Agent is working..." : "Ask anything..."}
-            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-white/70 dark:placeholder:text-muted-foreground min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed text-white dark:text-foreground"
+            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-muted-foreground min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed text-foreground"
             disabled={isBuilding} rows={1} />
           <div className="flex items-center justify-between px-2 pb-2">
             {/*

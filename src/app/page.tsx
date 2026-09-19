@@ -699,13 +699,13 @@ export default function DashboardPage() {
                 )}
 
                 {/* Prompt area - colour + rounded only */}
-                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-[#878672] dark:bg-[#252525] overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
                   <textarea
                     ref={heroTextareaRef}
                     value={firstPrompt}
                     onChange={(e) => setFirstPrompt(e.target.value)}
                     placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
-                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-white dark:text-foreground outline-none placeholder:text-white/70 dark:placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
+                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                     onPaste={handleHeroPaste}
                   />
