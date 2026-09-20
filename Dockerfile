@@ -28,8 +28,10 @@ RUN mkdir -p /app/data /app/workspaces
 # Provide build-time arguments and environment variables for Next.js client bundling
 ARG NEXT_PUBLIC_SUPABASE_URL=https://dgtkizrvagvfnbdkdnfs.supabase.co
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U
+ARG NEXT_PUBLIC_APP_URL=https://vibecode-spzy.onrender.com
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
-    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 # Build Next.js application
 RUN npm run build
@@ -39,7 +41,7 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME="0.0.0.0" \
     ORCHESTRATOR_MODE=local \
-    NEXT_PUBLIC_APP_URL="http://localhost:3000"
+    NEXT_PUBLIC_APP_URL="https://vibecode-spzy.onrender.com"
 
 # Expose ONLY port 3000
 EXPOSE 3000

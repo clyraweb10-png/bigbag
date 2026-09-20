@@ -31,3 +31,74 @@ export function isProtectedPagePath(pathname: string): boolean {
     pathname.startsWith("/project/")
   );
 }
+
+/**
+ * Resolves the canonical application origin for post-login redirects and OAuth callbacks.
+ * - Local development (localhost / 127.0.0.1) returns http://localhost:3000 (or the local host:port).
+ * - Production (Render deployment) returns https://vibecode-spzy.onrender.com.
+ */
+export function resolveAppOrigin(request?: {
+  headers?: { get: (name: string) => string | null };
+  url?: string;
+}): string {
+  if (request) {
+    const forwardedHost = request.headers?.get("x-forwarded-host")?.split(",")[0]?.trim();
+    const forwardedProto = request.headers?.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+
+    if (forwardedHost) {
+      if (forwardedHost.startsWith("localhost") || forwardedHost.startsWith("127.0.0.1")) {
+        return `http://${forwardedHost}`;
+      }
+      return `${forwardedProto}://${forwardedHost}`;
+    }
+
+    const host = request.headers?.get("host")?.trim();
+    if (host) {
+      if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
+        return `http://${host}`;
+      }
+      return `https://${host}`;
+    }
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+    if (appUrl && (process.env.NODE_ENV !== "production" || !appUrl.includes("localhost"))) {
+      return appUrl;
+    }
+
+    if (request.url) {
+      try {
+        const reqUrl = new URL(request.url);
+        if (reqUrl.hostname === "localhost" || reqUrl.hostname === "127.0.0.1") {
+          if (process.env.NODE_ENV === "production") {
+            return "https://vibecode-spzy.onrender.com";
+          }
+          return reqUrl.origin;
+        }
+        return reqUrl.origin;
+      } catch {}
+    }
+  }
+
+  // Browser context
+  if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return window.location.origin;
+    }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+    if (appUrl && !appUrl.includes("localhost")) {
+      return appUrl;
+    }
+    return window.location.origin;
+  }
+
+  // Server fallback
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  if (appUrl && (process.env.NODE_ENV !== "production" || !appUrl.includes("localhost"))) {
+    return appUrl;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return "https://vibecode-spzy.onrender.com";
+  }
+  return "http://localhost:3000";
+}

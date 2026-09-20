@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { AUTH_COOKIE, isCloudOperator, verifyAuthSession } from "./lib/auth-session";
-import { isProtectedPagePath, safeAuthReturnPath } from "./lib/auth-redirect";
+import { isProtectedPagePath, safeAuthReturnPath, resolveAppOrigin } from "./lib/auth-redirect";
 import { isLocalOrchestratorEnabled } from "./lib/orchestrator-mode";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -87,10 +87,9 @@ export async function proxy(request: NextRequest) {
     : null;
 
   if (protectedPage && !session) {
-    const loginUrl = request.nextUrl.clone();
+    const origin = resolveAppOrigin(request);
+    const loginUrl = new URL("/login", origin);
     const returnPath = safeAuthReturnPath(`${path}${request.nextUrl.search}`);
-    loginUrl.pathname = "/login";
-    loginUrl.search = "";
     loginUrl.searchParams.set("next", returnPath);
     const response = NextResponse.redirect(loginUrl, 307);
     addCorsHeaders(response, request);

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdminClient, getSupabaseClient } from "@/lib/supabase";
 import { AUTH_COOKIE, authCookieOptions, createAuthSession } from "@/lib/auth-session";
 import { attachLocalTenantCookie, tenantContextForIdentity } from "@/lib/local-orchestrator/tenant-context";
-import { safeAuthReturnPath } from "@/lib/auth-redirect";
+import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
+  const origin = resolveAppOrigin(request);
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const next = safeAuthReturnPath(requestUrl.searchParams.get("next"), "/dashboard");
@@ -34,14 +35,14 @@ export async function GET(request: NextRequest) {
 
   const supabase = getSupabaseAdminClient() || getSupabaseClient();
   if (!supabase) {
-    return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, requestUrl.origin));
+    return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, origin));
   }
 
   try {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error && data?.user?.id) {
       const user = data.user;
-      const targetUrl = new URL(next, requestUrl.origin);
+      const targetUrl = new URL(next, origin);
       const response = NextResponse.redirect(targetUrl, 303);
 
       // Set secure HttpOnly session and tenant cookies
@@ -53,5 +54,5 @@ export async function GET(request: NextRequest) {
   }
 
   // Forward to client callback which has access to browser localStorage PKCE verifiers
-  return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, requestUrl.origin));
+  return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, origin));
 }

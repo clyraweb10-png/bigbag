@@ -65,20 +65,33 @@ export default function LoginPage() {
   useEffect(() => {
     if (status !== "authenticated" || !user) return;
     try {
+      let targetOrigin = "";
+      try {
+        const savedOrigin = sessionStorage.getItem("bigbag:auth:origin");
+        if (savedOrigin && !savedOrigin.includes("localhost") && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+          targetOrigin = savedOrigin;
+        }
+      } catch {}
+
       const requestedPath = safeAuthReturnPath(
         new URLSearchParams(window.location.search).get("next"),
         ""
       );
+      let destination = "/dashboard";
       if (requestedPath) {
-        router.replace(requestedPath);
-        return;
-      }
-      const pending = sessionStorage.getItem("bigbag:pending-prompt");
-      if (pending) {
-        sessionStorage.removeItem("bigbag:pending-prompt");
-        router.replace(`/generate?prompt=${encodeURIComponent(pending)}`);
+        destination = requestedPath;
       } else {
-        router.replace("/dashboard");
+        const pending = sessionStorage.getItem("bigbag:pending-prompt");
+        if (pending) {
+          sessionStorage.removeItem("bigbag:pending-prompt");
+          destination = `/generate?prompt=${encodeURIComponent(pending)}`;
+        }
+      }
+
+      if (targetOrigin) {
+        window.location.href = `${targetOrigin.replace(/\/$/, "")}${destination}`;
+      } else {
+        router.replace(destination);
       }
     } catch {
       router.replace("/dashboard");
