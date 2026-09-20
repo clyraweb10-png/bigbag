@@ -26,7 +26,6 @@ import {
   Save,
   FileWarning,
   Search,
-  Sparkles,
   X,
 } from "lucide-react";
 import { AiSparklesIcon } from "@/components/AiSparklesIcon";

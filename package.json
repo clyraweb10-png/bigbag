@@ -6,6 +6,7 @@
     "check-types-errors": "tsc --noEmit --skipLibCheck",
     "start": "next start",
     "build": "next build",
+    "test:oauth": "node --test -r ts-node/register/transpile-only -r tsconfig-paths/register tests/production-oauth-flow.test.ts",
     "test:supabase": "node --test --require ts-node/register/transpile-only tests/supabase-durable-store.test.ts",
     "test:orchestrator": "node --test --require ts-node/register/transpile-only tests/local-orchestrator-lifecycle.test.ts",
     "test:real-generation": "node --test --require ts-node/register/transpile-only tests/real-file-generation.test.ts",

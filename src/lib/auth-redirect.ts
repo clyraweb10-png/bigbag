@@ -32,13 +32,23 @@ export function isProtectedPagePath(pathname: string): boolean {
   );
 }
 
-export const PRODUCTION_APP_ORIGIN = "https://vibecode-spzy.onrender.com";
+/**
+ * Canonical production origin.
+ * Prefers NEXT_PUBLIC_APP_URL (already set to https://vibecode-spzy.onrender.com in production).
+ * The hardcoded string is a compile-time last-resort only — it never overrides the env var.
+ */
+export const PRODUCTION_APP_ORIGIN: string =
+  (() => {
+    const configured = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+    if (configured && !configured.includes("localhost")) return configured;
+    return "https://vibecode-spzy.onrender.com";
+  })();
 export const LOCAL_DEV_ORIGIN = "http://localhost:3000";
 
 /**
  * Resolves the canonical application origin for post-login redirects and OAuth callbacks.
- * - In production (Render deployment): NEVER returns localhost. Always returns https://vibecode-spzy.onrender.com
- *   or the verified public host.
+ * - In production (Render deployment): NEVER returns localhost. Always returns the
+ *   NEXT_PUBLIC_APP_URL value (https://vibecode-spzy.onrender.com) or the verified public host.
  * - In local development: preserves http://localhost:3000.
  */
 export function resolveAppOrigin(request?: {
@@ -52,44 +62,10 @@ export function resolveAppOrigin(request?: {
       ? configuredAppUrl
       : PRODUCTION_APP_ORIGIN;
 
-  // 1. Production mode (Render / Cloud container environment):
-  // Inside Docker, Node binds to 0.0.0.0:3000 and internal reverse-proxy headers
-  // often report localhost:3000 or 127.0.0.1. We must NEVER return localhost in production.
+  // 1. Production mode (Render / Cloud deployment):
+  // ALWAYS return the canonical production origin (NEXT_PUBLIC_APP_URL = https://vibecode-spzy.onrender.com).
+  // This guarantees that in production, redirects and OAuth callbacks NEVER leak or point to localhost:3000.
   if (isProd) {
-    if (request) {
-      const forwardedHost = request.headers?.get("x-forwarded-host")?.split(",")[0]?.trim();
-      const forwardedProto = request.headers?.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
-
-      if (
-        forwardedHost &&
-        !forwardedHost.startsWith("localhost") &&
-        !forwardedHost.startsWith("127.0.0.1") &&
-        !forwardedHost.startsWith("0.0.0.0")
-      ) {
-        return `${forwardedProto}://${forwardedHost}`;
-      }
-
-      const host = request.headers?.get("host")?.trim();
-      if (
-        host &&
-        !host.startsWith("localhost") &&
-        !host.startsWith("127.0.0.1") &&
-        !host.startsWith("0.0.0.0")
-      ) {
-        return `https://${host}`;
-      }
-    }
-
-    if (typeof window !== "undefined") {
-      if (
-        window.location.hostname !== "localhost" &&
-        window.location.hostname !== "127.0.0.1" &&
-        window.location.hostname !== "0.0.0.0"
-      ) {
-        return window.location.origin;
-      }
-    }
-
     return prodOrigin;
   }
 

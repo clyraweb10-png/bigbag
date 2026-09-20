@@ -4,13 +4,11 @@ import { useEffect, useState } from "react";
 import { getSupabaseClient, configureRuntimeSupabase } from "@/lib/supabase";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { Loader2 } from "lucide-react";
-import { safeAuthReturnPath, PRODUCTION_APP_ORIGIN } from "@/lib/auth-redirect";
+import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
 
 // The canonical destination after auth.
-// In the browser, window.location.origin is always correct:
-//   - On Render:    https://vibecode-spzy.onrender.com
-//   - On localhost: http://localhost:3000
-// We do NOT use resolveAppOrigin() here — the browser already knows its own origin.
+// - In production: resolveAppOrigin() returns NEXT_PUBLIC_APP_URL (https://vibecode-spzy.onrender.com)
+// - In development: resolveAppOrigin() preserves http://localhost:3000
 function getAuthDestination(searchParams: URLSearchParams): string {
   const next = safeAuthReturnPath(searchParams.get("next"), "");
   if (next) return next;
@@ -43,7 +41,8 @@ export default function AuthCallbackPage() {
           oauthError = hp.get("error_description") || hp.get("error");
         }
         if (oauthError) {
-          window.location.replace(`/login?error=${encodeURIComponent(oauthError)}`);
+          const origin = resolveAppOrigin();
+          window.location.replace(`${origin}/login?error=${encodeURIComponent(oauthError)}`);
           return;
         }
 
@@ -65,8 +64,9 @@ export default function AuthCallbackPage() {
 
         const supabase = getSupabaseClient();
         if (!supabase) {
+          const origin = resolveAppOrigin();
           window.location.replace(
-            `/login?error=${encodeURIComponent("Authentication provider could not be initialized")}`
+            `${origin}/login?error=${encodeURIComponent("Authentication provider could not be initialized")}`
           );
           return;
         }
@@ -98,8 +98,8 @@ export default function AuthCallbackPage() {
 
           if (payload?.ok) {
             const destination = getAuthDestination(searchParams);
-            // window.location.origin is always the real public origin in the browser
-            window.location.href = `${window.location.origin}${destination}`;
+            const origin = resolveAppOrigin();
+            window.location.href = `${origin}${destination}`;
             return true;
           }
           return false;
@@ -134,8 +134,9 @@ export default function AuthCallbackPage() {
         const timeout = setTimeout(() => {
           if (!active) return;
           subscription.unsubscribe();
+          const origin = resolveAppOrigin();
           window.location.replace(
-            `/login?error=${encodeURIComponent(
+            `${origin}/login?error=${encodeURIComponent(
               "Sign-in timed out. Please try again."
             )}`
           );
@@ -149,8 +150,9 @@ export default function AuthCallbackPage() {
         if (!active) return;
         const msg = err instanceof Error ? err.message : "Authentication failed";
         setErrorMessage(msg);
+        const origin = resolveAppOrigin();
         window.location.replace(
-          `/login?error=${encodeURIComponent(msg)}`
+          `${origin}/login?error=${encodeURIComponent(msg)}`
         );
       }
     }

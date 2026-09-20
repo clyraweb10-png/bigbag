@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   <meta charset="utf-8">
   <title>Redirecting…</title>
   <script>
-    var target = '/auth/callback' + window.location.search + window.location.hash;
+    var target = '${origin}/auth/callback' + window.location.search + window.location.hash;
     window.location.replace(target);
   </script>
 </head>

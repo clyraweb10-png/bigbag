@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
@@ -22,17 +21,12 @@ const { localProjectStore } = require("../src/lib/local-orchestrator/project-sto
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const {
   extractFilesFromMarkdown,
-  extractDeletionsFromMarkdown,
   isSourceBuildFailure,
   postProcessGeneratedFiles,
 } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   generationValidationIssues,
-  isRuntimeOwnedGeneratedPath,
 } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
-const {
-  ensureWorkspaceDependencies,
-} = require("../src/lib/local-orchestrator/dependency-scanner") as typeof import("../src/lib/local-orchestrator/dependency-scanner");
 const {
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
@@ -57,7 +51,6 @@ function runBuild(workspaceDir: string): { success: boolean; output: string } {
 test("TEST 1: Simple Multi-File Project Generation & Execution", async () => {
   const projectId = `test-simple-${Date.now()}`;
   const tenantId = "00000000-0000-4000-8000-000000000001";
-  const now = new Date().toISOString();
 
   localProjectStore.create({
     projectId,
@@ -184,7 +177,6 @@ export default function App() {
 test("TEST 2: Complex Multi-File Generation (7 Distinct Files)", async () => {
   const projectId = `test-complex-${Date.now()}`;
   const tenantId = "00000000-0000-4000-8000-000000000001";
-  const now = new Date().toISOString();
 
   localProjectStore.create({
     projectId,
@@ -371,7 +363,6 @@ export default function App() {
 test("TEST 3: Incremental Edit Modifies ONLY Target File Without Touching Unrelated Files", async () => {
   const projectId = `test-incremental-${Date.now()}`;
   const tenantId = "00000000-0000-4000-8000-000000000001";
-  const now = new Date().toISOString();
 
   localProjectStore.create({
     projectId,
@@ -465,7 +456,6 @@ export function MetricCard({ label }: { label: string }) {
 test("TEST 4: Compiler Error Detection & Error Recovery Loop", async () => {
   const projectId = `test-recovery-${Date.now()}`;
   const tenantId = "00000000-0000-4000-8000-000000000001";
-  const now = new Date().toISOString();
 
   localProjectStore.create({
     projectId,
