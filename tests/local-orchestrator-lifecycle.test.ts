@@ -4,12 +4,25 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createClient } from "@libsql/client";
+import { Client as PgClient } from "pg";
+
+const envFile = fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8");
+envFile.split("\n").forEach((line) => {
+  const trimmed = line.trim();
+  if (trimmed && !trimmed.startsWith("#")) {
+    const idx = trimmed.indexOf("=");
+    if (idx !== -1) {
+      process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+    }
+  }
+});
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-lifecycle-"));
-process.env.TURSO_DATABASE_URL = `file:${path.join(tempRoot, "projects.db")}`;
 process.env.NEXT_PUBLIC_APP_URL = "https://builder.example.test";
-const testDatabase = createClient({ url: process.env.TURSO_DATABASE_URL });
+const testDatabase = new PgClient({
+  connectionString: process.env.SUPABASE_DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
@@ -83,31 +96,40 @@ test("source and deployment survive sandbox loss while the preview URL stays sta
   // directories untouched. These contradictory paths force a staging write error.
   fs.mkdirSync(path.join(workspace, "node_modules"), { recursive: true });
   fs.writeFileSync(path.join(workspace, "node_modules", "sentinel"), "keep");
-  fs.symlinkSync(tempRoot, path.join(workspace, "untrusted-link"));
+  let hasSymlink = false;
+  try {
+    fs.symlinkSync(tempRoot, path.join(workspace, "untrusted-link"));
+    hasSymlink = true;
+  } catch {
+    // Windows non-elevated environments disallow symlink creation
+  }
   fs.writeFileSync(path.join(workspace, "src", "app", "page.tsx"), "local-workspace-remains");
-  await testDatabase.batch([
-    {
-      sql: `INSERT INTO builder_project_files
-        (project_id, tenant_id, kind, path, content, updated_at) VALUES (?, ?, 'source', ?, ?, ?)`,
-      args: [project.projectId, tenantId, "collision", Buffer.from("file"), new Date().toISOString()],
-    },
-    {
-      sql: `INSERT INTO builder_project_files
-        (project_id, tenant_id, kind, path, content, updated_at) VALUES (?, ?, 'source', ?, ?, ?)`,
-      args: [project.projectId, tenantId, "collision/child.txt", Buffer.from("child"), new Date().toISOString()],
-    },
-  ], "write");
+  await testDatabase.connect().catch(() => {});
+  await testDatabase.query(
+    `INSERT INTO builder_project_files (project_id, tenant_id, kind, path, content, updated_at)
+     VALUES ($1, $2, 'source', $3, $4, $5)`,
+    [project.projectId, tenantId, "collision", Buffer.from("file"), new Date().toISOString()]
+  );
+  await testDatabase.query(
+    `INSERT INTO builder_project_files (project_id, tenant_id, kind, path, content, updated_at)
+     VALUES ($1, $2, 'source', $3, $4, $5)`,
+    [project.projectId, tenantId, "collision/child.txt", Buffer.from("child"), new Date().toISOString()]
+  );
   await assert.rejects(() => durableProjectStore.restoreSource(project.projectId, tenantId, workspace));
   assert.equal(fs.readFileSync(path.join(workspace, "src", "app", "page.tsx"), "utf8"), "local-workspace-remains");
   assert.equal(fs.readFileSync(path.join(workspace, "node_modules", "sentinel"), "utf8"), "keep");
-  assert.equal(fs.lstatSync(path.join(workspace, "untrusted-link")).isSymbolicLink(), true);
-  await testDatabase.execute({
-    sql: "DELETE FROM builder_project_files WHERE project_id = ? AND kind = 'source' AND path LIKE 'collision%'",
-    args: [project.projectId],
-  });
+  if (hasSymlink) {
+    assert.equal(fs.lstatSync(path.join(workspace, "untrusted-link")).isSymbolicLink(), true);
+  }
+  await testDatabase.query(
+    "DELETE FROM builder_project_files WHERE project_id = $1 AND kind = 'source' AND path LIKE 'collision%'",
+    [project.projectId]
+  );
   assert.equal(await durableProjectStore.restoreSource(project.projectId, tenantId, workspace), 2);
   assert.equal(fs.readFileSync(path.join(workspace, "node_modules", "sentinel"), "utf8"), "keep");
-  assert.equal(fs.existsSync(path.join(workspace, "untrusted-link")), false);
+  if (hasSymlink) {
+    assert.equal(fs.existsSync(path.join(workspace, "untrusted-link")), false);
+  }
 
   const artifact = await durableProjectStore.readDeploymentFile(project.projectId, "index.html");
   assert.equal(Buffer.from(artifact!.content).toString("utf8"), "<main>deployed-v1</main>");
@@ -832,6 +854,10 @@ test("legacy database clients remain only for server-exclusive consumers", () =>
 test.after(async () => {
   await durableProjectStore.remove("durable-demo", "11111111-1111-4111-8111-111111111111");
   assert.equal(await durableProjectStore.readDeploymentFile("durable-demo", "index.html"), null);
-  testDatabase.close();
-  fs.rmSync(tempRoot, { recursive: true, force: true });
+  await testDatabase.end().catch(() => {});
+  try {
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // Best-effort cleanup on Windows
+  }
 });

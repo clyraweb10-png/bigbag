@@ -109,8 +109,10 @@ E2B_API_KEY=your_e2b_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
 # Optional: licensed image candidates for image-forward websites
 PEXELS_API_KEY=your_pexels_api_key
-TURSO_DATABASE_URL=libsql://your-database.turso.io
-TURSO_AUTH_TOKEN=your_turso_database_token
+SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
 ```
 
 ### 3. Run it
@@ -138,15 +140,17 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
 | `PEXELS_API_KEY` | ⬜ Image prompts | Supplies licensed, theme-specific image candidates to image-forward generations; absent/failed searches use designed CSS/SVG fallbacks. |
-| `TURSO_DATABASE_URL` | ✅ Local orchestrator | Durable metadata, complete generated source, and compiled preview artifacts. |
-| `TURSO_AUTH_TOKEN` | ✅ Local orchestrator | Server-only token for the Turso database. |
+| `SUPABASE_DATABASE_URL` | ✅ Local orchestrator | Supabase PostgreSQL storage for durable metadata, generated source, and compiled preview artifacts. |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ Supabase SDK | Server-only secret key for Supabase administrative operations (bypasses RLS). |
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ Supabase client | Public URL for Supabase API endpoints. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ Supabase client | Public anonymous key for client-side queries (enforces RLS). |
 | `TENANT_COOKIE_SECRET` | ✅ Production | Dedicated random secret used only to sign anonymous tenant cookies. |
 | `VCAAS_OPERATOR_UIDS` | ✅ Cloud mode | Comma-separated Firebase UIDs allowed to use the single cloud operator credential. |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 ### E2B and persistent Render previews
 
-E2B is a disposable build worker, not a host. Before a sandbox is created, the complete generated project is saved to Turso. A successful build is health-checked inside E2B, copied back to Turso, and served by this existing Render web service at the stable path `/api/preview/<projectId>/`; the E2B sandbox is then destroyed. Returning later restores the saved source into a fresh sandbox, rebuilds it, and replaces the deployed artifact without changing the preview URL.
+E2B is a disposable build worker, not a host. Before a sandbox is created, the complete generated project is saved to Supabase PostgreSQL. A successful build is health-checked inside E2B, copied back to Supabase, and served by this existing Render web service at the stable path `/api/preview/<projectId>/`; the E2B sandbox is then destroyed. Returning later restores the saved source into a fresh sandbox, rebuilds it, and replaces the deployed artifact without changing the preview URL.
 
 Prompts containing a public website URL are analyzed by Firecrawl first. Only design facts are supplied to the generator, with instructions to create original React code and avoid copying proprietary source or unnecessary content.
 

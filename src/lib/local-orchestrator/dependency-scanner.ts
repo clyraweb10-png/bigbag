@@ -96,40 +96,56 @@ export function detectThirdPartyImports(
 export function ensureWorkspaceDependencies(
   files: Array<{ path: string; content: string }>,
   workspaceDir: string
-): { added: string[] } {
+): { added: string[]; installed: string[]; failed: string[] } {
   const requested = detectThirdPartyImports(files);
-  if (requested.length === 0) return { added: [] };
-
   const packagePath = path.join(workspaceDir, "package.json");
   let pkg: {
     dependencies?: Record<string, string>;
   } = {};
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("package.json must contain an object");
+
+  if (fs.existsSync(packagePath)) {
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        pkg = parsed as { dependencies?: Record<string, string> };
+      }
+    } catch (error) {
+      console.warn("[dependency-scanner] Repairing an unreadable generated package.json:", error);
     }
-    pkg = parsed as { dependencies?: Record<string, string> };
-  } catch (error) {
-    console.warn("[dependency-scanner] Repairing an unreadable generated package.json:", error);
   }
+
   const dependencies =
     pkg.dependencies && typeof pkg.dependencies === "object" && !Array.isArray(pkg.dependencies)
       ? { ...pkg.dependencies }
       : {};
-  const added = requested.filter(
-    (name) => ALLOWED_GENERATED_DEPENDENCIES.has(name) && !dependencies[name]
-  );
-  for (const name of added) {
-    dependencies[name] = ALLOWED_GENERATED_DEPENDENCIES.get(name)!;
+
+  const added: string[] = [];
+  for (const name of requested) {
+    if (!dependencies[name]) {
+      const version = ALLOWED_GENERATED_DEPENDENCIES.get(name) || "latest";
+      dependencies[name] = version;
+      added.push(name);
+    }
   }
 
-  if (added.length > 0) {
+  if (added.length > 0 && fs.existsSync(packagePath)) {
     pkg.dependencies = dependencies;
     fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
   }
 
-  return { added };
+  // Check missing packages and run real install if needed
+  const nodeModulesDir = path.join(workspaceDir, "node_modules");
+  const allNeeded = [...new Set([...requested, ...Object.keys(dependencies)])];
+  const missing = findMissingPackages(nodeModulesDir, allNeeded).filter(
+    (name) => !ALWAYS_AVAILABLE.has(name) && !NODE_BUILTINS.has(name)
+  );
+
+  let installResult = { installed: [] as string[], failed: [] as string[] };
+  if (missing.length > 0) {
+    installResult = installPackages(workspaceDir, missing);
+  }
+
+  return { added, installed: installResult.installed, failed: installResult.failed };
 }
 
 /**

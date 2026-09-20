@@ -146,4 +146,22 @@ export const localFileManager = {
       rebuildRequired: true,
     };
   },
+
+  deleteFile(projectId: string, relativePath: string): boolean {
+    const rootDir = localProjectStore.getWorkspaceDir(projectId);
+    let fullPath: string;
+    try {
+      fullPath = projectFilePath(rootDir, relativePath);
+    } catch {
+      return false;
+    }
+
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      return false;
+    }
+
+    fs.unlinkSync(fullPath);
+    return true;
+  },
 };
+

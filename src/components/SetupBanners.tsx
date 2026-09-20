@@ -38,8 +38,7 @@ export function SetupBanners() {
               <div><span className="text-emerald-400">TELNYX_API_KEY</span>=<span className="text-gray-400">your_telnyx_key</span> <span className="text-gray-400"># fallback</span></div>
               <div><span className="text-emerald-400">E2B_API_KEY</span>=<span className="text-gray-400">your_e2b_key</span></div>
               <div><span className="text-emerald-400">FIRECRAWL_API_KEY</span>=<span className="text-gray-400">your_firecrawl_key</span></div>
-              <div><span className="text-emerald-400">TURSO_DATABASE_URL</span>=<span className="text-gray-400">libsql://...</span></div>
-              <div><span className="text-emerald-400">TURSO_AUTH_TOKEN</span>=<span className="text-gray-400">your_turso_token</span></div>
+              <div><span className="text-emerald-400">SUPABASE_DATABASE_URL</span>=<span className="text-gray-400">postgresql://...</span></div>
               <div><span className="text-emerald-400">TENANT_COOKIE_SECRET</span>=<span className="text-gray-400">a_dedicated_random_secret</span></div>
             </div>
             <p className="text-[13px] text-muted-foreground mt-3 leading-relaxed">

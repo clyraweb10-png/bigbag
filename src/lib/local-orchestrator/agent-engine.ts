@@ -19,71 +19,77 @@ import {
   type GeneratedSourceFile,
 } from "./generation-validator";
 
-const SYSTEM_PROMPT = `You are an expert product designer and frontend engineer. Build complete web apps using Vite, React 19, TypeScript, and Tailwind CSS 4.
+const SYSTEM_PROMPT = `You are an expert full-stack software engineer and product designer. Build production-quality, modular web applications using React, TypeScript, and modern styling.
 
 ## CRITICAL RULES
 
-**OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, plans, or thinking. Start your response IMMEDIATELY with the first file block. No prose before, between, or after code blocks.**
+**OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, conversational filler, plans, or thinking before, between, or after code blocks. Start your response immediately with the first file block.**
 
-1. Runtime — This is a Vite React client backed by platform server APIs, even though its editable entry file is named src/app/page.tsx. Components may use hooks and browser APIs. Never use Next.js APIs, Server Components, server actions, Node built-ins, or direct database/provider SDKs in browser code. For persistent records, use ONLY this exact browser-safe database API: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. The only collection methods are \`list\`, \`get\`, \`create\`, \`update\`, and \`remove\`. Never invent \`db.list\`, \`db.putMany\`, \`db.query\`, or another API. When the user asks for durable/full-stack data, the platform database is authoritative; do not silently substitute localStorage or in-memory state for failed writes.
+1. Architecture & Multi-File Structure
+- Build complete, modular, real-world applications with clean separation of concerns.
+- Split code across logical files: entry points, components, hooks, utilities, styles, and types.
+- Standard structure:
+  - Entry point: \`src/App.tsx\` or \`src/app/page.tsx\`
+  - Components: \`src/components/<ComponentName>.tsx\`
+  - Styles: \`src/index.css\` or \`src/app/globals.css\`
+  - Utilities: \`src/lib/utils.ts\`
+  - Types: \`src/types/<module>.ts\`
+- For multi-view or multi-page flows, create dedicated view components with client-side routing and clean state management.
+- When importing a custom local module (e.g. \`import { TaskList } from './components/TaskList'\`), you MUST output the complete code for that file in the same response.
 
-2. Output Format — Each file with markdown heading + code block:
-### File: src/app/page.tsx
-\`\`\`tsx
-import { useState } from 'react';
-// code
-\`\`\`
-
-The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css when styling changes. Keep the complete implementation self-contained in src/app/page.tsx by default. Do not import a custom local component unless you also output its complete file in the same response. Put optional components after those required entry files so a token limit can never leave the app disconnected. The runtime already owns index.html, src/main.tsx, src/app/layout.tsx, package.json, and build configuration. Never output or replace them.
-
-3. Dependencies — Installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner. Prefer these. Also use @/components/ui/button, @/components/ui/card, @/lib/utils (cn), and @/lib/db (durable CRUD) — they already exist.
-
-4. Styling — Use Tailwind utilities and src/app/globals.css for tokens, keyframes, and special effects. NO styled-jsx, CSS modules, or @apply rules. Keep @import "tailwindcss" as the first non-comment rule in globals.css. All CSS properties MUST be inside a selector.
-
-5. Structure — src/app/page.tsx is the main app and src/app/globals.css contains global styles. Prefer small helper components in page.tsx so the response cannot be truncated between files. Use src/components/*.tsx only when the complete page and every imported component fit in this response. The runtime entrypoint already exists; do not output src/main.tsx.
-
-6. Quality — Complete working code with finished copy and working interactions. No placeholders, dead controls, empty hrefs, TODOs, fake save buttons, or in-memory-only persistence when the request needs data. Use semantic HTML, accessible labels, keyboard focus states, loading/empty/error states, and responsive layouts at mobile/tablet/desktop sizes. If the user requests multiple pages, implement every named page as working client-side routes/views with real navigation and URL history; do not return one long landing page or create Next.js route files that this Vite runtime will not mount.
-
-7. Visual craft — Build a subject-specific art direction, strong hierarchy, intentional typography, varied section rhythm, restrained motion, and cohesive design tokens. Prefer 4-7 substantial sections over generic card grids when the request is a site; use information-dense task layouts when it is an app. Honor every concrete detail in the user's prompt. Explicit user constraints outrank all default design guidance: never add sections, effects, colours, copy, or features the user excluded.
-
-8. Images and icons — Use user-supplied and reference-analysis image URLs exactly when relevant and licensing permits, preserving meaningful alt text. When the brief benefits from photography and supplies no asset, use a stable, direct, known-valid royalty-free image URL rather than substituting a generic CSS/SVG geometric illustration; never use dynamic random-image endpoints or pretend a decorative mockup is a real product screenshot. Use lucide-react icons with accessible labels; never use emoji or text glyphs as UI icons.
-
-9. Build efficiency — Prefer lightweight CSS and responsive inline SVG for decorative data visualizations. Import a charting library only when the user explicitly requires that library or the requested interaction cannot reasonably be built with SVG; large chart bundles can exhaust small preview workers.
-
-10. Real behavior — Never simulate a backend, AI response, authentication, upload, payment, save, deploy, or success state with timers or hard-coded fake results. Implement the real browser/platform data flow when the requested capability is supported. If an external capability is not available, keep the rest of the application complete and show an honest, recoverable error state instead of fake success.
-
-11. Failure recovery — Optional packages, components, and remote images must never block completion. Prefer existing components and dependencies. If an optional integration is unavailable, implement a local React/CSS equivalent, simplify only the affected feature, and preserve all working functionality. Every remote image needs a designed fallback that cannot show a broken image icon or empty placeholder.
-
-12. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
-`;
-
-const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
-
-### File: src/app/page.tsx
+2. Output Format
+Each file must be preceded by a clear file header and markdown code fence:
+### File: path/to/file.tsx
 \`\`\`tsx
 // complete code here
 \`\`\`
 
-Return one complete, self-contained src/app/page.tsx with all requested views and custom sections defined in that file. You may import installed packages and the existing @/components/ui/button, @/components/ui/card, and @/lib/utils modules, but do not import any other local component. Then output src/app/globals.css if needed. Do not output runtime-owned files such as src/app/layout.tsx, src/main.tsx, index.html, package.json, or build configuration. Do not abbreviate code with ellipses. Generate the complete application now.`;
+To delete an obsolete file, output:
+### Delete: path/to/file.tsx
+
+3. Dependencies & Standard Libraries
+- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner.
+- Pre-existing UI primitives: @/components/ui/button, @/components/ui/card, and @/lib/utils (cn).
+- For durable database storage, use: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`.
+- If you import additional packages, the system automatically detects them, adds them to package.json, and installs them.
+
+4. Styling & Visual Craft
+- Use Tailwind CSS utilities. In CSS files, ensure all rules are inside standard selectors (no orphaned CSS properties).
+- Keep \`@import "tailwindcss";\` at the top of the global CSS file.
+- Deliver rich, responsive layouts (mobile, tablet, desktop) with intentional typography, deliberate color palettes, and accessible contrast.
+- Ensure all interactive elements (buttons, links, inputs) have active, focus-visible, and disabled states.
+
+5. Real Behavior & Code Quality
+- Output complete, working, production-ready code. Never leave TODOs, placeholders, empty stubs, or ellipses (\`// ...\`).
+- Never simulate actions with fake timers or pretend success. Provide honest loading, error, and empty states.
+- Ensure all imports and exports match across files. Default export your main entry point component.
+`;
+
+const RETRY_PROMPT = `Your previous response was incomplete or contained validation issues.
+You MUST respond with ONLY complete code file blocks in this exact format — no explanations, no thinking, no prose:
+
+### File: path/to/file.tsx
+\`\`\`tsx
+// complete code here
+\`\`\`
+
+Make sure all imported local files are provided, all syntax is valid, and the app has a complete, working entrypoint (e.g. src/App.tsx or src/app/page.tsx). Generate the complete corrected files now.`;
 
 /**
  * Appended to the system prompt when the user is iterating on an existing project.
- * Without this, the design-system prompt's strong push toward "build a unique website"
- * causes the AI to ignore the existing code and generate something entirely new.
  */
 const FOLLOW_UP_SUFFIX = `
 
-## FOLLOW-UP MODE — YOU ARE MODIFYING AN EXISTING APPLICATION
+## FOLLOW-UP MODE — INCREMENTAL EDITING ON EXISTING PROJECT
 
-The user's current project files are provided below. This is NOT a new project.
+The user's current project files and directory structure are provided below. This is an iteration on an EXISTING application.
 You MUST:
-1. Read and understand the existing code before making changes.
-2. ONLY change what the user explicitly asked for.
-3. Keep ALL existing functionality, structure, design, content, and styling intact.
-4. Output the COMPLETE updated file(s) — not just the changed lines.
-5. If the user asks for a small change (like changing a color), make ONLY that change.
-6. Do NOT redesign, restructure, or replace the existing application.
-7. Do NOT add new sections, features, or content unless explicitly asked.
+1. Inspect the existing file tree and files carefully.
+2. Determine precisely which file(s) need to be modified, created, or deleted to satisfy the user's request.
+3. Output the COMPLETE updated code for ONLY the files being changed or newly created.
+4. Do NOT output unchanged files — they will remain untouched on disk.
+5. Preserve all existing structure, design, functionality, and styling of untouched areas.
+6. If a file is no longer needed, output \`### Delete: path/to/file.tsx\`.
 `;
 
 const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
@@ -144,7 +150,7 @@ function restoreWorkspace(projectId: string, snapshot: Map<string, Buffer>): voi
 }
 
 function workspaceRepairContext(projectId: string): string {
-  const sourceExtensions = /\.(?:tsx?|jsx?|css)$/;
+  const sourceExtensions = /\.(?:tsx?|jsx?|css|json|html)$/;
   const entries = localFileManager
     .getTree(projectId)
     .entries.filter((entry) => entry.type === "file" && sourceExtensions.test(entry.path));
@@ -272,11 +278,9 @@ export function extractFilesFromMarkdown(text: string): Array<{ path: string; co
     }
   }
 
-  // Pattern 6: Single raw TSX/JSX code fence without file annotations.
-  // Raw HTML is intentionally rejected: the generated app always enters through
-  // src/app/page.tsx and the runtime owns the root index.html document.
+  // Pattern 6: Single raw TSX/JSX/HTML code fence without file annotations.
   if (files.length === 0) {
-    const rawFence = /```(?:tsx|ts|jsx|js|javascript|typescript)?\s*[\r\n]([\s\S]*?)(?:```|$)/i.exec(text);
+    const rawFence = /```(?:tsx|ts|jsx|js|javascript|typescript|html|css)?\s*[\r\n]([\s\S]*?)(?:```|$)/i.exec(text);
     const candidateCode = rawFence ? rawFence[1].trim() : text.trim();
     if (
       candidateCode.includes("export default") ||
@@ -291,8 +295,13 @@ export function extractFilesFromMarkdown(text: string): Array<{ path: string; co
         }
       }
       files.push({
-        path: "src/app/page.tsx",
+        path: "src/App.tsx",
         content: code,
+      });
+    } else if (candidateCode.includes("<!DOCTYPE") || candidateCode.includes("<html") || candidateCode.includes("<body")) {
+      files.push({
+        path: "index.html",
+        content: candidateCode,
       });
     }
   }
@@ -300,17 +309,44 @@ export function extractFilesFromMarkdown(text: string): Array<{ path: string; co
   return files;
 }
 
+export function extractDeletionsFromMarkdown(text: string): string[] {
+  const deletions: string[] = [];
+  const deletePattern = /(?:^|[\r\n])\s*(?:###\s*Delete:\s*|<delete\s+(?:filePath|path)=["'])(`?[a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+`?)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = deletePattern.exec(text)) !== null) {
+    deletions.push(m[1].replace(/[`"']/g, "").trim());
+  }
+  return deletions;
+}
+
 function assertUsableGeneratedFiles(
   files: GeneratedSourceFile[],
   phase: "generation" | "repair",
   existingPaths: Iterable<string>
 ): void {
-  const existing = [...existingPaths];
-  const hasExistingEntrypoint = existing
-    .map(normalizeGeneratedPath)
-    .includes("src/app/page.tsx");
+  const existing = [...existingPaths].map(normalizeGeneratedPath);
+  const VALID_ENTRYPOINTS = new Set([
+    "src/app/page.tsx",
+    "src/app/page.jsx",
+    "src/App.tsx",
+    "src/App.jsx",
+    "src/app.tsx",
+    "src/app.jsx",
+    "src/main.tsx",
+    "src/main.jsx",
+    "src/index.tsx",
+    "src/index.jsx",
+    "app/page.tsx",
+    "app/page.jsx",
+    "pages/index.tsx",
+    "pages/index.jsx",
+    "index.html",
+  ]);
+  const hasExistingEntrypoint = existing.some(
+    (p) => VALID_ENTRYPOINTS.has(p) || p.endsWith("/page.tsx") || p.endsWith("/page.jsx") || p === "index.html"
+  );
   const issues = generationValidationIssues(files, existing, {
-    requireEntrypoint: phase === "generation" || !hasExistingEntrypoint,
+    requireEntrypoint: phase === "generation" && !hasExistingEntrypoint,
   });
   if (issues.length > 0) throw new Error(`The AI ${phase} was incomplete: ${issues.join("; ")}`);
 }
@@ -432,12 +468,11 @@ export function stripGeneratedApplyRules(css: string): string {
  * sometimes ignores instructions.
  */
 export function postProcessGeneratedFiles(files: Array<{ path: string; content: string }>): void {
-  // A useful model response can include a complete page plus an unnecessary
-  // runtime file. Drop those runtime-owned extras instead of allowing one
-  // disallowed block to poison an otherwise valid generation and its retry.
+  // A model response can include an unnecessary runtime file or layout snippet.
+  // Drop those runtime-owned extras before validation.
   for (let i = files.length - 1; i >= 0; i--) {
     const file = files[i];
-    if (isRuntimeOwnedGeneratedPath(file.path)) {
+    if (isRuntimeOwnedGeneratedPath(file.path, file.content)) {
       console.log(`[localAgentEngine] Dropped runtime-owned generated file: ${file.path}`);
       files.splice(i, 1);
     }
@@ -451,7 +486,7 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
 
     let content = file.content;
 
-    // Reject files that are clearly not code (AI "thinking" dumped as code)
+    // Detect non-code content
     const looksLikeCode =
       content.includes("import ") ||
       content.includes("export ") ||
@@ -463,27 +498,10 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
       content.includes("<main");
 
     if (!looksLikeCode) {
-      console.warn(`[localAgentEngine] Rejected non-code content in ${file.path} — replacing with placeholder`);
-      content = `'use client';
-
-export default function Page() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 text-center bg-gradient-to-b from-gray-950 via-gray-900 to-black text-white">
-      <div className="max-w-md p-8 bg-gray-900/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-800">
-        <h1 className="text-xl font-semibold tracking-tight text-white mb-2">Generation Issue</h1>
-        <p className="text-sm text-gray-400 mb-4">The AI produced text instead of code. Please try again with your prompt.</p>
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-medium">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-          Awaiting Retry
-        </div>
-      </div>
-    </main>
-  );
-}
-`;
+      console.warn(`[localAgentEngine] Non-code content detected in ${file.path}`);
     }
 
-    // Remove react-dom/client imports (never needed in Next.js App Router)
+    // Remove react-dom/client imports (never needed in component files)
     content = content.replace(/^\s*import\s+.*from\s+['"]react-dom\/client['"];?\s*$/gm, "");
 
     // Remove styled-jsx <style jsx> blocks
@@ -587,42 +605,55 @@ export const localAgentEngine = {
         let userPromptContent = prompt;
         let isFollowUp = false;
 
-        // Gather ALL source files in the project, not just page.tsx
-        const sourceExtensions = /\.(?:tsx?|jsx?|css)$/;
-        const allSourceEntries = localFileManager
-          .getTree(projectId)
-          .entries.filter(
-            (e) => e.type === "file" && sourceExtensions.test(e.path)
+        const tree = localFileManager.getTree(projectId);
+        const sourceExtensions = /\.(?:tsx?|jsx?|css|json|html)$/;
+        const allSourceEntries = tree.entries.filter(
+          (e) =>
+            e.type === "file" &&
+            sourceExtensions.test(e.path) &&
+            !e.path.includes("node_modules") &&
+            !e.path.startsWith(".")
+        );
+
+        // Check if there is real code in the workspace (not just the initial placeholder)
+        const nonPlaceholderEntries = allSourceEntries.filter((entry) => {
+          const file = localFileManager.getContent(projectId, entry.path);
+          return file && file.encoding === "utf8" && !containsGenerationPlaceholder(file.content);
+        });
+
+        const hasRealExistingCode = nonPlaceholderEntries.some((entry) => {
+          const p = entry.path;
+          return (
+            p === "src/App.tsx" ||
+            p === "src/app/page.tsx" ||
+            (p.startsWith("src/components/") && !p.includes("src/components/ui/")) ||
+            p.startsWith("src/pages/") ||
+            (p.endsWith(".html") && p !== "public/index.html")
           );
+        });
 
-        // Check if there's real existing code (not a placeholder template)
-        const existingPage = localFileManager.getContent(projectId, "src/app/page.tsx");
-        const pageCode = existingPage?.content || "";
-        const isPlaceholder =
-          !pageCode ||
-          pageCode.includes("AI is assembling your application") ||
-          pageCode.includes("Ready for Prompt") ||
-          pageCode.includes("Generation Issue");
-
-        if (!isPlaceholder && allSourceEntries.length > 0) {
+        if (hasRealExistingCode && nonPlaceholderEntries.length > 0) {
           isFollowUp = true;
 
-          // Build source context from ALL project files, not just page.tsx
-          let charBudget = 30_000;
+          // Build a clean file tree summary
+          const treeSummary = allSourceEntries
+            .map((e) => ` - ${e.path} (${e.size} bytes)`)
+            .join("\n");
+
+          // Build source context with a 35,000 char budget
+          let charBudget = 35_000;
           const sourceChunks: string[] = [];
-          for (const entry of allSourceEntries) {
+          for (const entry of nonPlaceholderEntries) {
             if (charBudget <= 0) break;
             const file = localFileManager.getContent(projectId, entry.path);
             if (!file || file.encoding !== "utf8") continue;
-            // Skip placeholder content
-            if (containsGenerationPlaceholder(file.content)) continue;
             const content = file.content.slice(0, charBudget);
             charBudget -= content.length;
             sourceChunks.push(`### File: ${entry.path}\n\`\`\`\n${content}\n\`\`\``);
           }
 
           if (sourceChunks.length > 0) {
-            userPromptContent = `Here are the current project files:\n\n${sourceChunks.join("\n\n")}\n\nUser Request: ${prompt}\n\nIMPORTANT: This is a FOLLOW-UP request on an existing project. Modify the existing code to fulfill this request. Preserve ALL existing structure, design, content, and working features. Only change what the user explicitly asked for. Output the complete updated files.`;
+            userPromptContent = `Project File Tree:\n${treeSummary}\n\nCurrent Project Source Files:\n\n${sourceChunks.join("\n\n")}\n\nUser Request: ${prompt}\n\nIMPORTANT: This is an incremental follow-up request on an existing project. Modify ONLY the files needed to satisfy the request. Leave all other files untouched. Output the complete updated code for each changed file, or create new files as needed. If removing an obsolete file, output ### Delete: path/to/file.`;
           }
         }
 
@@ -811,14 +842,27 @@ export const localAgentEngine = {
           });
         }
 
+        const deletions = extractDeletionsFromMarkdown(content);
+        for (const delPath of deletions) {
+          if (localFileManager.deleteFile(projectId, delPath)) {
+            newMessages.push({
+              author: "agent",
+              message: `Deleted file \`${delPath}\``,
+              messageType: "building",
+              createdAt: new Date().toISOString(),
+            });
+          }
+        }
+
         purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
 
-        // Add detected dependencies to this generated app. Installation happens
-        // inside its sandbox, never in the platform's own production process.
-        const allFiles = files.length > 0 ? files : [];
-        const existingPageForDeps = localFileManager.getContent(projectId, "src/app/page.tsx");
-        if (existingPageForDeps?.content && !allFiles.some(f => f.path.includes("page.tsx"))) {
-          allFiles.push({ path: "src/app/page.tsx", content: existingPageForDeps.content });
+        // Add detected dependencies to this generated app and install if missing
+        const allFiles = files.length > 0 ? [...files] : [];
+        const existingEntryForDeps =
+          localFileManager.getContent(projectId, "src/app/page.tsx") ||
+          localFileManager.getContent(projectId, "src/App.tsx");
+        if (existingEntryForDeps?.content && !allFiles.some((f) => f.path.includes("page.tsx") || f.path.includes("App.tsx"))) {
+          allFiles.push({ path: existingEntryForDeps.path, content: existingEntryForDeps.content });
         }
         if (allFiles.length > 0) {
           try {
@@ -830,6 +874,14 @@ export const localAgentEngine = {
               newMessages.push({
                 author: "agent",
                 message: `Added dependencies: ${depResult.added.join(", ")}`,
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+              });
+            }
+            if (depResult.installed.length > 0) {
+              newMessages.push({
+                author: "agent",
+                message: `Installed packages: ${depResult.installed.join(", ")}`,
                 messageType: "building",
                 createdAt: new Date().toISOString(),
               });

@@ -52,5 +52,11 @@
   "exclude": [
     "node_modules",
     "workspaces"
-  ]
+  ],
+  "ts-node": {
+    "compilerOptions": {
+      "module": "CommonJS",
+      "moduleResolution": "node"
+    }
+  }
 }

@@ -4,32 +4,34 @@ import ts from "typescript";
 export type GeneratedSourceFile = { path: string; content: string };
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".css", ".json"];
-const FORBIDDEN_OUTPUTS = new Set([
-  "index.html",
-  "package.json",
-  "package-lock.json",
-  "postcss.config.js",
-  "postcss.config.mjs",
-  "tsconfig.json",
-  "vite.config.js",
-  "vite.config.ts",
-  "src/main.tsx",
-  "src/app/layout.tsx",
-]);
+
+function isCompleteHtmlDocument(content: string): boolean {
+  const trimmed = content.trim();
+  if (/\{children\}/.test(trimmed) || /className=\{/.test(trimmed)) return false;
+  if (trimmed.length < 80) return false;
+  const hasDoctype = /<!DOCTYPE html/i.test(trimmed);
+  const hasHtml = /<html[\s>]/i.test(trimmed);
+  const hasBody = /<body[\s>]/i.test(trimmed);
+  return (hasDoctype || hasHtml) && hasBody && !/\{[a-zA-Z_][\w.]*\}/.test(trimmed);
+}
 
 /**
- * Files owned by the generated-app runtime rather than by the model. The
- * validator still reports these when called directly, while the generation
- * pipeline uses this predicate to discard harmless extra blocks before a
- * valid page is assessed.
+ * Files owned by the generated-app runtime rather than by the model. Harmless
+ * legacy layout snippets or broken HTML stubs are discarded before a valid page
+ * is assessed.
  */
-export function isRuntimeOwnedGeneratedPath(value: string): boolean {
+export function isRuntimeOwnedGeneratedPath(value: string, content?: string): boolean {
   const normalized = normalizeGeneratedPath(value);
-  return (
-    FORBIDDEN_OUTPUTS.has(normalized) ||
-    normalized.endsWith(".html") ||
-    /^src\/app\/layout\.[cm]?[jt]sx?$/.test(normalized)
-  );
+  if (normalized === "package-lock.json") return true;
+  // Discard Next.js App Router layout snippets that cannot execute under the client runtime
+  if (/^src\/app\/layout\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  // Incomplete HTML fragments (e.g. `<div id="root"></div>`) that are not complete HTML documents
+  if (normalized === "index.html" || normalized.endsWith(".html")) {
+    if (content !== undefined && !isCompleteHtmlDocument(content)) {
+      return true;
+    }
+  }
+  return false;
 }
 const PLACEHOLDER_MARKERS = [
   "Generation Issue",
@@ -380,7 +382,7 @@ export function generationValidationIssues(
     }
     if (generatedPaths.has(file.path)) issues.push(`duplicate file block: ${file.path}`);
     generatedPaths.add(file.path);
-    if (isRuntimeOwnedGeneratedPath(file.path)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
+    if (isRuntimeOwnedGeneratedPath(file.path, file.content)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
     issues.push(...visualQualityIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
@@ -392,11 +394,50 @@ export function generationValidationIssues(
     }
   }
 
-  const page = normalizedFiles.find((file) => file.path === "src/app/page.tsx");
-  if (!page && options.requireEntrypoint !== false) {
-    issues.push("missing required src/app/page.tsx entrypoint");
-  } else if (page) {
-    if (!hasDefaultExport(page.path, page.content)) issues.push("src/app/page.tsx has no default export");
+  const VALID_ENTRYPOINTS = new Set([
+    "src/app/page.tsx",
+    "src/app/page.jsx",
+    "src/App.tsx",
+    "src/App.jsx",
+    "src/app.tsx",
+    "src/app.jsx",
+    "src/main.tsx",
+    "src/main.jsx",
+    "src/index.tsx",
+    "src/index.jsx",
+    "app/page.tsx",
+    "app/page.jsx",
+    "pages/index.tsx",
+    "pages/index.jsx",
+    "index.html",
+  ]);
+
+  const existingNormalized = new Set([...existingPaths].map(normalizeGeneratedPath));
+  const hasExistingEntrypoint = [...existingNormalized].some(
+    (p) => VALID_ENTRYPOINTS.has(p) || p.endsWith("/page.tsx") || p.endsWith("/page.jsx") || p === "index.html"
+  );
+
+  const foundEntrypoint = normalizedFiles.find(
+    (file) => VALID_ENTRYPOINTS.has(file.path) || file.path.endsWith("/page.tsx") || file.path.endsWith("/page.jsx")
+  );
+
+  if (!hasExistingEntrypoint && !foundEntrypoint && options.requireEntrypoint !== false) {
+    issues.push("missing required application entrypoint (e.g. src/App.tsx, src/app/page.tsx, or index.html)");
+  }
+
+  for (const file of normalizedFiles) {
+    if (
+      file.path === "src/app/page.tsx" ||
+      file.path === "src/app/page.jsx" ||
+      file.path === "src/App.tsx" ||
+      file.path === "src/App.jsx" ||
+      file.path === "src/app.tsx" ||
+      file.path === "src/app.jsx"
+    ) {
+      if (!hasDefaultExport(file.path, file.content)) {
+        issues.push(`${file.path} has no default export`);
+      }
+    }
   }
 
   const availablePaths = new Set(

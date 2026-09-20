@@ -701,13 +701,20 @@ export default defineConfig({
   }
 
   const metadata = readLayoutMetadata(dir, projectId);
+  const hasAppTsx = fs.existsSync(path.join(dir, "src/App.tsx")) || fs.existsSync(path.join(dir, "src/App.jsx"));
+  const hasPageTsx = fs.existsSync(path.join(dir, "src/app/page.tsx")) || fs.existsSync(path.join(dir, "src/app/page.jsx"));
+  const appImport = hasAppTsx && !hasPageTsx ? "./App" : "./app/page";
+  const hasIndexCss = fs.existsSync(path.join(dir, "src/index.css"));
+  const hasGlobalsCss = fs.existsSync(path.join(dir, "src/app/globals.css"));
+  const cssImport = hasIndexCss && !hasGlobalsCss ? "./index.css" : "./app/globals.css";
+
   writeIfMissing(
     dir,
     "src/main.tsx",
     `import React from "react";
 import { createRoot } from "react-dom/client";
-import App from "./app/page";
-import "./app/globals.css";
+import App from "${appImport}";
+import "${cssImport}";
 
 document.title = ${JSON.stringify(metadata.title)};
 let descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
