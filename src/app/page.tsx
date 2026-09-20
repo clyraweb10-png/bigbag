@@ -433,7 +433,7 @@ export function DashboardContent() {
       if (message) sessionStorage.setItem("bigbag:pending-prompt", message);
     } catch { /* storage unavailable */ }
     setFirstPrompt("");
-    router.push(`/generate?prompt=${encodeURIComponent(message || "Build something amazing")}`);
+    router.push("/generate");
   };
 
   const confirmBuild = async () => {

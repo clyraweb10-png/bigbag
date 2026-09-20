@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { UserAvatar } from "@/components/auth/AuthProvider";
 import {
@@ -77,7 +77,6 @@ function TypingMessage({ text, active, onComplete }: { text: string; active: boo
 
 export default function GeneratePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user, status } = useAuth();
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -107,12 +106,10 @@ export default function GeneratePage() {
   useEffect(() => {
     if (status === "loading") return;
     if (status !== "authenticated" || !user) {
-      const urlPrompt = searchParams.get("prompt") || "";
-      if (urlPrompt) sessionStorage.setItem("bigbag:pending-prompt", urlPrompt);
       const returnPath = `${window.location.pathname}${window.location.search}`;
       router.replace(`/login?next=${encodeURIComponent(returnPath)}`);
     }
-  }, [status, user, router, searchParams]);
+  }, [status, user, router]);
 
   /* ── Auto-scroll ── */
   useEffect(() => {
@@ -146,9 +143,7 @@ export default function GeneratePage() {
   useEffect(() => {
     if (status !== "authenticated" || !user || initialized) return;
     setInitialized(true);
-    const urlPrompt = searchParams.get("prompt") || "";
-    const saved = (() => { try { return sessionStorage.getItem("bigbag:pending-prompt") || ""; } catch { return ""; } })();
-    const initial = urlPrompt || saved;
+    const initial = (() => { try { return sessionStorage.getItem("bigbag:pending-prompt") || ""; } catch { return ""; } })();
     if (initial) {
       try { sessionStorage.removeItem("bigbag:pending-prompt"); } catch { /* ok */ }
       setApprovedPrompt(initial);
@@ -156,7 +151,7 @@ export default function GeneratePage() {
       setMessages([userMsg]);
       void sendToPlanner(initial, []);
     }
-  }, [status, user, initialized, searchParams, sendToPlanner]);
+  }, [status, user, initialized, sendToPlanner]);
 
   /* ── Submit new message ── */
   const handleSubmit = async () => {
