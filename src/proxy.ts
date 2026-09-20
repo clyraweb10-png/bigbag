@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { AUTH_COOKIE, isCloudOperator, verifyAuthSession } from "./lib/auth-session";
+import { isProtectedPagePath, safeAuthReturnPath } from "./lib/auth-redirect";
 import { isLocalOrchestratorEnabled } from "./lib/orchestrator-mode";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -80,7 +81,23 @@ export async function proxy(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const protectedApi = path === "/api/planner" || path.startsWith("/api/vcaas/") || path.startsWith("/api/visual-edit/");
-  const session = protectedApi ? verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value) : null;
+  const protectedPage = isProtectedPagePath(path);
+  const session = protectedApi || protectedPage
+    ? verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value)
+    : null;
+
+  if (protectedPage && !session) {
+    const loginUrl = request.nextUrl.clone();
+    const returnPath = safeAuthReturnPath(`${path}${request.nextUrl.search}`);
+    loginUrl.pathname = "/login";
+    loginUrl.search = "";
+    loginUrl.searchParams.set("next", returnPath);
+    const response = NextResponse.redirect(loginUrl, 307);
+    addCorsHeaders(response, request);
+    addCspHeaders(response, request);
+    return response;
+  }
+
   if (protectedApi && !session) {
     const response = NextResponse.json({ ok: false, error: "Sign in with Google to continue" }, { status: 401 });
     addCorsHeaders(response, request);

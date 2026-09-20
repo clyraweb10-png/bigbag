@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { useTheme } from "next-themes";
+import { safeAuthReturnPath } from "@/lib/auth-redirect";
 
 /* ─── Google "G" logo SVG ─── */
 function GoogleIcon() {
@@ -46,15 +47,23 @@ export default function LoginPage() {
   useEffect(() => {
     if (status !== "authenticated" || !user) return;
     try {
+      const requestedPath = safeAuthReturnPath(
+        new URLSearchParams(window.location.search).get("next"),
+        ""
+      );
+      if (requestedPath) {
+        router.replace(requestedPath);
+        return;
+      }
       const pending = sessionStorage.getItem("bigbag:pending-prompt");
       if (pending) {
         sessionStorage.removeItem("bigbag:pending-prompt");
         router.replace(`/generate?prompt=${encodeURIComponent(pending)}`);
       } else {
-        router.replace("/");
+        router.replace("/dashboard");
       }
     } catch {
-      router.replace("/");
+      router.replace("/dashboard");
     }
   }, [status, user, router]);
 

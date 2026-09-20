@@ -45,7 +45,7 @@ export function MarketingNav() {
           <BigBagLogo size="md" />
 
           {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-0.5 flex-1 justify-center">
+          <nav className="hidden lg:flex items-center gap-0.5 flex-1 justify-center">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
@@ -62,7 +62,7 @@ export function MarketingNav() {
           </nav>
 
           {/* Desktop CTAs */}
-          <div className="hidden md:flex items-center gap-2 shrink-0">
+          <div className="hidden lg:flex items-center gap-2 shrink-0">
             <ThemeToggle showLabel={false} />
             {status === "authenticated" && user ? (
               <Link
@@ -90,7 +90,7 @@ export function MarketingNav() {
           </div>
 
           {/* Mobile: theme toggle + hamburger */}
-          <div className="flex md:hidden items-center gap-1.5">
+          <div className="flex lg:hidden items-center gap-1.5">
             <ThemeToggle showLabel={false} />
             <button
               onClick={() => setMobileOpen(!mobileOpen)}
@@ -105,7 +105,7 @@ export function MarketingNav() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-background/95 backdrop-blur-xl border-b border-border px-4 pb-5">
+        <div className="lg:hidden bg-background/95 backdrop-blur-xl border-b border-border px-4 pb-5">
           <nav className="flex flex-col gap-0.5 pt-2">
             {NAV_LINKS.map((link) => (
               <Link

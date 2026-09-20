@@ -36,7 +36,7 @@ import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
-import { classifyIntent, type ProjectStage } from "@/lib/local-orchestrator/intent-router";
+import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 type ViewMode = "cards" | "table";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -67,7 +67,6 @@ function ProjectThumbnail({
   const { projectId, previewImageUrl } = project;
   const name = project.label || projectId;
   const [imgState, setImgState] = useState<"idle" | "ready" | "failed">("idle");
-  const [iframeReady, setIframeReady] = useState(false);
   const [c1, c2] = gradientFor(projectId);
   const isRow = variant === "row";
 
@@ -85,11 +84,7 @@ function ProjectThumbnail({
     return () => { cancelled = true; };
   }, [previewImageUrl]);
 
-  const hasImage = previewImageUrl && imgState !== "failed";
-  // Show live iframe preview when no screenshot image is available.
-  // In row variant, iframe is too small to be useful, so skip it.
-  const showIframe = !hasImage && !isRow;
-  const previewSrc = `/api/preview/${encodeURIComponent(projectId)}/`;
+  const hasImage = Boolean(previewImageUrl && imgState !== "failed");
 
   const placeholder = (
     <div
@@ -119,32 +114,6 @@ function ProjectThumbnail({
             className={`w-full h-full object-cover object-top transition-opacity duration-300 ${imgState === "ready" ? "opacity-100" : "opacity-0"}`}
           />
           {imgState !== "ready" && <div className="absolute inset-0">{placeholder}</div>}
-        </>
-      ) : showIframe ? (
-        <>
-          {/* Live iframe preview: render the project's preview page scaled down.
-           * The iframe is 1280×800 (desktop viewport) shrunk via CSS transform
-           * to fit the card thumbnail area. Non-interactive (pointer-events: none). */}
-          <div className="absolute inset-0 overflow-hidden" style={{ pointerEvents: "none" }}>
-            <iframe
-              src={previewSrc}
-              title={`Preview of ${name}`}
-              loading="lazy"
-              sandbox="allow-scripts"
-              tabIndex={-1}
-              onLoad={() => setIframeReady(true)}
-              className="border-0 origin-top-left"
-              style={{
-                width: "1280px",
-                height: "800px",
-                transform: "scale(0.28)",
-                transformOrigin: "top left",
-                pointerEvents: "none",
-              }}
-            />
-          </div>
-          {/* Show placeholder gradient until the iframe loads */}
-          {!iframeReady && <div className="absolute inset-0">{placeholder}</div>}
         </>
       ) : (
         placeholder
@@ -234,15 +203,17 @@ export default function RootPage() {
   return <DashboardContent />;
 }
 
-function DashboardContent() {
+export function DashboardContent() {
   const router = useRouter();
   const { user } = useAuth();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [firstPrompt, setFirstPrompt] = useState("");
   const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
   const [landingMessages, setLandingMessages] = useState<LandingMessage[]>([]);
   const [landingStage, setLandingStage] = useState<ProjectStage>("idle");
-  const [plannerRunning, setPlannerRunning] = useState(false);
+  const [plannerRunning] = useState(false);
   const [approvedPrompt, setApprovedPrompt] = useState("");
   const [landingSuggestions, setLandingSuggestions] = useState<string[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
@@ -341,11 +312,18 @@ function DashboardContent() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const res = await vcaasApi.projects.list();
-    if (res.ok && res.data) {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const res = await vcaasApi.projects.list();
+      if (!res.ok) throw new Error(res.error || "Could not load projects");
       const list = Array.isArray(res.data) ? res.data : [];
       list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       setProjects(list);
+    } catch (error) {
+      setProjectsError(error instanceof Error ? error.message : "Could not load projects");
+    } finally {
+      setProjectsLoading(false);
     }
   }, []);
 
@@ -561,7 +539,7 @@ function DashboardContent() {
 
       <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-8 sm:py-12 sm:px-6"}>
         {/* Hero prompt */}
-        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || keyConfigured === false ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
+        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || projectsLoading || keyConfigured === false ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
             <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
               {!chatOpen && landingMessages.length === 0 && (
                 <div className="mb-8 text-center">
@@ -718,8 +696,40 @@ function DashboardContent() {
             </div>
           </div>
 
+        {!chatOpen && projectsLoading && (
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Loading projects">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-48 animate-pulse rounded-xl border border-border bg-card" />
+            ))}
+          </div>
+        )}
+
+        {!chatOpen && !projectsLoading && projectsError && !hasProjects && (
+          <div className="mb-6 flex flex-col items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-8 text-center" role="alert">
+            <AlertCircle className="h-6 w-6 text-red-500" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">Projects could not be loaded</p>
+              <p className="mt-1 text-xs text-muted-foreground">{projectsError}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void fetchData()}>Try again</Button>
+          </div>
+        )}
+
+        {!chatOpen && !projectsLoading && projectsError && hasProjects && (
+          <div className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" role="status">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <div>
+                <p className="text-xs font-semibold text-foreground">Showing your last loaded projects</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Refresh failed: {projectsError}</p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void fetchData()}>Retry refresh</Button>
+          </div>
+        )}
+
         {/* Projects */}
-        {!chatOpen && hasProjects && (
+        {!chatOpen && !projectsLoading && hasProjects && (
           <>
             {/* Toolbar: search, sort, view toggle */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
