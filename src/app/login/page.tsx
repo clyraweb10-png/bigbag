@@ -9,7 +9,7 @@ import { Loader2, AlertTriangle } from "lucide-react";
 import { SkeletonDashboard } from "@/components/primitives";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { useTheme } from "next-themes";
-import { safeAuthReturnPath } from "@/lib/auth-redirect";
+import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
 
 /* ─── Google "G" logo SVG ─── */
 function GoogleIcon() {
@@ -65,7 +65,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (status !== "authenticated" || !user) return;
     try {
-      const origin = window.location.origin;
+      const origin = resolveAppOrigin();
       const requestedPath = safeAuthReturnPath(
         new URLSearchParams(window.location.search).get("next"),
         ""
@@ -83,7 +83,8 @@ export default function LoginPage() {
 
       window.location.href = `${origin}${destination}`;
     } catch {
-      window.location.href = `${window.location.origin}/dashboard`;
+      const origin = resolveAppOrigin();
+      window.location.href = `${origin}/dashboard`;
     }
   }, [status, user, router]);
 

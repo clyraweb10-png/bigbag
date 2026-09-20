@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { getSupabaseClient, configureRuntimeSupabase } from "@/lib/supabase";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { Loader2 } from "lucide-react";
-import { safeAuthReturnPath } from "@/lib/auth-redirect";
+import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
 
 export default function AuthCallbackPage() {
   const router = useRouter();
@@ -68,7 +68,7 @@ export default function AuthCallbackPage() {
           });
           const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
           if (payload?.ok) {
-            const origin = window.location.origin;
+            const origin = resolveAppOrigin();
             const next = safeAuthReturnPath(searchParams.get("next"), "");
             let destination = "/dashboard";
             if (next) {

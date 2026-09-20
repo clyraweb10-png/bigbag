@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
+import { resolveAppOrigin } from "@/lib/auth-redirect";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface AuthUser {
@@ -190,10 +191,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("loading");
     try {
       localStorage.removeItem(SIGNING_OUT_KEY);
+      const origin = resolveAppOrigin();
       try {
-        sessionStorage.setItem("bigbag:auth:origin", window.location.origin);
+        sessionStorage.setItem("bigbag:auth:origin", origin);
       } catch {}
-      const redirectTo = `${window.location.origin}/auth/callback`;
+      const redirectTo = `${origin}/auth/callback`;
       const { data, error: signInError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {

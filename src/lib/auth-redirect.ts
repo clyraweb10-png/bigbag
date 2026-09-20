@@ -32,73 +32,91 @@ export function isProtectedPagePath(pathname: string): boolean {
   );
 }
 
+export const PRODUCTION_APP_ORIGIN = "https://vibecode-spzy.onrender.com";
+export const LOCAL_DEV_ORIGIN = "http://localhost:3000";
+
 /**
  * Resolves the canonical application origin for post-login redirects and OAuth callbacks.
- * - Local development (localhost / 127.0.0.1) returns http://localhost:3000 (or the local host:port).
- * - Production (Render deployment) returns https://vibecode-spzy.onrender.com.
+ * - In production (Render deployment): NEVER returns localhost. Always returns https://vibecode-spzy.onrender.com
+ *   or the verified public host.
+ * - In local development: preserves http://localhost:3000.
  */
 export function resolveAppOrigin(request?: {
   headers?: { get: (name: string) => string | null };
   url?: string;
 }): string {
+  const isProd = process.env.NODE_ENV === "production";
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  const prodOrigin =
+    configuredAppUrl && !configuredAppUrl.includes("localhost")
+      ? configuredAppUrl
+      : PRODUCTION_APP_ORIGIN;
+
+  // 1. Production mode (Render / Cloud container environment):
+  // Inside Docker, Node binds to 0.0.0.0:3000 and internal reverse-proxy headers
+  // often report localhost:3000 or 127.0.0.1. We must NEVER return localhost in production.
+  if (isProd) {
+    if (request) {
+      const forwardedHost = request.headers?.get("x-forwarded-host")?.split(",")[0]?.trim();
+      const forwardedProto = request.headers?.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
+
+      if (
+        forwardedHost &&
+        !forwardedHost.startsWith("localhost") &&
+        !forwardedHost.startsWith("127.0.0.1") &&
+        !forwardedHost.startsWith("0.0.0.0")
+      ) {
+        return `${forwardedProto}://${forwardedHost}`;
+      }
+
+      const host = request.headers?.get("host")?.trim();
+      if (
+        host &&
+        !host.startsWith("localhost") &&
+        !host.startsWith("127.0.0.1") &&
+        !host.startsWith("0.0.0.0")
+      ) {
+        return `https://${host}`;
+      }
+    }
+
+    if (typeof window !== "undefined") {
+      if (
+        window.location.hostname !== "localhost" &&
+        window.location.hostname !== "127.0.0.1" &&
+        window.location.hostname !== "0.0.0.0"
+      ) {
+        return window.location.origin;
+      }
+    }
+
+    return prodOrigin;
+  }
+
+  // 2. Local development mode (NODE_ENV !== "production"):
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
   if (request) {
     const forwardedHost = request.headers?.get("x-forwarded-host")?.split(",")[0]?.trim();
-    const forwardedProto = request.headers?.get("x-forwarded-proto")?.split(",")[0]?.trim() || "https";
-
     if (forwardedHost) {
-      if (forwardedHost.startsWith("localhost") || forwardedHost.startsWith("127.0.0.1")) {
-        return `http://${forwardedHost}`;
-      }
-      return `${forwardedProto}://${forwardedHost}`;
+      const proto = request.headers?.get("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
+      return `${proto}://${forwardedHost}`;
     }
-
     const host = request.headers?.get("host")?.trim();
     if (host) {
-      if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
-        return `http://${host}`;
-      }
-      return `https://${host}`;
+      return `http://${host}`;
     }
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-    if (appUrl && (process.env.NODE_ENV !== "production" || !appUrl.includes("localhost"))) {
-      return appUrl;
-    }
-
     if (request.url) {
       try {
-        const reqUrl = new URL(request.url);
-        if (reqUrl.hostname === "localhost" || reqUrl.hostname === "127.0.0.1") {
-          if (process.env.NODE_ENV === "production") {
-            return "https://vibecode-spzy.onrender.com";
-          }
-          return reqUrl.origin;
-        }
-        return reqUrl.origin;
+        return new URL(request.url).origin;
       } catch {}
     }
   }
 
-  // Browser context
-  if (typeof window !== "undefined") {
-    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      return window.location.origin;
-    }
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-    if (appUrl && !appUrl.includes("localhost")) {
-      return appUrl;
-    }
-    return window.location.origin;
+  if (configuredAppUrl && configuredAppUrl.includes("localhost")) {
+    return configuredAppUrl;
   }
-
-  // Server fallback
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
-  if (appUrl && (process.env.NODE_ENV !== "production" || !appUrl.includes("localhost"))) {
-    return appUrl;
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    return "https://vibecode-spzy.onrender.com";
-  }
-  return "http://localhost:3000";
+  return LOCAL_DEV_ORIGIN;
 }
