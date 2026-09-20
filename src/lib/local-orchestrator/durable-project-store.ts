@@ -16,11 +16,33 @@ let pgPool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 
 const PERSISTENCE_ERROR =
-  "Persistent project storage is not configured. Set SUPABASE_DATABASE_URL (or NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) before using the hosted local orchestrator.";
+  "Persistent project storage is not configured. Please set SUPABASE_DATABASE_URL (or DATABASE_URL) in your Render Environment settings.";
 
 function getDatabaseUrl(): string | null {
-  const url = process.env.SUPABASE_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim();
-  return url || null;
+  const direct =
+    process.env.SUPABASE_DATABASE_URL?.trim() ||
+    process.env.DATABASE_URL?.trim() ||
+    process.env.SUPABASE_DB_URL?.trim() ||
+    process.env.POSTGRES_URL?.trim() ||
+    process.env.POSTGRES_PRISMA_URL?.trim();
+  if (direct) return direct;
+
+  const pwd = process.env.SUPABASE_DB_PASSWORD?.trim();
+  if (pwd) {
+    let ref = process.env.SUPABASE_PROJECT_REF?.trim();
+    if (!ref && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      try {
+        const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname;
+        ref = host.split(".")[0];
+      } catch {}
+    }
+    if (ref) {
+      const region = process.env.SUPABASE_REGION?.trim() || "aws-0-ap-southeast-1";
+      return `postgresql://postgres.${ref}:${encodeURIComponent(pwd)}@${region}.pooler.supabase.com:6543/postgres`;
+    }
+  }
+
+  return null;
 }
 
 function getPgPool(): Pool {

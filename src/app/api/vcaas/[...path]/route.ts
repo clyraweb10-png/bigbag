@@ -13,6 +13,7 @@ import {
   assertAppCollectionName,
   durableProjectStore,
   requireDurablePersistence,
+  durablePersistenceConfigured,
 } from "@/lib/local-orchestrator/durable-project-store";
 import type { AppRecord } from "@/lib/local-orchestrator/durable-project-store";
 import type { ConversationMessage, DbProperty, DbTable } from "@/lib/vcaas-types";
@@ -163,15 +164,19 @@ async function availableProjectId(requested: string): Promise<string> {
 async function handleLocalRequest(req: NextRequest, path: string[], tenantId: string) {
   const method = req.method.toUpperCase();
   const url = new URL(req.url);
-  requireDurablePersistence();
 
   // 1. Projects collection: /projects or /projects/launch
   if (path[0] === "projects" && path.length === 1) {
     if (method === "GET") {
+      if (!durablePersistenceConfigured()) {
+        const list = localProjectStore.list(tenantId);
+        return NextResponse.json({ ok: true, data: list }, { status: 200 });
+      }
       await localProjectStore.hydrateTenant(tenantId);
       const list = localProjectStore.list(tenantId);
       return NextResponse.json({ ok: true, data: list }, { status: 200 });
     }
+    requireDurablePersistence();
     if (method === "POST") {
       const body = await req.json().catch(() => ({}));
       const projectId = await availableProjectId(body.projectId || body.label || "app");
@@ -180,6 +185,8 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       return NextResponse.json({ ok: true, data: proj }, { status: 200 });
     }
   }
+
+  requireDurablePersistence();
 
   // 2. Launch: /projects/launch
   if (path[0] === "projects" && path[1] === "launch" && method === "POST") {
