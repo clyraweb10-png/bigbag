@@ -138,7 +138,7 @@
   --studio-mint: #47d6ae;
   --studio-blue: #75aaff;
   --user-bubble: #252525;
-  --textarea-bg: #252525;
+  --textarea-bg: #444444;
 }
 
 @layer base {

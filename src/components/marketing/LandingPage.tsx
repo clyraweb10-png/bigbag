@@ -264,7 +264,7 @@ export function LandingPageMarketing() {
 
           {/* Prompt composer */}
           <div className="mt-8 mx-auto max-w-2xl">
-            <div className="rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm">
+            <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm">
               <textarea
                 ref={textareaRef}
                 value={prompt}
@@ -464,7 +464,7 @@ export function LandingPageMarketing() {
                     Dark mode added ✓
                   </div>
                 </div>
-                <div className="mt-auto px-3 py-2 rounded-xl border border-[#333332] bg-[#252525] text-[11px] text-[#aaaab6]">
+                <div className="mt-auto px-3 py-2 rounded-xl border border-[#333332] bg-[#444444] text-[11px] text-[#aaaab6]">
                   Ask anything…
                 </div>
               </div>
