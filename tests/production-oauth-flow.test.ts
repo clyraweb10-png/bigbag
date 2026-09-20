@@ -102,7 +102,7 @@ test("4. Protected page path recognition", () => {
   assert.equal(isProtectedPagePath("/login"), false);
 });
 
-test("5. Live Supabase Google OAuth endpoint verification", async () => {
+test("5. Live Supabase Google OAuth request construction", async () => {
   const supabaseUrl = "https://dgtkizrvagvfnbdkdnfs.supabase.co";
   const supabaseAnonKey = "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U";
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -129,10 +129,13 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
   assert.equal(authUrl.searchParams.get("provider"), "google");
 
   const forwardedRedirectTo = authUrl.searchParams.get("redirect_to");
-  assert.equal(forwardedRedirectTo, targetRedirectTo, "Supabase redirect_to parameter MUST use the registered production API callback");
+  assert.equal(forwardedRedirectTo, targetRedirectTo, "Supabase redirect_to parameter MUST use the registered production browser callback");
   assert.ok(!forwardedRedirectTo.includes("localhost"), "redirect_to MUST NEVER contain localhost:3000");
 
-  // Follow the 302 redirect from Supabase to Google
+  // Follow the 302 redirect from Supabase to Google. Supabase echoes the
+  // requested redirect_to here even when it is not allow-listed, so this only
+  // verifies request construction. A completed browser login is required to
+  // verify that the project accepted the redirect URL instead of using Site URL.
   const response = await fetch(data.url, { redirect: "manual" });
   assert.equal(response.status, 302, "Supabase authorize endpoint must return 302 redirect to Google");
 
@@ -141,7 +144,7 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
 
   const googleUrl = new URL(location);
   assert.equal(googleUrl.hostname, "accounts.google.com", "Location must point to accounts.google.com");
-  assert.equal(googleUrl.searchParams.get("redirect_to"), targetRedirectTo, "Google OAuth URL redirect_to MUST retain the registered production API callback");
+  assert.equal(googleUrl.searchParams.get("redirect_to"), targetRedirectTo, "Google OAuth URL redirect_to MUST retain the registered production browser callback");
   assert.ok(!location.includes("localhost:3000"), "Google OAuth Location header MUST NEVER contain localhost:3000");
 });
 
@@ -157,9 +160,10 @@ test("6. Full Production OAuth redirect chain simulation", async () => {
     const clientOrigin = resolveAppOrigin();
     assert.equal(clientOrigin, RENDER_PROD_URL);
     const initiatedRedirectTo = oauthCallbackUrl(clientOrigin);
-    assert.equal(initiatedRedirectTo, "https://vibecode-spzy.onrender.com/api/auth/callback");
+    assert.equal(initiatedRedirectTo, "https://vibecode-spzy.onrender.com/auth/callback");
 
-    // Step B: Server-side forwarder route: GET /api/auth/callback?code=mock_oauth_code
+    // Legacy compatibility: old in-flight attempts that used the API callback
+    // are still forwarded to the registered browser callback.
     // Import API route handler
     const { GET: apiCallbackHandler } = require("../src/app/api/auth/callback/route") as typeof import("../src/app/api/auth/callback/route");
 
@@ -183,7 +187,7 @@ test("6. Full Production OAuth redirect chain simulation", async () => {
     );
     assert.ok(!forwardedLocation?.includes("localhost"), "API callback redirect must NOT contain localhost");
 
-    // Step C: Server-side forwarder route without code (implicit hash fragment)
+    // Legacy server-side forwarder without code (implicit hash fragment)
     const mockRequestNoCode = {
       url: "http://0.0.0.0:3000/api/auth/callback",
       headers: new Headers({
@@ -200,14 +204,14 @@ test("6. Full Production OAuth redirect chain simulation", async () => {
     );
     assert.ok(!htmlBody.includes("localhost:3000"), "HTML forwarder script must NOT contain localhost:3000");
 
-    // Step D: Client-side /auth/callback destination computation
+    // Client-side /auth/callback destination computation
     const searchParamsWithNoNext = new URLSearchParams("code=mock_oauth_code_xyz");
     const dest1 = safeAuthReturnPath(searchParamsWithNoNext.get("next"), "/dashboard");
     const finalNavUrl1 = `${resolveAppOrigin()}${dest1}`;
     assert.equal(finalNavUrl1, "https://vibecode-spzy.onrender.com/dashboard", "Successful production Google login ends at /dashboard on https://vibecode-spzy.onrender.com");
     assert.ok(!finalNavUrl1.includes("localhost"), "Final navigation URL must never be localhost");
 
-    // Step E: Client-side with return path e.g. /project/my-app
+    // Client-side with return path e.g. /project/my-app
     const searchParamsWithNext = new URLSearchParams("code=mock_oauth_code_xyz&next=%2Fproject%2Fmy-app");
     const dest2 = safeAuthReturnPath(searchParamsWithNext.get("next"), "/dashboard");
     const finalNavUrl2 = `${resolveAppOrigin()}${dest2}`;

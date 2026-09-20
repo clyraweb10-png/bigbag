@@ -28,7 +28,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Always forward to the client-side /auth/callback page.
+  // Backward compatibility for OAuth attempts initiated by older builds that
+  // used /api/auth/callback. New attempts go directly to /auth/callback so the
+  // redirect URI exactly matches the configured Supabase allow-list entry.
   //
   // WHY: Supabase uses PKCE (Proof Key for Code Exchange). The code_verifier
   // is stored in the browser's localStorage. If we attempt exchangeCodeForSession

@@ -1,7 +1,7 @@
 const LOCAL_ORIGIN = "https://bigbag.local";
 
 export const DEFAULT_AUTH_RETURN_PATH = "/dashboard";
-export const OAUTH_CALLBACK_PATH = "/api/auth/callback";
+export const OAUTH_CALLBACK_PATH = "/auth/callback";
 
 /**
  * Accept only same-origin application paths after sign-in. Parsing against a
@@ -47,9 +47,10 @@ export const PRODUCTION_APP_ORIGIN: string =
 export const LOCAL_DEV_ORIGIN = "http://localhost:3000";
 
 /**
- * Supabase must return through the server callback registered for this app.
- * That route preserves the PKCE query and forwards it to the browser callback,
- * where the verifier is available in localStorage.
+ * Supabase must return directly to the registered browser callback, where the
+ * PKCE verifier is available in localStorage. This exact URL must match an
+ * entry in Supabase's Redirect URLs allow-list. If it does not, Supabase falls
+ * back to the project's Site URL before this application receives the code.
  */
 export function oauthCallbackUrl(origin = resolveAppOrigin()): string {
   return new URL(OAUTH_CALLBACK_PATH, `${origin}/`).toString();
