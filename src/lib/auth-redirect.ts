@@ -48,9 +48,9 @@ export const LOCAL_DEV_ORIGIN = "http://localhost:3000";
 
 /**
  * Supabase must return directly to the registered browser callback, where the
- * PKCE verifier is available in localStorage. This exact path is part of the
- * Supabase Redirect URLs allow-list; changing it makes Supabase fall back to
- * the project's Site URL.
+ * PKCE verifier is available in localStorage. This exact URL must match an
+ * entry in Supabase's Redirect URLs allow-list. If it does not, Supabase falls
+ * back to the project's Site URL before this application receives the code.
  */
 export function oauthCallbackUrl(origin = resolveAppOrigin()): string {
   return new URL(OAUTH_CALLBACK_PATH, `${origin}/`).toString();

@@ -102,7 +102,7 @@ test("4. Protected page path recognition", () => {
   assert.equal(isProtectedPagePath("/login"), false);
 });
 
-test("5. Live Supabase Google OAuth endpoint verification", async () => {
+test("5. Live Supabase Google OAuth request construction", async () => {
   const supabaseUrl = "https://dgtkizrvagvfnbdkdnfs.supabase.co";
   const supabaseAnonKey = "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U";
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
@@ -132,7 +132,10 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
   assert.equal(forwardedRedirectTo, targetRedirectTo, "Supabase redirect_to parameter MUST use the registered production browser callback");
   assert.ok(!forwardedRedirectTo.includes("localhost"), "redirect_to MUST NEVER contain localhost:3000");
 
-  // Follow the 302 redirect from Supabase to Google
+  // Follow the 302 redirect from Supabase to Google. Supabase echoes the
+  // requested redirect_to here even when it is not allow-listed, so this only
+  // verifies request construction. A completed browser login is required to
+  // verify that the project accepted the redirect URL instead of using Site URL.
   const response = await fetch(data.url, { redirect: "manual" });
   assert.equal(response.status, 302, "Supabase authorize endpoint must return 302 redirect to Google");
 
