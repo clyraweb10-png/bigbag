@@ -65,14 +65,7 @@ export default function LoginPage() {
   useEffect(() => {
     if (status !== "authenticated" || !user) return;
     try {
-      let targetOrigin = "";
-      try {
-        const savedOrigin = sessionStorage.getItem("bigbag:auth:origin");
-        if (savedOrigin && !savedOrigin.includes("localhost") && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-          targetOrigin = savedOrigin;
-        }
-      } catch {}
-
+      const origin = window.location.origin;
       const requestedPath = safeAuthReturnPath(
         new URLSearchParams(window.location.search).get("next"),
         ""
@@ -88,13 +81,9 @@ export default function LoginPage() {
         }
       }
 
-      if (targetOrigin) {
-        window.location.href = `${targetOrigin.replace(/\/$/, "")}${destination}`;
-      } else {
-        router.replace(destination);
-      }
+      window.location.href = `${origin}${destination}`;
     } catch {
-      router.replace("/dashboard");
+      window.location.href = `${window.location.origin}/dashboard`;
     }
   }, [status, user, router]);
 

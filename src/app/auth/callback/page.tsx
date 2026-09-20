@@ -68,14 +68,7 @@ export default function AuthCallbackPage() {
           });
           const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
           if (payload?.ok) {
-            let targetOrigin = "";
-            try {
-              const savedOrigin = sessionStorage.getItem("bigbag:auth:origin");
-              if (savedOrigin && !savedOrigin.includes("localhost") && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-                targetOrigin = savedOrigin;
-              }
-            } catch {}
-
+            const origin = window.location.origin;
             const next = safeAuthReturnPath(searchParams.get("next"), "");
             let destination = "/dashboard";
             if (next) {
@@ -88,11 +81,7 @@ export default function AuthCallbackPage() {
               }
             }
 
-            if (targetOrigin) {
-              window.location.href = `${targetOrigin.replace(/\/$/, "")}${destination}`;
-            } else {
-              router.replace(destination);
-            }
+            window.location.href = `${origin}${destination}`;
             return true;
           }
           return false;
