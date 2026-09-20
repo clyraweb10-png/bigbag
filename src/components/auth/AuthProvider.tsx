@@ -1,17 +1,6 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { getApp, getApps, initializeApp, type FirebaseOptions } from "firebase/app";
-import {
-  browserLocalPersistence,
-  getAuth,
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  setPersistence,
-  signInWithPopup,
-  signOut,
-  type User,
-} from "firebase/auth";
 import { AlertTriangle, Loader2, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -19,11 +8,21 @@ import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
+import { getSupabaseClient } from "@/lib/supabase";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+
+export interface AuthUser {
+  id: string;
+  uid: string;
+  email?: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
+}
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated" | "misconfigured";
 
 interface AuthContextValue {
-  user: User | null;
+  user: AuthUser | null;
   status: AuthStatus;
   error: string | null;
   signIn: () => Promise<void>;
@@ -32,19 +31,6 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
-};
-
-const configured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId
-);
 const SIGNING_OUT_KEY = "bigbag:auth:signing-out";
 const SESSION_MUTATION_LOCK = "bigbag:auth:session-mutation";
 let fallbackSessionMutation: Promise<unknown> = Promise.resolve();
@@ -58,34 +44,33 @@ async function serializeSessionMutation<T>(operation: () => Promise<T>): Promise
   return result;
 }
 
-let cachedRuntimeConfig: FirebaseOptions | null = null;
-
-function resolveFirebaseConfig(runtimeConfig?: FirebaseOptions | null): FirebaseOptions | null {
-  if (runtimeConfig?.apiKey && runtimeConfig?.authDomain && runtimeConfig?.projectId && runtimeConfig?.appId) {
-    cachedRuntimeConfig = runtimeConfig;
-    return runtimeConfig;
-  }
-  if (cachedRuntimeConfig) return cachedRuntimeConfig;
-  if (configured) return firebaseConfig;
-  return null;
-}
-
-function firebaseAuth(runtimeConfig?: FirebaseOptions | null) {
-  if (getApps().length > 0) return getAuth(getApp());
-  const config = resolveFirebaseConfig(runtimeConfig);
-  if (!config) return null;
-  const app = initializeApp(config);
-  return getAuth(app);
+function mapSupabaseUser(sbUser: SupabaseUser | null | undefined): AuthUser | null {
+  if (!sbUser) return null;
+  const displayName =
+    (sbUser.user_metadata?.full_name as string) ||
+    (sbUser.user_metadata?.name as string) ||
+    sbUser.email?.split("@")[0] ||
+    null;
+  const photoURL =
+    (sbUser.user_metadata?.avatar_url as string) ||
+    (sbUser.user_metadata?.picture as string) ||
+    null;
+  return {
+    id: sbUser.id,
+    uid: sbUser.id,
+    email: sbUser.email || null,
+    displayName,
+    photoURL,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    let unsubscribe = () => undefined;
 
     void (async () => {
       const sessionResponse = await fetch("/api/auth/session", { cache: "no-store" }).catch(() => null);
@@ -94,78 +79,115 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         data?: {
           authenticated?: boolean;
           configured?: boolean;
-          firebase?: FirebaseOptions | null;
         };
       } | null;
 
       if (!active) return;
 
-      const runtimeConfig = sessionPayload?.data?.firebase;
-      const auth = firebaseAuth(runtimeConfig);
-
-      if (!auth) {
+      const supabase = getSupabaseClient();
+      if (!supabase || !sessionPayload?.data?.configured) {
         setStatus("misconfigured");
         return;
       }
 
       const hasServerSession = Boolean(sessionPayload?.data?.authenticated);
-      void setPersistence(auth, browserLocalPersistence).catch(() => undefined);
 
-      unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
         if (!active) return;
-        setUser(nextUser);
-        setError(null);
-        if (!nextUser) {
+
+        if (session?.user) {
+          const authUser = mapSupabaseUser(session.user);
+          setUser(authUser);
+          setError(null);
+
+          // Ensure HttpOnly server cookies are synced
+          if (!hasServerSession) {
+            await serializeSessionMutation(async () => {
+              if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
+              return fetch("/api/auth/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ accessToken: session.access_token }),
+              });
+            });
+          }
+          if (active) setStatus("authenticated");
+        } else {
           const signingOut = localStorage.getItem(SIGNING_OUT_KEY) !== null;
           setStatus(hasServerSession && !signingOut ? "authenticated" : "unauthenticated");
-          return;
         }
-        if (localStorage.getItem(SIGNING_OUT_KEY) !== null) {
-          setStatus("unauthenticated");
-          return;
-        }
-        setStatus("loading");
-        try {
-          const idToken = await nextUser.getIdToken();
-          const response = await serializeSessionMutation(async () => {
-            if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
-            return fetch("/api/auth/session", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ idToken }),
-            });
-          });
-          if (!response) {
-            if (active) setStatus("unauthenticated");
-            return;
-          }
-          const payload = (await response.json()) as { ok?: boolean; error?: string };
-          if (!response.ok || !payload.ok) throw new Error(payload.error || "Could not create a secure session");
-          if (active) setStatus("authenticated");
-        } catch (sessionError) {
-          if (!active) return;
-          setError(sessionError instanceof Error ? sessionError.message : "Google sign-in failed");
-          setStatus("unauthenticated");
-        }
-      });
+      } catch (err) {
+        if (!active) return;
+        console.error("Failed to load Supabase auth session:", err);
+        setStatus("unauthenticated");
+      }
     })();
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!active) return;
+
+      if (event === "SIGNED_OUT" || !session?.user) {
+        setUser(null);
+        setError(null);
+        setStatus("unauthenticated");
+        return;
+      }
+
+      if (localStorage.getItem(SIGNING_OUT_KEY) !== null) {
+        setStatus("unauthenticated");
+        return;
+      }
+
+      const mapped = mapSupabaseUser(session.user);
+      setUser(mapped);
+      setError(null);
+
+      try {
+        await serializeSessionMutation(async () => {
+          if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
+          return fetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: session.access_token }),
+          });
+        });
+        if (active) setStatus("authenticated");
+      } catch (sessionError) {
+        if (!active) return;
+        setError(sessionError instanceof Error ? sessionError.message : "Session verification failed");
+        setStatus("unauthenticated");
+      }
+    });
 
     return () => {
       active = false;
-      unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
   const signIn = useCallback(async () => {
-    const auth = firebaseAuth();
-    if (!auth) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
     setError(null);
     setStatus("loading");
     try {
       localStorage.removeItem(SIGNING_OUT_KEY);
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "select_account" });
-      await signInWithPopup(auth, provider);
+      const redirectTo = `${window.location.origin}/api/auth/callback`;
+      const { error: signInError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
+        },
+      });
+      if (signInError) throw signInError;
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : "Google sign-in failed");
       setStatus("unauthenticated");
@@ -176,11 +198,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     localStorage.setItem(SIGNING_OUT_KEY, String(Date.now()));
     try {
-      const response = await serializeSessionMutation(() => fetch("/api/auth/session", { method: "DELETE" }));
-      const payload = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
-      if (!response.ok || !payload?.ok) throw new Error(payload?.error || "Could not end the server session");
-      const auth = firebaseAuth();
-      if (auth) await signOut(auth);
+      await serializeSessionMutation(() => fetch("/api/auth/session", { method: "DELETE" }));
+      const supabase = getSupabaseClient();
+      if (supabase) await supabase.auth.signOut();
       setUser(null);
       setStatus("unauthenticated");
     } catch (signOutError) {
@@ -208,18 +228,13 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
   }, []);
 
   const isDark = mounted ? resolvedTheme !== "light" : true;
-  const theme = isDark ? "dark" : "light";
   const emblemBg = isDark ? "#252525" : "#ffffff";
 
   return (
     <main className="relative min-h-[100dvh] w-full overflow-hidden bg-white dark:bg-[#252525] text-zinc-900 dark:text-white flex flex-col justify-between select-none transition-colors duration-200">
-      {/* ═══ 6 DISTINCT FLOATING MOCKUP CARDS (3 LEFT, 3 RIGHT, RESPONSIVE) ═══ */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
-        {/* Ambient background: white in light mode, #252525 in dark mode */}
         <div className="absolute inset-0 bg-white dark:bg-[#252525] transition-colors duration-200" />
 
-        {/* ─── LEFT SIDE CARDS (3 CARDS) ─── */}
-        {/* Card 1 (Left Top): Pulse Analytics Dashboard */}
         <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[12deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardLeft1Light} alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
@@ -227,77 +242,59 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
           <img src={CLOUDINARY_ASSETS.cardLeft1Dark} alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
-        {/* Card 2 (Left Middle): Aura E-Commerce Store */}
         <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[15deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardLeft2Light} alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardLeft2Light} alt="E-Commerce Storefront" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardLeft2Dark} alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardLeft2Dark} alt="E-Commerce Storefront" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
-        {/* Card 3 (Left Bottom): Video Ad Studio */}
-        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
+        <div className="absolute -bottom-6 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[230px] md:w-[260px] lg:w-[300px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardLeft3Light} alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardLeft3Light} alt="AI Document Assistant" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardLeft3Dark} alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardLeft3Dark} alt="AI Document Assistant" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
-        {/* ─── RIGHT SIDE CARDS (3 CARDS) ─── */}
-        {/* Card 4 (Right Top): Build Unicorns Founder Platform */}
-        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[14deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
+        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[12deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight1Light} alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight1Light} alt="Modern SaaS Workspace" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight1Dark} alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight1Dark} alt="Modern SaaS Workspace" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
-        {/* Card 5 (Right Middle): Pulse Studio Dashboard */}
-        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[17deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
+        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[15deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight3Light} alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight2Light} alt="Mobile App Builder Interface" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight3Dark} alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight2Dark} alt="Mobile App Builder Interface" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
 
-        {/* Card 6 (Right Bottom): Mobile Health & Finance App */}
-        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[22deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
+        <div className="absolute -bottom-6 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[230px] md:w-[260px] lg:w-[300px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight2Light} alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
+          <img src={CLOUDINARY_ASSETS.cardRight3Light} alt="Workflow Automation Canvas" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={CLOUDINARY_ASSETS.cardRight2Dark} alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
+          <img src={CLOUDINARY_ASSETS.cardRight3Dark} alt="Workflow Automation Canvas" className="w-full h-auto object-cover rounded-2xl border border-white/10 hidden dark:block" />
         </div>
-
-        {/* Center radial overlay so text and login button are 100% readable, without washing out the floating cards */}
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.98)_0%,rgba(255,255,255,0.85)_30%,transparent_60%)] dark:bg-[radial-gradient(circle_at_50%_50%,rgba(37,37,37,0.98)_0%,rgba(37,37,37,0.85)_30%,transparent_60%)] transition-all duration-200" />
       </div>
 
-      {/* ═══ TOP HEADER ═══ */}
-      <header className="relative z-30 flex h-16 sm:h-20 w-full items-center justify-between px-6 sm:px-10">
-        <div className="flex items-center gap-2">
-          <BigBagLogo size="md" href={null} hideText />
-        </div>
-        <ThemeToggle />
+      <header className="relative z-10 flex h-14 sm:h-16 w-full items-center justify-between px-4 sm:px-6 md:px-8 border-b border-zinc-200/60 dark:border-white/5">
+        <BigBagLogo size="md" />
+        <ThemeToggle showLabel={false} />
       </header>
 
-      {/* ═══ CENTER AUTH HERO ═══ */}
-      <div className="relative z-20 flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2 sm:pb-16">
-        {/* 3D Rotating Emblem iframe */}
+      <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-4 py-8 max-w-lg mx-auto w-full">
         <div
-          className="w-[180px] h-[130px] sm:w-[210px] sm:h-[150px] relative flex items-center justify-center -mb-2 rounded-xl overflow-hidden transition-colors duration-200"
-          style={{ backgroundColor: emblemBg }}
+          className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shadow-lg shadow-zinc-900/5 border border-zinc-200/80 dark:border-white/10 transition-colors mb-4"
+          style={{ background: emblemBg }}
         >
-          <iframe
-            key={theme}
-            src={`/bigbag-3d-emblem.html?theme=${theme}`}
-            allowTransparency={true}
-            style={{ backgroundColor: emblemBg, background: emblemBg }}
-            className="w-full h-full border-0 transition-colors duration-200"
-            title="3D Bigbag Rotating Emblem"
-          />
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={isDark ? "#ffffff" : "#19191f"} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="7 8 3 12 7 16" />
+            <line x1="14" y1="4" x2="10" y2="20" />
+            <polyline points="17 8 21 12 17 16" />
+          </svg>
         </div>
 
-        {/* Headline */}
         <div className="text-center space-y-1 mt-2">
           <h1 className="text-2xl sm:text-3xl md:text-[34px] font-bold tracking-tight text-zinc-900 dark:text-white transition-colors">
             Turn ideas into products
@@ -307,14 +304,13 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
           </p>
         </div>
 
-        {/* Action Buttons */}
         <div className="w-full max-w-[310px] sm:max-w-[340px] space-y-3 mt-7 flex flex-col items-center">
           {status === "misconfigured" ? (
             <div className="flex items-start gap-2.5 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3.5 text-xs leading-5 text-amber-800 dark:text-amber-200" role="alert">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500 dark:text-amber-400" />
               <div>
-                <p className="font-semibold">Firebase configuration missing</p>
-                <p className="mt-0.5 text-amber-700 dark:text-amber-300/80">Configure Firebase variables in .env.local to enable Google sign-in.</p>
+                <p className="font-semibold">Supabase configuration missing</p>
+                <p className="mt-0.5 text-amber-700 dark:text-amber-300/80">Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your environment to enable Google sign-in.</p>
               </div>
             </div>
           ) : (
@@ -340,7 +336,6 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
           )}
         </div>
 
-        {/* Footer Legal notice */}
         <div className="mt-8 text-center text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400 max-w-xs">
           By continuing, you agree to our{" "}
           <a href="#" className="underline underline-offset-2 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white transition-colors">
@@ -378,7 +373,7 @@ export function UserAvatar({
   user,
   className = "h-8 w-8",
 }: {
-  user: User | null;
+  user: AuthUser | null;
   className?: string;
 }) {
   const label = user?.displayName || user?.email || "Account";

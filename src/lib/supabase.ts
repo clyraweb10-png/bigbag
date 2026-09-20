@@ -1,9 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { Pool } from "pg";
 
 let adminClient: SupabaseClient | null = null;
 let publicClient: SupabaseClient | null = null;
-let pool: Pool | null = null;
 
 export function getSupabaseUrl(): string {
   const url =
@@ -63,21 +61,4 @@ export function getSupabaseClient(): SupabaseClient | null {
     publicClient = createClient(url, anonKey);
   }
   return publicClient;
-}
-
-/**
- * Server-only PostgreSQL connection pool for direct high-performance SQL operations.
- */
-export function getSupabasePgPool(): Pool | null {
-  const dbUrl = getSupabaseDatabaseUrl();
-  if (!dbUrl) return null;
-  if (!pool) {
-    pool = new Pool({
-      connectionString: dbUrl,
-      ssl: { rejectUnauthorized: false },
-      max: 10,
-      idleTimeoutMillis: 30000,
-    });
-  }
-  return pool;
 }

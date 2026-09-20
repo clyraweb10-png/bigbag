@@ -433,22 +433,22 @@ test("proxy query parameters cannot grant preview document privileges", async ()
 });
 
 test("signed auth sessions protect provider-backed APIs", async () => {
-  const session = createAuthSession("firebase-user", 1_000_000);
-  assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "firebase-user");
+  const session = createAuthSession("test-user", 1_000_000);
+  assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "test-user");
   assert.equal(verifyAuthSession(`${session}x`, 1_000_000), null);
   assert.equal(verifyAuthSession(session, 1_000_000 + 8 * 24 * 60 * 60_000), null);
 
   const blocked = await proxy(new NextRequest("https://builder.example.test/api/planner"));
   assert.equal(blocked.status, 401);
   const allowed = await proxy(new NextRequest("https://builder.example.test/api/planner", {
-    headers: { cookie: `bigbag_auth=${createAuthSession("firebase-user")}` },
+    headers: { cookie: `bigbag_auth=${createAuthSession("test-user")}` },
   }));
   assert.equal(allowed.status, 200);
 
   const previousOperators = process.env.VCAAS_OPERATOR_UIDS;
-  process.env.VCAAS_OPERATOR_UIDS = "another-user, firebase-user";
+  process.env.VCAAS_OPERATOR_UIDS = "another-user, test-user";
   try {
-    assert.equal(isCloudOperator({ sub: "firebase-user", exp: Number.MAX_SAFE_INTEGER }), true);
+    assert.equal(isCloudOperator({ sub: "test-user", exp: Number.MAX_SAFE_INTEGER }), true);
     assert.equal(isCloudOperator({ sub: "not-enrolled", exp: Number.MAX_SAFE_INTEGER }), false);
   } finally {
     if (previousOperators === undefined) delete process.env.VCAAS_OPERATOR_UIDS;
@@ -478,7 +478,7 @@ test("authentication redirects preserve safe app destinations and reject open re
   );
 
   const allowed = await proxy(new NextRequest("https://builder.example.test/dashboard", {
-    headers: { cookie: `bigbag_auth=${createAuthSession("firebase-user")}` },
+    headers: { cookie: `bigbag_auth=${createAuthSession("test-user")}` },
   }));
   assert.equal(allowed.status, 200);
 });

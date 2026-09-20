@@ -1,83 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE, authCookieOptions, createAuthSession, verifyAuthSession } from "@/lib/auth-session";
 import { attachLocalTenantCookie, tenantContextForIdentity, TENANT_COOKIE } from "@/lib/local-orchestrator/tenant-context";
-
-type FirebaseAccount = {
-  localId?: string;
-  email?: string;
-  emailVerified?: boolean;
-  displayName?: string;
-  photoUrl?: string;
-};
+import { getSupabaseAdminClient, getSupabaseClient, getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim();
-  if (!apiKey) return NextResponse.json({ ok: false, error: "Firebase authentication is not configured" }, { status: 503 });
+  const supabase = getSupabaseAdminClient() || getSupabaseClient();
+  if (!supabase) {
+    return NextResponse.json({ ok: false, error: "Supabase authentication is not configured" }, { status: 503 });
+  }
 
   const body = await request.json().catch(() => ({}));
-  const idToken = typeof body.idToken === "string" ? body.idToken.trim() : "";
-  if (!idToken || idToken.length > 16_000) {
-    return NextResponse.json({ ok: false, error: "A valid Firebase ID token is required" }, { status: 400 });
+  const accessToken = typeof body.accessToken === "string" ? body.accessToken.trim() : "";
+
+  if (!accessToken || accessToken.length > 16_000) {
+    return NextResponse.json({ ok: false, error: "A valid Supabase access token is required" }, { status: 400 });
   }
 
-  let firebaseResponse: Response;
   try {
-    firebaseResponse = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idToken }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(15_000),
-      }
-    );
-  } catch {
-    return NextResponse.json(
-      { ok: false, error: "Google sign-in is temporarily unavailable" },
-      { status: 503 }
-    );
-  }
-  const firebasePayload = await firebaseResponse.json().catch(() => null) as { users?: FirebaseAccount[] } | null;
-  const user = firebasePayload?.users?.[0];
-  if (!firebaseResponse.ok || !user?.localId) {
-    return NextResponse.json({ ok: false, error: "Google sign-in could not be verified" }, { status: 401 });
-  }
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error || !data?.user?.id) {
+      return NextResponse.json(
+        { ok: false, error: error?.message || "Google sign-in could not be verified" },
+        { status: 401 }
+      );
+    }
 
-  const response = NextResponse.json({
-    ok: true,
-    data: {
-      uid: user.localId,
-      email: user.email || null,
-      displayName: user.displayName || null,
-      photoURL: user.photoUrl || null,
-    },
-  });
-  response.cookies.set(AUTH_COOKIE, createAuthSession(user.localId), authCookieOptions);
-  return attachLocalTenantCookie(response, tenantContextForIdentity(user.localId));
+    const user = data.user;
+    const displayName =
+      (user.user_metadata?.full_name as string) ||
+      (user.user_metadata?.name as string) ||
+      user.email?.split("@")[0] ||
+      null;
+    const photoURL =
+      (user.user_metadata?.avatar_url as string) ||
+      (user.user_metadata?.picture as string) ||
+      null;
+
+    const response = NextResponse.json({
+      ok: true,
+      data: {
+        uid: user.id,
+        id: user.id,
+        email: user.email || null,
+        displayName,
+        photoURL,
+      },
+    });
+
+    response.cookies.set(AUTH_COOKIE, createAuthSession(user.id), authCookieOptions);
+    return attachLocalTenantCookie(response, tenantContextForIdentity(user.id));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Authentication failed";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
 }
 
 export function GET(request: NextRequest) {
   const session = verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value);
-  const firebaseConfig = {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim() || "",
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim() || "",
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || "",
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET?.trim() || "",
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID?.trim() || "",
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID?.trim() || "",
-    measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID?.trim() || "",
-  };
-  const isConfigured = Boolean(
-    firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId
-  );
+  const url = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  const isConfigured = Boolean(url && anonKey);
 
   return NextResponse.json({
     ok: true,
     data: {
       authenticated: Boolean(session),
       configured: isConfigured,
-      firebase: isConfigured ? firebaseConfig : null,
+      supabase: isConfigured ? { url, anonKey } : null,
     },
   });
 }

@@ -5,11 +5,11 @@ Next.js app, the user previews it live, edits it, and publishes it. **This repo 
 UI.** Everything heavy — the coding agent, sandboxes, hosting, database, deploys, custom
 domains, GitHub sync — is done by the **Totalum API** behind one API key.
 
-> **Authentication is required.** The builder uses Firebase Google sign-in, exchanges the
-> Firebase ID token for a signed HttpOnly session, and derives the local tenant id from the
-> verified Firebase uid. Provider-backed API routes are refused without that session. Keep
-> `TENANT_COOKIE_SECRET` private and configure the public Firebase identifiers documented in
-> `.env.example`; never place a service-account credential in a `NEXT_PUBLIC_*` variable.
+> **Authentication is required.** The builder uses Supabase Google sign-in, exchanges the
+> Supabase session for a signed HttpOnly session, and derives the local tenant id from the
+> verified Supabase uid. Provider-backed API routes are refused without that session. Keep
+> `TENANT_COOKIE_SECRET` private and configure the Supabase identifiers documented in
+> `.env.example`; never place a service-role secret in a `NEXT_PUBLIC_*` variable.
 
 **Totalum API reference (read this before touching anything under `src/lib/vcaas*` or
 `src/app/api/`):** https://www.totalum.app/totalum-api.md — the whole core API in one
@@ -91,8 +91,8 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 
 ## Dependencies & security
 
-- **Auth is Firebase Google sign-in; payment is not included.** The browser uses only Firebase's public client configuration. The server validates ID tokens before issuing its own signed session.
-- **Runtime deps** are UI/utility plus Firebase Auth: Next 16, React 19, Tailwind 4, Firebase, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
+- **Auth is Supabase Google sign-in; payment is not included.** The browser uses Supabase's client configuration. The server validates sessions before issuing its own signed session.
+- **Runtime deps** are UI/utility plus Supabase Auth: Next 16, React 19, Tailwind 4, `@supabase/supabase-js`, `pg`, Radix UI, `lucide-react`, `sonner`, `cmdk`, `next-themes`, cva/clsx/tailwind-merge, `@monaco-editor/react`, `react-hook-form`, `react-day-picker`, `fflate`.
 - **Keep `npm audit` at zero.** A `dompurify` override (`>=3.4.15`) pins the copy Monaco pulls in. Run `npm audit` after any dependency change; do not commit a new advisory.
 
 7. **Mobile and desktop layouts are both mounted** in the workspace page (hidden by CSS). Only the desktop `PreviewPanel` gets `frameRef`; only the desktop `ChatPanel` gets the visual-editor pencil. Anything the composer *holds* (the prompt, the attachments) must therefore be page state passed down, never `useState` inside `ChatPanel` — two mounted copies would drift, and sending on one would leave the other's chips behind.

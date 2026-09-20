@@ -49,8 +49,8 @@ export function verifyAuthSession(value: string | undefined, now = Date.now()): 
 
 /**
  * Cloud VCaaS uses one operator credential and therefore cannot safely be
- * shared across arbitrary Firebase users. Keep it fail-closed to explicitly
- * enrolled Firebase UIDs; local mode has per-user project ownership instead.
+ * shared across arbitrary users. Keep it fail-closed to explicitly
+ * enrolled operator user IDs; local mode has per-user project ownership instead.
  */
 export function isCloudOperator(session: AuthSession): boolean {
   const allowed = new Set(

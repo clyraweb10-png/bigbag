@@ -145,7 +145,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ Supabase client | Public URL for Supabase API endpoints. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ Supabase client | Public anonymous key for client-side queries (enforces RLS). |
 | `TENANT_COOKIE_SECRET` | ✅ Production | Dedicated random secret used only to sign anonymous tenant cookies. |
-| `VCAAS_OPERATOR_UIDS` | ✅ Cloud mode | Comma-separated Firebase UIDs allowed to use the single cloud operator credential. |
+| `VCAAS_OPERATOR_UIDS` | ✅ Cloud mode | Comma-separated operator user IDs allowed to use the single cloud operator credential. |
 | `NEXT_PUBLIC_APP_URL` | ⬜ Optional | The public URL of your deployment, e.g. `https://your-domain.com`. |
 
 ### E2B and persistent Render previews
@@ -170,10 +170,10 @@ This is a standard Next.js app with no platform lock-in. It runs wherever Next.j
 
 > ### Authentication setup
 >
-> The builder includes Firebase Google sign-in and signed HttpOnly sessions. Configure
-> the public `NEXT_PUBLIC_FIREBASE_*` values, enable Google in Firebase Authentication,
-> add your deployment hostname to Authorized domains, and set a strong private
-> `TENANT_COOKIE_SECRET`.
+> The builder includes Supabase Google sign-in and signed HttpOnly sessions. Configure
+> `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, enable Google in Supabase
+> Authentication (Providers -> Google), add your Supabase callback URI to Google Cloud OAuth,
+> and set a strong private `TENANT_COOKIE_SECRET`.
 
 ### Vercel, one click
 
@@ -203,16 +203,16 @@ This is not only a standalone tool. It is a drop-in AI app-builder layer for a S
 
 > **The pitch to your customers:** *"Build and ship a full-stack app right here, inside our platform."*
 
-> ⚠️ **Before reselling cloud mode, read `src/app/api/vcaas/_shared.ts`.** Firebase protects the builder and local projects are tenant-scoped, but one cloud operator key still needs an upstream user-to-project ownership map and billing controls.
+> ⚠️ **Before reselling cloud mode, read `src/app/api/vcaas/_shared.ts`.** Supabase protects the builder and local projects are tenant-scoped, but one cloud operator key still needs an upstream user-to-project ownership map and billing controls.
 
 ### Two ways to integrate
 
-- **Run it beside your product.** Deploy it on a subdomain, configure Firebase Google sign-in, rebrand it, and link or iframe to it. Hours, not weeks.
+- **Run it beside your product.** Deploy it on a subdomain, configure Supabase Google sign-in, rebrand it, and link or iframe to it. Hours, not weeks.
 - **Port the flow into your stack.** Keep the contract, not the UI: a server-side proxy that adds the `api-key` header, then `launch` → poll agent status → show the preview URL → follow-up prompts → deploy. One BigBag project per customer, ownership checked on every proxied call. The step-by-step version, with the exact files to mirror, is in [`AGENTS.md`](AGENTS.md#adding-an-ai-app-builder-to-an-existing-product-any-stack).
 
 ### Use it as a boilerplate: login + payments
 
-Want to ship this as your own product? Firebase Google sign-in and local tenant isolation are included. Add **Stripe** for payments, or migrate identity/project ownership to Supabase if that better matches your stack. The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments).
+Want to ship this as your own product? Supabase Google sign-in, Supabase PostgreSQL, and local tenant isolation are included. Add **Stripe** for payments if desired. The concrete checklist is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments).
 
 ---
 
@@ -221,7 +221,7 @@ Want to ship this as your own product? Firebase Google sign-in and local tenant 
 Two different things live here, and it is worth keeping them apart:
 
 - **The apps the AI builds for you** come with a managed database, hosting, auth and everything else they need to run — all provided by the BigBag AI Engine. Nothing to install.
-- **This builder UI itself** uses Firebase Google sign-in and a server-verified signed session. Payment remains optional; the step-by-step for billing or replacing the auth/data layer is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments):
+- **This builder UI itself** uses Supabase Google sign-in and a server-verified signed session. Payment remains optional; the step-by-step for billing or replacing the auth/data layer is in [`AGENTS.md`](AGENTS.md#boilerplate-mode-optional-supabase-migration-and-stripe-payments):
 
   - **Auth**: Supabase Auth, Better Auth, Clerk, Auth0 or your own.
   - **Payments**: Stripe, or any provider — for credit packs or plans.

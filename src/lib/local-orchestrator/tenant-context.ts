@@ -78,7 +78,7 @@ export interface LocalTenantContext {
 }
 
 export function tenantContextForIdentity(identity: string): LocalTenantContext {
-  const bytes = createHash("sha256").update(`firebase:${identity}`).digest().subarray(0, 16);
+  const bytes = createHash("sha256").update(`user:${identity}`).digest().subarray(0, 16);
   // RFC 4122 variant/version bits keep the deterministic identifier compatible
   // with the existing UUID-only tenant storage contract.
   bytes[6] = (bytes[6] & 0x0f) | 0x50;

@@ -29,8 +29,7 @@ import { toast } from "sonner";
 import type { ConversationMessage, VcaasSecret, AgentInputFile, AgentRunOptions } from "@/lib/vcaas-types";
 import { AIActivity, activityStepsFromBuildMsgs } from "@/components/workspace/AIActivity";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
-import { UserAvatar, useAuth } from "@/components/auth/AuthProvider";
-import type { User } from "firebase/auth";
+import { UserAvatar, useAuth, type AuthUser } from "@/components/auth/AuthProvider";
 
 interface ChatPanelProps {
   messages: ConversationMessage[];
@@ -244,7 +243,7 @@ function UserAttachments({ files }: { files: AgentInputFile[] }) {
   );
 }
 
-function UserMessage({ text, files, user }: { text: string; files?: AgentInputFile[]; user: User | null }) {
+function UserMessage({ text, files, user }: { text: string; files?: AgentInputFile[]; user: AuthUser | null }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = text.length > USER_MSG_TRUNCATE_AT;
 
