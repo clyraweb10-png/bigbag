@@ -1,22 +1,42 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+const DEFAULT_SUPABASE_URL = "https://dgtkizrvagvfnbdkdnfs.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U";
+
 let adminClient: SupabaseClient | null = null;
 let publicClient: SupabaseClient | null = null;
+let runtimeSupabaseUrl: string | null = null;
+let runtimeSupabaseAnonKey: string | null = null;
+
+export function configureRuntimeSupabase(url?: string | null, anonKey?: string | null): void {
+  if (url && typeof url === "string") {
+    runtimeSupabaseUrl = url.trim();
+  }
+  if (anonKey && typeof anonKey === "string") {
+    runtimeSupabaseAnonKey = anonKey.trim();
+  }
+  if (url || anonKey) {
+    // Reset publicClient so it reinitializes with updated credentials
+    publicClient = null;
+  }
+}
 
 export function getSupabaseUrl(): string {
   const url =
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
-    "";
-  return url.trim();
+    runtimeSupabaseUrl ||
+    DEFAULT_SUPABASE_URL;
+  return (url || "").trim();
 }
 
 export function getSupabaseAnonKey(): string {
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
-    "";
-  return key.trim();
+    runtimeSupabaseAnonKey ||
+    DEFAULT_SUPABASE_ANON_KEY;
+  return (key || "").trim();
 }
 
 export function getSupabaseServiceRoleKey(): string {
@@ -58,7 +78,14 @@ export function getSupabaseClient(): SupabaseClient | null {
   const anonKey = getSupabaseAnonKey();
   if (!url || !anonKey) return null;
   if (!publicClient) {
-    publicClient = createClient(url, anonKey);
+    publicClient = createClient(url, anonKey, {
+      auth: {
+        flowType: "pkce",
+        detectSessionInUrl: true,
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
   }
   return publicClient;
 }

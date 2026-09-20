@@ -41,8 +41,25 @@ export default function LoginPage() {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [signing, setSigning] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlErr = params.get("error") || params.get("error_description");
+      if (urlErr) {
+        setLocalError(decodeURIComponent(urlErr));
+      }
+    } catch {}
+  }, []);
+
+  // Ensure button loading spinner never remains stuck
+  useEffect(() => {
+    if (status !== "loading") {
+      setSigning(false);
+    }
+  }, [status]);
 
   /* ── Redirect after successful sign-in ── */
   useEffect(() => {
@@ -71,11 +88,13 @@ export default function LoginPage() {
   const isDark = mounted ? resolvedTheme !== "light" : true;
 
   const handleSignIn = async () => {
+    setLocalError(null);
     setSigning(true);
     try {
       await signIn();
-    } catch {
+    } catch (err) {
       setSigning(false);
+      setLocalError(err instanceof Error ? err.message : "Failed to sign in with Google");
     }
   };
 
@@ -169,19 +188,29 @@ export default function LoginPage() {
             <span className="text-[#18a981] font-semibold">to production</span>
           </p>
 
-          {/* Error */}
-          {error && (
+          {/* Misconfiguration or Error */}
+          {status === "misconfigured" ? (
+            <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 text-left">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+              <div>
+                <p className="font-semibold">Supabase Not Configured</p>
+                <p className="text-xs mt-0.5 text-amber-700 dark:text-amber-300">
+                  Please verify NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your deployment environment.
+                </p>
+              </div>
+            </div>
+          ) : (localError || error) ? (
             <div className="mb-4 flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-600 dark:text-red-400 text-left">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
+              <span>{localError || error}</span>
             </div>
-          )}
+          ) : null}
 
           {/* Google sign-in */}
           <button
             onClick={handleSignIn}
             disabled={signing || status === "loading"}
-            className="w-full flex items-center justify-center gap-3 rounded-full border border-zinc-200 dark:border-white/20 bg-white dark:bg-white/5 hover:bg-zinc-50 dark:hover:bg-white/10 px-5 py-3 text-sm font-semibold text-zinc-800 dark:text-white shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 rounded-full border border-zinc-200 dark:border-white/20 bg-white dark:bg-white/5 hover:bg-zinc-50 dark:hover:bg-white/10 px-5 py-3 text-sm font-semibold text-zinc-800 dark:text-white shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
             {signing || status === "loading" ? (
               <Loader2 className="w-5 h-5 animate-spin" />

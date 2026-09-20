@@ -79,10 +79,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         data?: {
           authenticated?: boolean;
           configured?: boolean;
+          supabase?: {
+            url?: string;
+            anonKey?: string;
+          };
         };
       } | null;
 
       if (!active) return;
+
+      if (sessionPayload?.data?.supabase?.url || sessionPayload?.data?.supabase?.anonKey) {
+        const { configureRuntimeSupabase } = await import("@/lib/supabase");
+        configureRuntimeSupabase(sessionPayload.data.supabase.url, sessionPayload.data.supabase.anonKey);
+      }
 
       const supabase = getSupabaseClient();
       if (!supabase || !sessionPayload?.data?.configured) {
@@ -171,13 +180,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signIn = useCallback(async () => {
     const supabase = getSupabaseClient();
-    if (!supabase) return;
+    if (!supabase) {
+      const err = new Error("Supabase is not configured. Please check your Supabase environment settings.");
+      setError(err.message);
+      setStatus("misconfigured");
+      throw err;
+    }
     setError(null);
     setStatus("loading");
     try {
       localStorage.removeItem(SIGNING_OUT_KEY);
-      const redirectTo = `${window.location.origin}/api/auth/callback`;
-      const { error: signInError } = await supabase.auth.signInWithOAuth({
+      const redirectTo = `${window.location.origin}/auth/callback`;
+      const { data, error: signInError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo,
@@ -188,9 +202,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       });
       if (signInError) throw signInError;
+      if (data?.url) {
+        window.location.href = data.url;
+      }
     } catch (signInError) {
-      setError(signInError instanceof Error ? signInError.message : "Google sign-in failed");
+      const msg = signInError instanceof Error ? signInError.message : "Google sign-in failed";
+      setError(msg);
       setStatus("unauthenticated");
+      throw signInError;
     }
   }, []);
 
