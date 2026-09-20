@@ -108,7 +108,7 @@ https://api-accounts.totalum.app/api/v1/vcaas   ← documented at totalum.app/to
 
 This repo is the reference implementation. Two ways to use it:
 
-**A. Run it as-is beside your product.** Deploy it on a subdomain (`builder.yourapp.com`), configure Firebase Google sign-in, and link to `/project/<id>`. Rebrand `layout.tsx`, the dashboard header and `icon.svg`.
+**A. Run it as-is beside your product.** Deploy it on a subdomain (`builder.yourapp.com`), configure Supabase Google sign-in, and link to `/project/<id>`. Rebrand `layout.tsx`, the dashboard header and `icon.svg`.
 
 **B. Port the flow into your own stack.** The UI is optional; the contract is not. Mirror three things in your backend language:
 1. **A key-holding proxy** = `src/lib/vcaas-server.ts` + `src/app/api/vcaas/[...path]/route.ts`: forward `method`, path, query and body to `https://api-accounts.totalum.app/api/v1/vcaas/<path>`, add `api-key: <your key>`, return the `{ errors, data }` envelope unchanged. Your browser code must never hold the key.
@@ -119,7 +119,7 @@ Credits are the key owner's. If you resell, meter your users yourself (next sect
 
 ## Boilerplate mode: optional Supabase migration and Stripe payments
 
-The local orchestrator already uses verified Firebase identities and tenant-scoped projects. Cloud Totalum mode fails closed to Firebase UIDs enrolled through `VCAAS_OPERATOR_UIDS`, but every enrolled operator still shares one operator key and its projects. Add upstream per-user ownership mapping and billing before reselling it:
+The local orchestrator already uses verified Supabase identities and tenant-scoped projects. Cloud Totalum mode fails closed to Supabase UIDs enrolled through `VCAAS_OPERATOR_UIDS`, but every enrolled operator still shares one operator key and its projects. Add upstream per-user ownership mapping and billing before reselling it:
 
 **Login and database (Supabase recommended, but you can choose another provider)**
 1. `npm i @supabase/supabase-js @supabase/ssr`. Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (server only).
