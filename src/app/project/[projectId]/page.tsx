@@ -29,7 +29,7 @@ import { GithubModal } from "@/components/workspace/GithubModal";
 import { DeployControl } from "@/components/workspace/DeployControl";
 import { CloneProjectDialog } from "@/components/workspace/ProjectTransferDialogs";
 import { DiffViewer, type DiffSource } from "@/components/workspace/DiffViewer";
-import { Modal } from "@/components/primitives";
+import { Modal, SkeletonWorkspace } from "@/components/primitives";
 import { ImportOverlay } from "@/components/workspace/ImportOverlay";
 import { PathPicker } from "@/components/workspace/PathPicker";
 import { looksLikePlaceholder } from "@/lib/preview-health";
@@ -1468,7 +1468,7 @@ export default function WorkspacePage() {
   const cardBg = darkMode ? "#232730" : "#FFFFFF";
   const btnBorder = darkMode ? "border-[#2d3340]" : "border-[#e1e1e8]";
 
-  if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
+  if (loading) return <SkeletonWorkspace />;
   if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
@@ -1592,7 +1592,7 @@ export default function WorkspacePage() {
                       onClick={() => setActiveTab(tab.id)}
                       className={
                         isActive
-                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shrink-0 cursor-pointer"
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
                           : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
                       }
                       title={tab.label}
@@ -1623,7 +1623,7 @@ export default function WorkspacePage() {
             </div>
             <button
               onClick={() => setOpenModal("secrets")}
-              className="h-7.5 w-7.5 flex items-center justify-center rounded-full transition-all shrink-0 neon-glow-magenta cursor-pointer"
+              className="h-7.5 w-7.5 flex items-center justify-center rounded-full transition-all shrink-0 colourless-glass cursor-pointer"
               title="API / Secrets"
             >
               <KeyRound className="w-3.5 h-3.5" />

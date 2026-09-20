@@ -285,6 +285,90 @@ button {
   transform: scale(0.97) !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SKELETON & SHIMMER PRELOADER EFFECTS
+   Smooth flowing luminous wave across all skeleton surfaces
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes tp-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.tp-shimmer {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 15%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.02) 85%,
+    transparent 100%
+  );
+  animation: tp-shimmer 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+html:not(.dark) .tp-shimmer,
+:root:not(.dark) .tp-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 15%,
+    rgba(255, 255, 255, 0.7) 50%,
+    rgba(255, 255, 255, 0.15) 85%,
+    transparent 100%
+  );
+}
+
+/* Standalone shimmer overlay utility */
+.shimmer-fx {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 15%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.02) 85%,
+    transparent 100%
+  );
+  animation: tp-shimmer 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+html:not(.dark) .shimmer-fx::after,
+:root:not(.dark) .shimmer-fx::after {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 15%,
+    rgba(255, 255, 255, 0.7) 50%,
+    rgba(255, 255, 255, 0.15) 85%,
+    transparent 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp-shimmer,
+  .shimmer-fx::after {
+    animation: none !important;
+    display: none !important;
+  }
+}
+
 html:not(.dark) .colourless-glass {
   background: rgba(0, 0, 0, 0.06) !important;
   backdrop-filter: blur(16px) saturate(180%) !important;

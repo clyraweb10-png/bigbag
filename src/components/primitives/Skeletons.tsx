@@ -9,14 +9,15 @@ import { cn } from "@/lib/utils";
  * that matches the real layout so the page doesn't jump when data lands.
  */
 
-export function SkeletonBox({ className, ...props }: React.ComponentProps<"div">) {
+export function SkeletonBox({ className, children, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      aria-hidden
-      className={cn("bg-[#252525] border border-border/40 relative overflow-hidden rounded-md animate-pulse", className)}
+      aria-hidden="true"
+      className={cn("bg-zinc-200/75 dark:bg-[#252525] border border-border/40 relative overflow-hidden rounded-md", className)}
       {...props}
     >
-      <span className="tp-shimmer absolute inset-0" />
+      {children}
+      <span className="tp-shimmer absolute inset-0 pointer-events-none" />
     </div>
   );
 }

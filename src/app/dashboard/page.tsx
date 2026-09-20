@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { SkeletonDashboard } from "@/components/primitives";
 import { DashboardContent } from "../page";
 import { useAuth } from "@/components/auth/AuthProvider";
 
@@ -17,12 +17,7 @@ export default function DashboardPage() {
   }, [router, status, user]);
 
   if (status !== "authenticated" || !user) {
-    return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-background" role="status">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <span className="sr-only">Loading dashboard</span>
-      </div>
-    );
+    return <SkeletonDashboard />;
   }
 
   return <DashboardContent />;

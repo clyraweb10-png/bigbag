@@ -32,6 +32,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { SetupBanners } from "@/components/SetupBanners";
+import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitives";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
@@ -697,10 +698,12 @@ export function DashboardContent() {
           </div>
 
         {!chatOpen && projectsLoading && (
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Loading projects">
-            {[0, 1, 2].map((item) => (
-              <div key={item} className="h-48 animate-pulse rounded-xl border border-border bg-card" />
-            ))}
+          <div className="mb-6">
+            {viewMode === "table" ? (
+              <SkeletonProjectTable rows={6} />
+            ) : (
+              <SkeletonProjectGrid count={6} />
+            )}
           </div>
         )}
 

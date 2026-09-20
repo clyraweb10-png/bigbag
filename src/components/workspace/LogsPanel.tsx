@@ -12,7 +12,7 @@ import {
     TerminalIcon,
     XIcon,
 } from "lucide-react";
-import { CopyButton, EmptyState, ErrorState } from "@/components/primitives";
+import { CopyButton, EmptyState, ErrorState, SkeletonTerminalLogs } from "@/components/primitives";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -593,8 +593,8 @@ export function LogsPanel({ projectId, hasBeenDeployed }: LogsPanelProps) {
                     )}
 
                     {loading && !current.fetched && (
-                        <div className="grid h-full min-w-0 place-items-center px-1">
-                            <LoaderIcon className="text-muted-foreground size-5 animate-spin" aria-hidden />
+                        <div className="h-full min-w-0 p-1">
+                            <SkeletonTerminalLogs />
                         </div>
                     )}
 

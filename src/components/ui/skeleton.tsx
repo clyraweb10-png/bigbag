@@ -1,12 +1,19 @@
 import { cn } from "@/lib/utils"
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
+function Skeleton({ className, children, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="skeleton"
-      className={cn("bg-[#252525] border border-border/50 animate-pulse rounded-xl", className)}
+      aria-hidden="true"
+      className={cn(
+        "relative overflow-hidden rounded-xl bg-zinc-200/75 dark:bg-[#252525] border border-border/40",
+        className
+      )}
       {...props}
-    />
+    >
+      {children}
+      <span className="tp-shimmer absolute inset-0 pointer-events-none" />
+    </div>
   )
 }
 
