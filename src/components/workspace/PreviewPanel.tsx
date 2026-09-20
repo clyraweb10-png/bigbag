@@ -52,6 +52,12 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
             <span>Cached snapshot · server sleeping</span>
           </div>
         )}
+        {previewUrl && loading && !cached && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50/95 px-2.5 py-1 text-[11px] font-medium text-blue-800 shadow-sm backdrop-blur">
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+            <span className="truncate">Updating · current preview remains available</span>
+          </div>
+        )}
         {!previewUrl ? (
           <div className="flex flex-col items-center justify-center text-center px-8">
             {loading ? (

@@ -21,8 +21,12 @@ const {
   isPreviewInitiatedRequest,
   verifyPreviewWriteCapability,
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
-const { multiModelRouter } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { GEMINI_MAX_RETRIES } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
+const {
+  appendContinuationChunk,
+  GEMINI_MAX_RETRIES,
+  multiModelRouter,
+  publicModelName,
+} = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
 const { isSourceBuildFailure, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
@@ -470,6 +474,147 @@ test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
     assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
     assert.equal(GEMINI_MAX_RETRIES, 5);
   } finally {
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+  }
+});
+
+test("token-limited model output continues, merges safely, and exposes only public model aliases", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  delete process.env.TELNYX_API_KEY;
+  const statuses: string[] = [];
+  const requestBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
+  let requestCount = 0;
+
+  global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    requestBodies.push(JSON.parse(String(init?.body || "{}")));
+    requestCount += 1;
+    if (requestCount === 1) {
+      return Response.json({
+        choices: [{
+          finish_reason: "length",
+          message: { content: "<section>continuation-boundary" },
+        }],
+      });
+    }
+    return Response.json({
+      choices: [{
+        finish_reason: "stop",
+        message: { content: "continuation-boundary-complete</section>" },
+      }],
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await multiModelRouter.complete(
+      [{ role: "user", content: "Build the complete page" }],
+      (status) => statuses.push(status),
+      { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+    );
+    assert.equal(result.text, "<section>continuation-boundary-complete</section>");
+    assert.equal(result.publicModelName, "Model A");
+    assert.equal(requestCount, 2);
+    assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
+    assert.ok(statuses.some((status) => status.includes("Model A")));
+    assert.ok(statuses.every((status) => !/Gemini|gemini-2\.5|Google/i.test(status)));
+    assert.equal(publicModelName("telnyx-glm"), "Model B");
+    assert.equal(
+      appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"),
+      "0123456789abcdefghijkl-complete"
+    );
+    assert.equal(
+      appendContinuationChunk("0123456789abcdefghijkl", "0123456789abcdefghijkl"),
+      "0123456789abcdefghijkl"
+    );
+  } finally {
+    global.fetch = previousFetch;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+  }
+});
+
+test("provider exhaustion is privacy-safe while failover uses Model A and Model B labels", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  const statuses: string[] = [];
+  global.fetch = (async () => Response.json(
+    { error: { message: "invalid test credential" } },
+    { status: 401 }
+  )) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      multiModelRouter.complete(
+        [{ role: "user", content: "Build" }],
+        (status) => statuses.push(status),
+        { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+      ),
+      (error: Error) => {
+        assert.equal(error.name, "ProviderExhaustedError");
+        assert.doesNotMatch(error.message, /Gemini|Telnyx|gemini-2\.5|GLM-5\.3/i);
+        return true;
+      }
+    );
+    assert.deepEqual(statuses, [
+      "Generating with Model A...",
+      "Continuing with Model B...",
+      "Generating with Model B...",
+    ]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+  }
+});
+
+test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  delete process.env.TELNYX_API_KEY;
+  let requestCount = 0;
+
+  global.fetch = (async () => {
+    requestCount += 1;
+    if (requestCount === 1) return new Response("upstream proxy overloaded", { status: 503 });
+    if (requestCount === 2) {
+      return Response.json({
+        choices: [{ finish_reason: "length", message: { content: "0123456789abcdefghijkl" } }],
+      });
+    }
+    if (requestCount === 3) {
+      return Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "0123456789abcdefghijkl" } }],
+      });
+    }
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: "recovered without false success" } }],
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await multiModelRouter.complete(
+      [{ role: "user", content: "Build" }],
+      undefined,
+      { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000, retryDelayMs: 0 }
+    );
+    assert.equal(result.text, "recovered without false success");
+    assert.equal(requestCount, 4);
+  } finally {
+    global.fetch = previousFetch;
     if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = previousGemini;
     if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;

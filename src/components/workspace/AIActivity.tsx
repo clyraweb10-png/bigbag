@@ -103,7 +103,7 @@ export function AIActivity({ steps, isBuilding, className }: AIActivityProps) {
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
           )}
           <Zap className="w-3 h-3 text-yellow-500" />
-          <span className="font-semibold">AI Activity</span>
+          <span className="font-semibold">Build progress</span>
 
           {/* Collapsed summary */}
           {!isOpen && !isBuilding && summaryText ? (
@@ -193,13 +193,28 @@ export function activityStepsFromBuildMsgs(
   isComplete: boolean,
   startTime?: string
 ): ActivityStep[] {
-  return buildMsgs.map((msg, i) => {
-    const isLast = i === buildMsgs.length - 1;
+  // Provider retries, output continuations, and failover are one generation phase,
+  // not separate user tasks. Keep only the latest privacy-safe status so the UI
+  // never becomes a noisy provider-by-provider timeline.
+  const isModelProgress = (label: string) =>
+    /^(?:Generating with|Retrying|Continuing with|Model [AB] reached an output boundary)/.test(label);
+  let latestModelProgress = -1;
+  buildMsgs.forEach((msg, index) => {
+    if (isModelProgress(msg.message)) latestModelProgress = index;
+  });
+  const visibleMessages = buildMsgs.filter(
+    (msg, index) => !isModelProgress(msg.message) || index === latestModelProgress
+  );
+
+  return visibleMessages.map((msg, i) => {
+    const originalIndex = buildMsgs.indexOf(msg);
+    const isLast = i === visibleMessages.length - 1;
     const isRunning = !isComplete && isLast;
 
     // Duration: diff between this message's timestamp and the previous one.
     let duration: string | undefined;
-    const prevTime = i === 0 ? startTime : buildMsgs[i - 1].createdAt;
+    const previousVisibleMessage = i === 0 ? undefined : visibleMessages[i - 1];
+    const prevTime = previousVisibleMessage?.createdAt || startTime;
     if (prevTime && msg.createdAt) {
       const diffMs = Date.parse(msg.createdAt) - Date.parse(prevTime);
       if (!isNaN(diffMs) && diffMs > 0) {
@@ -208,7 +223,7 @@ export function activityStepsFromBuildMsgs(
     }
 
     return {
-      id: `${i}-${msg.message.slice(0, 20)}`,
+      id: `${originalIndex}-${msg.message.slice(0, 20)}`,
       label: msg.message,
       status: isRunning ? "running" : "completed",
       duration: isRunning ? undefined : duration, // don't show duration while still running

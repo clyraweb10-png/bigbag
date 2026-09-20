@@ -14,6 +14,8 @@ export interface ModelProviderConfig {
 export interface RouterCompletionResult {
   text: string;
   usedModel: string;
+  /** Privacy-safe label intended for customer-visible status and completion copy. */
+  publicModelName: string;
   providerName: string;
   providerId: string;
 }
@@ -25,10 +27,14 @@ export interface RouterCompletionOptions {
   totalTimeoutMs?: number;
   deprioritizeProviderId?: string;
   maxTokens?: number;
+  /** Test/embedding override; production uses the bounded default backoff. */
+  retryDelayMs?: number;
 }
 
 /** Product policy: Gemini gets five recovery attempts before provider failover. */
 export const GEMINI_MAX_RETRIES = 5;
+/** Maximum number of follow-up requests used to finish a token-limited response. */
+export const MAX_OUTPUT_CONTINUATIONS = 4;
 const DEFAULT_MAX_RETRIES = 2;
 /** Delay in ms between retries. */
 const RETRY_DELAY_MS = 3_000;
@@ -50,6 +56,40 @@ function completionText(content: unknown): string {
     })
     .join("");
 }
+
+export function publicModelName(providerId: string): string {
+  if (providerId === "gemini-flash") return "Model A";
+  if (providerId === "telnyx-glm") return "Model B";
+  return "AI model";
+}
+
+/**
+ * Join a continuation without duplicating a repeated tail. Some OpenAI-compatible
+ * providers repeat the last few tokens even when explicitly asked not to.
+ */
+export function appendContinuationChunk(current: string, next: string): string {
+  if (!current) return next;
+  if (!next) return current;
+  if (next.startsWith(current)) return next;
+
+  const maxOverlap = Math.min(4_096, current.length, next.length);
+  for (let overlap = maxOverlap; overlap >= 16; overlap -= 1) {
+    if (current.endsWith(next.slice(0, overlap))) {
+      return current + next.slice(overlap);
+    }
+  }
+  return current + next;
+}
+
+export class ProviderExhaustedError extends Error {
+  constructor() {
+    super("The generation models could not complete the response after automatic retries and continuation attempts.");
+    this.name = "ProviderExhaustedError";
+  }
+}
+
+class RetryableProviderError extends Error {}
+class FinalProviderError extends Error {}
 
 class MultiModelRouter {
   // Provider-level concurrency locks (mutex) to avoid concurrent calls on single keys
@@ -145,18 +185,13 @@ class MultiModelRouter {
       deadlineAt?: number;
       perProviderTimeoutMs: number;
       maxTokens?: number;
+      retryDelayMs: number;
     }
   ): Promise<RouterCompletionResult> {
     const configuredMaxTokens = Number.isFinite(provider.maxTokens) && provider.maxTokens > 0
       ? provider.maxTokens
       : 16_384;
-    const payload: Record<string, any> = {
-      model: provider.model,
-      messages,
-      temperature: 0.2,
-      max_tokens: Math.min(configuredMaxTokens, options.maxTokens ?? configuredMaxTokens),
-    };
-    if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
+    const maxTokens = Math.min(configuredMaxTokens, options.maxTokens ?? configuredMaxTokens);
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -175,10 +210,10 @@ class MultiModelRouter {
       }
 
       if (attempt > 0) {
-        const retryMsg = `🔄 Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`;
-        console.log(`[MultiModelRouter] ${retryMsg}`);
+        const retryMsg = `Retrying ${publicModelName(provider.id)} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`;
+        console.log(`[MultiModelRouter] Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`);
         onStatus?.(retryMsg);
-        await sleep(RETRY_DELAY_MS);
+        await sleep(options.retryDelayMs);
         remainingMs = options.deadlineAt === undefined
           ? undefined
           : options.deadlineAt - Date.now();
@@ -188,92 +223,133 @@ class MultiModelRouter {
       }
 
       try {
-        const res: Response = await this.enqueue(provider.id, () => {
-          const remainingAtFetchMs = options.deadlineAt === undefined
+        let accumulatedText = "";
+        let requestMessages = messages;
+
+        for (let continuation = 0; continuation <= MAX_OUTPUT_CONTINUATIONS; continuation += 1) {
+          remainingMs = options.deadlineAt === undefined
             ? undefined
             : options.deadlineAt - Date.now();
-          if (remainingAtFetchMs !== undefined && remainingAtFetchMs <= 0) {
-            throw new Error("completion deadline exceeded");
+          if (remainingMs !== undefined && remainingMs <= 0) {
+            throw new FinalProviderError("completion deadline exceeded");
           }
-          const attemptTimeoutMs = Math.max(
-            1,
-            Math.min(
-              options.perProviderTimeoutMs,
-              remainingAtFetchMs ?? options.perProviderTimeoutMs
-            )
-          );
-          return fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(attemptTimeoutMs),
-          });
-        }, remainingMs);
 
-        if (res.ok) {
+          const payload: Record<string, any> = {
+            model: provider.model,
+            messages: requestMessages,
+            temperature: 0.2,
+            max_tokens: maxTokens,
+          };
+          if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
+
+          const res: Response = await this.enqueue(provider.id, () => {
+            const remainingAtFetchMs = options.deadlineAt === undefined
+              ? undefined
+              : options.deadlineAt - Date.now();
+            if (remainingAtFetchMs !== undefined && remainingAtFetchMs <= 0) {
+              throw new FinalProviderError("completion deadline exceeded");
+            }
+            const attemptTimeoutMs = Math.max(
+              1,
+              Math.min(options.perProviderTimeoutMs, remainingAtFetchMs ?? options.perProviderTimeoutMs)
+            );
+            return fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify(payload),
+              signal: AbortSignal.timeout(attemptTimeoutMs),
+            });
+          }, remainingMs);
+
+          if (!res.ok) {
+            const rawErr = await res.text();
+            let errMsg = rawErr;
+            // Upstreams and edge proxies sometimes return HTML/plain text for
+            // overload responses. Status alone must preserve retry behavior even
+            // when the body cannot be parsed as provider JSON.
+            let isRetryable = res.status === 429 || res.status === 503;
+
+            try {
+              const parsed = JSON.parse(rawErr);
+              const code = String(parsed.error?.code || "");
+              if (res.status === 503 || code === "1305") {
+                isRetryable = true;
+                errMsg = `Service unavailable/busy on ${provider.model} (503)`;
+              } else if (res.status === 429 || code === "1302") {
+                isRetryable = true;
+                errMsg = `Rate limit reached on ${provider.model} (429)`;
+              } else if (parsed.error?.message) {
+                errMsg = parsed.error.message;
+              }
+            } catch {}
+
+            const message = `HTTP ${res.status}: ${errMsg}`;
+            throw isRetryable
+              ? new RetryableProviderError(message)
+              : new FinalProviderError(message);
+          }
+
           const json = await res.json();
           const choice = json.choices?.[0];
-          const finishReason = typeof choice?.finish_reason === "string"
-            ? choice.finish_reason.toLowerCase()
-            : "";
-          if (["length", "max_tokens", "max_output_tokens"].includes(finishReason)) {
-            throw new Error(`Provider stopped before completing the response (${finishReason})`);
-          }
-
           const text = completionText(choice?.message?.content);
           if (!text || text.trim().length === 0) {
             const hasReasoning = completionText(choice?.message?.reasoning_content).trim().length > 0;
-            throw new Error(
+            throw new FinalProviderError(
               hasReasoning
                 ? "Provider returned reasoning without a final answer"
                 : "Received empty response body from provider"
             );
           }
 
-          console.log(`[MultiModelRouter] Provider [${provider.name}] succeeded! Generated ${text.length} chars.`);
-          return {
-            text,
-            usedModel: provider.model,
-            providerName: provider.name,
-            providerId: provider.id,
-          };
-        }
-
-        // Parse the error
-        const rawErr = await res.text();
-        let errMsg = rawErr;
-        let isRetryable = false;
-
-        try {
-          const parsed = JSON.parse(rawErr);
-          const code = String(parsed.error?.code || "");
-
-          if (res.status === 503 || code === "1305") {
-            isRetryable = true;
-            errMsg = `Service unavailable/busy on ${provider.model} (503)`;
-          } else if (res.status === 429 || code === "1302") {
-            isRetryable = true;
-            errMsg = `Rate limit reached on ${provider.model} (429)`;
-          } else if (parsed.error?.message) {
-            errMsg = parsed.error.message;
+          const previousAccumulatedText = accumulatedText;
+          accumulatedText = appendContinuationChunk(accumulatedText, text);
+          if (continuation > 0 && accumulatedText === previousAccumulatedText) {
+            throw new RetryableProviderError("Continuation returned no new content");
           }
-        } catch {}
+          const finishReason = typeof choice?.finish_reason === "string"
+            ? choice.finish_reason.toLowerCase()
+            : "";
+          const wasTruncated = ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
 
-        lastError = `HTTP ${res.status}: ${errMsg}`;
-        console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
+          if (!wasTruncated) {
+            console.log(`[MultiModelRouter] Provider [${provider.name}] succeeded! Generated ${accumulatedText.length} chars.`);
+            return {
+              text: accumulatedText,
+              usedModel: provider.model,
+              publicModelName: publicModelName(provider.id),
+              providerName: provider.name,
+              providerId: provider.id,
+            };
+          }
 
-        // If NOT retryable (e.g. 401, 400), don't waste time retrying
-        if (!isRetryable) break;
+          if (continuation === MAX_OUTPUT_CONTINUATIONS) {
+            throw new FinalProviderError(
+              `Provider output remained truncated after ${MAX_OUTPUT_CONTINUATIONS} continuation requests`
+            );
+          }
 
+          const alias = publicModelName(provider.id);
+          const continuationMsg = `${alias} reached an output boundary; continuing automatically...`;
+          console.log(`[MultiModelRouter] ${provider.name} reached ${finishReason}; requesting continuation ${continuation + 1}/${MAX_OUTPUT_CONTINUATIONS}.`);
+          onStatus?.(continuationMsg);
+          requestMessages = [
+            ...messages,
+            { role: "assistant", content: accumulatedText },
+            {
+              role: "user",
+              content: "Continue exactly where the previous response stopped. Return only the missing remainder. Do not repeat completed content. If the response stopped inside a fenced code block, continue the code directly without opening a new fence. Finish every remaining file block and the complete requested result.",
+            },
+          ];
+        }
       } catch (err: any) {
-        const isTimeout = err.name === "TimeoutError" || err.message?.includes("aborted") || err.message?.includes("timeout");
-        const isNetworkFailure = err.message?.includes("fetch");
-        lastError = `exception: ${err.message || String(err)}`;
+        const message = err?.message || String(err);
+        const isTimeout = err?.name === "TimeoutError" || message.includes("aborted") || message.includes("timeout");
+        const isNetworkFailure = message.includes("fetch");
+        const isRetryable = err instanceof RetryableProviderError || isTimeout || isNetworkFailure;
+        lastError = `exception: ${message}`;
         console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
 
-        // Timeouts and network failures are transient and use the provider's retry
-        // budget. Invalid/empty/truncated model output fails over immediately.
-        if (!isTimeout && !isNetworkFailure) break;
+        if (!isRetryable) break;
       }
     }
 
@@ -309,15 +385,24 @@ class MultiModelRouter {
     for (let i = 0; i < providers.length; i++) {
       const provider = providers[i];
       const isLast = i === providers.length - 1;
+      // Reserve a fair share of the remaining wall-clock budget for every
+      // configured fallback. A slow primary must not consume the entire run and
+      // make the fallback path unreachable.
+      const providersRemaining = providers.length - i;
+      const remainingTotalMs = deadlineAt === undefined ? undefined : deadlineAt - Date.now();
+      const providerDeadlineAt = remainingTotalMs === undefined
+        ? undefined
+        : Date.now() + Math.max(1, Math.floor(remainingTotalMs / providersRemaining));
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
-      onStatus?.(`Generating with ${provider.name}...`);
+      onStatus?.(`Generating with ${publicModelName(provider.id)}...`);
 
       try {
         return await this.tryProvider(provider, messages, onStatus, {
-          deadlineAt,
+          deadlineAt: providerDeadlineAt,
           perProviderTimeoutMs,
           maxTokens: options.maxTokens,
+          retryDelayMs: options.retryDelayMs ?? RETRY_DELAY_MS,
         });
       } catch (err: any) {
         const errMsg = err.message || String(err);
@@ -325,16 +410,15 @@ class MultiModelRouter {
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
-          const failoverMsg = `⚡ Switching to ${nextProvider.name} after ${provider.name} failed...`;
-          console.log(`[MultiModelRouter] ${failoverMsg}`);
+          const failoverMsg = `Continuing with ${publicModelName(nextProvider.id)}...`;
+          console.log(`[MultiModelRouter] Switching to ${nextProvider.name} after ${provider.name} failed.`);
           onStatus?.(failoverMsg);
         }
       }
     }
 
-    throw new Error(
-      `All configured AI providers failed:\n` + errors.map((e) => `• ${e}`).join("\n")
-    );
+    console.warn(`[MultiModelRouter] All configured providers failed: ${errors.join(" | ")}`);
+    throw new ProviderExhaustedError();
   }
 }
 
