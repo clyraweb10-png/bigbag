@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { resolveAppOrigin, safeAuthReturnPath, isProtectedPagePath, LOCAL_DEV_ORIGIN } from "../src/lib/auth-redirect";
+import {
+  isProtectedPagePath,
+  LOCAL_DEV_ORIGIN,
+  oauthCallbackUrl,
+  OAUTH_CALLBACK_PATH,
+  resolveAppOrigin,
+  safeAuthReturnPath,
+} from "../src/lib/auth-redirect";
 
 const RENDER_PROD_URL = "https://vibecode-spzy.onrender.com";
 
@@ -100,7 +107,7 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
   const supabaseAnonKey = "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U";
   const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-  const targetRedirectTo = `${RENDER_PROD_URL}/auth/callback`;
+  const targetRedirectTo = `${RENDER_PROD_URL}${OAUTH_CALLBACK_PATH}`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -122,7 +129,7 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
   assert.equal(authUrl.searchParams.get("provider"), "google");
 
   const forwardedRedirectTo = authUrl.searchParams.get("redirect_to");
-  assert.equal(forwardedRedirectTo, targetRedirectTo, "Supabase redirect_to parameter MUST be https://vibecode-spzy.onrender.com/auth/callback");
+  assert.equal(forwardedRedirectTo, targetRedirectTo, "Supabase redirect_to parameter MUST use the registered production API callback");
   assert.ok(!forwardedRedirectTo.includes("localhost"), "redirect_to MUST NEVER contain localhost:3000");
 
   // Follow the 302 redirect from Supabase to Google
@@ -134,7 +141,7 @@ test("5. Live Supabase Google OAuth endpoint verification", async () => {
 
   const googleUrl = new URL(location);
   assert.equal(googleUrl.hostname, "accounts.google.com", "Location must point to accounts.google.com");
-  assert.equal(googleUrl.searchParams.get("redirect_to"), targetRedirectTo, "Google OAuth URL redirect_to MUST remain https://vibecode-spzy.onrender.com/auth/callback");
+  assert.equal(googleUrl.searchParams.get("redirect_to"), targetRedirectTo, "Google OAuth URL redirect_to MUST retain the registered production API callback");
   assert.ok(!location.includes("localhost:3000"), "Google OAuth Location header MUST NEVER contain localhost:3000");
 });
 
@@ -149,8 +156,8 @@ test("6. Full Production OAuth redirect chain simulation", async () => {
     // Step A: User clicks "Sign in with Google" on https://vibecode-spzy.onrender.com/login
     const clientOrigin = resolveAppOrigin();
     assert.equal(clientOrigin, RENDER_PROD_URL);
-    const initiatedRedirectTo = `${clientOrigin}/auth/callback`;
-    assert.equal(initiatedRedirectTo, "https://vibecode-spzy.onrender.com/auth/callback");
+    const initiatedRedirectTo = oauthCallbackUrl(clientOrigin);
+    assert.equal(initiatedRedirectTo, "https://vibecode-spzy.onrender.com/api/auth/callback");
 
     // Step B: Server-side forwarder route: GET /api/auth/callback?code=mock_oauth_code
     // Import API route handler
@@ -297,4 +304,3 @@ test("8. Session route GET provides runtime Supabase configuration without secre
   assert.equal(json.data.supabase.url, "https://dgtkizrvagvfnbdkdnfs.supabase.co");
   assert.equal(json.data.supabase.anonKey, "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U");
 });
-

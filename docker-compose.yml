@@ -23,7 +23,7 @@ services:
       - TELNYX_MODEL=${TELNYX_MODEL:-zai-org/GLM-5.3-Flash}
       - TELNYX_BASE_URL=${TELNYX_BASE_URL:-https://api.telnyx.com/v2/ai/openai}
       - TELNYX_MAX_TOKENS=${TELNYX_MAX_TOKENS:-16384}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://vibecode-spzy.onrender.com}
       - TOTALUM_VCAAS_API_KEY=${TOTALUM_VCAAS_API_KEY:-local-orchestrator-active}
     volumes:
       - ./data:/app/data
