@@ -13,7 +13,7 @@ import {
     TriangleAlertIcon,
     GitBranchIcon,
 } from "lucide-react";
-import { ConfirmDialog, CopyButton, Modal, StatusPill } from "@/components/primitives";
+import { ConfirmDialog, CopyButton, Modal, SkeletonGithubModal, StatusPill } from "@/components/primitives";
 import { PaidFeature, CapabilityUsage } from "@/components/plan/PaidFeature";
 import { useCapabilities } from "@/components/plan/CapabilityProvider";
 import { Button } from "@/components/ui/button";
@@ -524,11 +524,7 @@ export function GithubModal({
                         */}
                         <CapabilityUsage capability="github" projectId={projectId} />
 
-                        {loading && !status && (
-                            <div className="grid place-items-center py-8">
-                                <LoaderIcon className="text-muted-foreground size-5 animate-spin" aria-hidden />
-                            </div>
-                        )}
+                        {loading && !status && <SkeletonGithubModal />}
 
                         {!loading && connected ? (
                             // ── Connected ─────────────────────────────────────

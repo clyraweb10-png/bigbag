@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Loader2, AlertTriangle } from "lucide-react";
+import { SkeletonDashboard } from "@/components/primitives";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { useTheme } from "next-themes";
 import { safeAuthReturnPath } from "@/lib/auth-redirect";
@@ -78,13 +79,9 @@ export default function LoginPage() {
     }
   };
 
-  /* While loading or after auth, show minimal screen */
+  /* While loading or after auth, show preloader screen */
   if (status === "authenticated" && user) {
-    return (
-      <div className="min-h-[100dvh] bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <SkeletonDashboard />;
   }
 
   return (
