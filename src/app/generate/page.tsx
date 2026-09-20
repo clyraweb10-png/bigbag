@@ -368,7 +368,7 @@ export default function GeneratePage() {
       {/* ── Composer ── */}
       <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          <div className="rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all">
+          <div className="rounded-2xl bg-card dark:bg-[#232730] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all">
             <textarea
               ref={textareaRef}
               value={prompt}

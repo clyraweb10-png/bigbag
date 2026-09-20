@@ -264,7 +264,7 @@ export function LandingPageMarketing() {
 
           {/* Prompt composer */}
           <div className="mt-8 mx-auto max-w-2xl">
-            <div className="rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm">
+            <div className="rounded-2xl bg-card dark:bg-[#232730] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm">
               <textarea
                 ref={textareaRef}
                 value={prompt}
@@ -427,44 +427,44 @@ export function LandingPageMarketing() {
           </div>
 
           {/* Workspace mockup */}
-          <div className="rounded-2xl border border-border overflow-hidden shadow-xl bg-[#1d1d1c]">
+          <div className="rounded-2xl border border-border overflow-hidden shadow-xl bg-[#1d2026]">
             {/* Top bar */}
-            <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4 border-b border-[#333332] bg-[#1d1d1c]">
+            <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4 border-b border-[#2d3340] bg-[#1d2026]">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-[#333332]" />
-                <div className="w-3 h-3 rounded-full bg-[#333332]" />
-                <div className="w-3 h-3 rounded-full bg-[#333332]" />
+                <div className="w-3 h-3 rounded-full bg-[#2d3340]" />
+                <div className="w-3 h-3 rounded-full bg-[#2d3340]" />
+                <div className="w-3 h-3 rounded-full bg-[#2d3340]" />
               </div>
               <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
                 <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#6554e8] text-white text-xs font-medium">
                   <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   Preview
                 </div>
-                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Database</div>
-                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Code</div>
+                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#2d3340] text-[#aaaab6] text-xs">Database</div>
+                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#2d3340] text-[#aaaab6] text-xs">Code</div>
                 <div className="px-3 py-1 rounded-full bg-[#087a5c] text-white text-xs font-medium sm:ml-2">Publish</div>
               </div>
             </div>
             {/* Content area */}
-            <div className="flex h-[30rem] flex-col divide-y divide-[#333332] sm:h-80 sm:flex-row sm:divide-x sm:divide-y-0">
+            <div className="flex h-[30rem] flex-col divide-y divide-[#2d3340] sm:h-80 sm:flex-row sm:divide-x sm:divide-y-0">
               {/* Left: Chat panel */}
               <div className="flex h-52 w-full shrink-0 flex-col gap-3 overflow-hidden p-4 sm:h-auto sm:w-64">
                 <div className="flex gap-2 items-start">
                   <div className="w-7 h-7 shrink-0 rounded-xl bg-[#6554e8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
-                  <div className="rounded-xl rounded-tl-none bg-[#252525] px-3 py-2 text-[11px] text-[#f4f4f7] leading-relaxed">
+                  <div className="rounded-xl rounded-tl-none bg-[#232730] px-3 py-2 text-[11px] text-[#f4f4f7] leading-relaxed">
                     I&apos;ve generated your SaaS landing page with hero, pricing, and testimonials sections.
                   </div>
                 </div>
-                <div className="self-end bg-[#1d1d1c] border border-[#333332] rounded-xl rounded-br-none px-3 py-2 text-[11px] text-[#f4f4f7] max-w-[80%]">
+                <div className="self-end bg-[#1d2026] border border-[#2d3340] rounded-xl rounded-br-none px-3 py-2 text-[11px] text-[#f4f4f7] max-w-[80%]">
                   Add a dark mode toggle
                 </div>
                 <div className="flex gap-2 items-start">
                   <div className="w-7 h-7 shrink-0 rounded-xl bg-[#6554e8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
-                  <div className="rounded-xl rounded-tl-none bg-[#252525] px-3 py-2 text-[11px] text-[#f4f4f7]">
+                  <div className="rounded-xl rounded-tl-none bg-[#232730] px-3 py-2 text-[11px] text-[#f4f4f7]">
                     Dark mode added ✓
                   </div>
                 </div>
-                <div className="mt-auto px-3 py-2 rounded-xl border border-[#333332] bg-[#252525] text-[11px] text-[#aaaab6]">
+                <div className="mt-auto px-3 py-2 rounded-xl border border-[#2d3340] bg-[#232730] text-[11px] text-[#aaaab6]">
                   Ask anything…
                 </div>
               </div>

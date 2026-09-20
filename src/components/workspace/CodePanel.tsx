@@ -975,7 +975,13 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
             <>
               {/* Breadcrumb + the save control */}
               <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2 shrink-0">
-                <code className="text-xs font-mono text-gray-600 dark:text-gray-300 truncate">{selected}</code>
+                <div
+                  className="inline-flex items-center gap-2 px-3 py-1 rounded-full colourless-glass text-xs font-mono shadow-xs"
+                  title={selected}
+                >
+                  {iconForFile(selected)}
+                  <span className="truncate">{selected.split("/").pop()}</span>
+                </div>
                 {/* ⭐ The dot is the whole "unsaved" signal — see the `drafts` note. */}
                 {isDirty(selected) && (
                   <span className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400">

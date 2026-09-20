@@ -1464,17 +1464,17 @@ export default function WorkspacePage() {
    */
   const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#1d1d1c" : "#FFFFFF";
-  const cardBg = darkMode ? "#252525" : "#FFFFFF";
-  const btnBorder = darkMode ? "border-[#333332]" : "border-[#e1e1e8]";
+  const pageBg = darkMode ? "#1d2026" : "#FFFFFF";
+  const cardBg = darkMode ? "#232730" : "#FFFFFF";
+  const btnBorder = darkMode ? "border-[#2d3340]" : "border-[#e1e1e8]";
 
   if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
   if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
   const popupMenu = menuOpen && (
-    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: cardBg, border: `1px solid ${darkMode ? "#3A3A3A" : "#DDDDD5"}` }}>
-      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#3A3A3A" : "#DDDDD5" }}>
+    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: cardBg, border: `1px solid ${darkMode ? "#2d3340" : "#DDDDD5"}` }}>
+      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#2d3340" : "#DDDDD5" }}>
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{projectId}</p>
       </div>
       <div className="py-1">
@@ -1553,7 +1553,7 @@ export default function WorkspacePage() {
       {/* ═══ DESKTOP LAYOUT ═══ */}
       <div className="hidden sm:flex flex-col h-full">
         {/* Desktop header 48px */}
-        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
+        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#2d3340" : "#DDDDD5", background: pageBg }}>
           {/* LEFT: aside width */}
           <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
             <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
@@ -1576,7 +1576,7 @@ export default function WorkspacePage() {
           </div>
           {/* RIGHT: preview width */}
           <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
-            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
+            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#15171c]/90 backdrop-blur-md shadow-inner">
               {TABS.map((tab, idx) => {
                 const isActive = activeTab === tab.id;
                 return (

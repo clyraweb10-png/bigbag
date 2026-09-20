@@ -640,7 +640,7 @@ export function DashboardContent() {
                 )}
 
                 {/* Prompt area - colour + rounded only */}
-                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#232730] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
                   <textarea
                     ref={heroTextareaRef}
                     value={firstPrompt}
