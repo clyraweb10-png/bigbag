@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdminClient, getSupabaseClient } from "@/lib/supabase";
-import { AUTH_COOKIE, authCookieOptions, createAuthSession } from "@/lib/auth-session";
-import { attachLocalTenantCookie, tenantContextForIdentity } from "@/lib/local-orchestrator/tenant-context";
-import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
+import { resolveAppOrigin } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
   const origin = resolveAppOrigin(request);
   const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
-  const next = safeAuthReturnPath(requestUrl.searchParams.get("next"), "/dashboard");
 
-  // If no code is present in query parameters (e.g. implicit flow with URL hash),
-  // return an HTML forwarder that preserves search params and hash fragment.
-  if (!code) {
+  // If no code/token is present (e.g. implicit flow with URL hash),
+  // return an HTML forwarder that can read and forward the hash fragment.
+  if (!requestUrl.searchParams.has("code") && !requestUrl.searchParams.has("error")) {
     const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -33,26 +28,22 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const supabase = getSupabaseAdminClient() || getSupabaseClient();
-  if (!supabase) {
-    return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, origin));
-  }
-
-  try {
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error && data?.user?.id) {
-      const user = data.user;
-      const targetUrl = new URL(next, origin);
-      const response = NextResponse.redirect(targetUrl, 303);
-
-      // Set secure HttpOnly session and tenant cookies
-      response.cookies.set(AUTH_COOKIE, createAuthSession(user.id), authCookieOptions);
-      return attachLocalTenantCookie(response, tenantContextForIdentity(user.id));
-    }
-  } catch {
-    // If server code exchange fails (e.g. PKCE verifier is in browser storage), forward to client callback
-  }
-
-  // Forward to client callback which has access to browser localStorage PKCE verifiers
-  return NextResponse.redirect(new URL("/auth/callback" + requestUrl.search, origin));
+  // Always forward to the client-side /auth/callback page.
+  //
+  // WHY: Supabase uses PKCE (Proof Key for Code Exchange). The code_verifier
+  // is stored in the browser's localStorage. If we attempt exchangeCodeForSession
+  // here on the server, Supabase will invalidate the code even though the exchange
+  // fails (no verifier). The client-side page then cannot exchange the same code.
+  //
+  // The client page (/auth/callback/page.tsx) handles:
+  //   - exchangeCodeForSession with the localStorage verifier
+  //   - POSTing the access_token to /api/auth/session to set the HttpOnly cookie
+  //   - Redirecting to /dashboard
+  //
+  // resolveAppOrigin(request) ensures the redirect points to the public domain
+  // (https://vibecode-spzy.onrender.com) even when Docker reports localhost internally.
+  return NextResponse.redirect(
+    new URL("/auth/callback" + requestUrl.search, origin),
+    307
+  );
 }

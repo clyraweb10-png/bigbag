@@ -1,14 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { getSupabaseClient, configureRuntimeSupabase } from "@/lib/supabase";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { Loader2 } from "lucide-react";
-import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
+import { safeAuthReturnPath, PRODUCTION_APP_ORIGIN } from "@/lib/auth-redirect";
+
+// The canonical destination after auth.
+// In the browser, window.location.origin is always correct:
+//   - On Render:    https://vibecode-spzy.onrender.com
+//   - On localhost: http://localhost:3000
+// We do NOT use resolveAppOrigin() here — the browser already knows its own origin.
+function getAuthDestination(searchParams: URLSearchParams): string {
+  const next = safeAuthReturnPath(searchParams.get("next"), "");
+  if (next) return next;
+  try {
+    const pending = sessionStorage.getItem("bigbag:pending-prompt");
+    if (pending) {
+      sessionStorage.removeItem("bigbag:pending-prompt");
+      return `/generate?prompt=${encodeURIComponent(pending)}`;
+    }
+  } catch {}
+  return "/dashboard";
+}
 
 export default function AuthCallbackPage() {
-  const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -16,99 +32,114 @@ export default function AuthCallbackPage() {
 
     async function handleAuth() {
       try {
-        const search = window.location.search;
+        const searchParams = new URLSearchParams(window.location.search);
         const hash = window.location.hash;
-        const searchParams = new URLSearchParams(search);
 
-        // 1. Check for OAuth errors in search params or hash
-        let oauthError = searchParams.get("error_description") || searchParams.get("error");
+        // 1. Surface OAuth errors immediately
+        let oauthError =
+          searchParams.get("error_description") || searchParams.get("error");
         if (!oauthError && hash.includes("error_description")) {
-          const hashParams = new URLSearchParams(hash.replace(/^#/, ""));
-          oauthError = hashParams.get("error_description") || hashParams.get("error");
+          const hp = new URLSearchParams(hash.replace(/^#/, ""));
+          oauthError = hp.get("error_description") || hp.get("error");
         }
         if (oauthError) {
-          router.replace(`/login?error=${encodeURIComponent(oauthError)}`);
+          window.location.replace(`/login?error=${encodeURIComponent(oauthError)}`);
           return;
         }
 
-        // 2. Fetch session configuration from server to ensure runtime keys are present
-        const sessionMetaRes = await fetch("/api/auth/session", { cache: "no-store" }).catch(() => null);
+        // 2. Ensure Supabase runtime config is loaded from the server
+        const sessionMetaRes = await fetch("/api/auth/session", {
+          cache: "no-store",
+        }).catch(() => null);
         const sessionMeta = (await sessionMetaRes?.json().catch(() => null)) as {
           ok?: boolean;
-          data?: {
-            supabase?: { url?: string; anonKey?: string };
-          };
+          data?: { supabase?: { url?: string; anonKey?: string } };
         } | null;
 
         if (sessionMeta?.data?.supabase) {
-          configureRuntimeSupabase(sessionMeta.data.supabase.url, sessionMeta.data.supabase.anonKey);
+          configureRuntimeSupabase(
+            sessionMeta.data.supabase.url,
+            sessionMeta.data.supabase.anonKey
+          );
         }
 
         const supabase = getSupabaseClient();
         if (!supabase) {
-          router.replace(`/login?error=${encodeURIComponent("Authentication provider could not be initialized")}`);
+          window.location.replace(
+            `/login?error=${encodeURIComponent("Authentication provider could not be initialized")}`
+          );
           return;
         }
 
-        // 3. If an authorization code was returned (PKCE flow), exchange it
+        // 3. Exchange the authorization code for a session.
+        //    This MUST happen on the client so Supabase can read the
+        //    code_verifier it stored in localStorage during signInWithOAuth.
         const code = searchParams.get("code");
         if (code) {
           const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
-            console.error("Code exchange failed:", exchangeError);
+            console.warn("Client code exchange error:", exchangeError.message);
+            // Don't bail — getSession() below may still have a valid session
+            // if an earlier exchange succeeded.
           }
         }
 
-        // 4. Function to sync session with BigBag server cookies
-        const syncSession = async (accessToken: string) => {
+        // 4. Helper: POST the access_token to our server to set the HttpOnly
+        //    session cookie, then hard-navigate to the destination.
+        const completeAuth = async (accessToken: string): Promise<boolean> => {
           const res = await fetch("/api/auth/session", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ accessToken }),
           });
-          const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
-          if (payload?.ok) {
-            const origin = resolveAppOrigin();
-            const next = safeAuthReturnPath(searchParams.get("next"), "");
-            let destination = "/dashboard";
-            if (next) {
-              destination = next;
-            } else {
-              const pending = sessionStorage.getItem("bigbag:pending-prompt");
-              if (pending) {
-                sessionStorage.removeItem("bigbag:pending-prompt");
-                destination = `/generate?prompt=${encodeURIComponent(pending)}`;
-              }
-            }
+          const payload = (await res.json().catch(() => null)) as {
+            ok?: boolean;
+          } | null;
 
-            window.location.href = `${origin}${destination}`;
+          if (payload?.ok) {
+            const destination = getAuthDestination(searchParams);
+            // window.location.origin is always the real public origin in the browser
+            window.location.href = `${window.location.origin}${destination}`;
             return true;
           }
           return false;
         };
 
-        // 5. Try getSession immediately
-        const { data: { session } } = await supabase.auth.getSession();
+        // 5. Try to get the session immediately (exchange above may have set it)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
         if (session?.access_token) {
-          const ok = await syncSession(session.access_token);
+          if (!active) return;
+          const ok = await completeAuth(session.access_token);
           if (ok) return;
         }
 
-        // 6. Listen for auth state change if session is being processed asynchronously
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+        // 6. Listen for the SIGNED_IN event in case exchange is still in flight
+        const {
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
           if (!active) return;
-          if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") && currentSession?.access_token) {
+          if (
+            (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+            currentSession?.access_token
+          ) {
             subscription.unsubscribe();
-            await syncSession(currentSession.access_token);
+            await completeAuth(currentSession.access_token);
           }
         });
 
-        // 7. Timeout guard (10 seconds)
+        // 7. Timeout guard — if nothing happens in 12 s, something went wrong
         const timeout = setTimeout(() => {
           if (!active) return;
           subscription.unsubscribe();
-          router.replace(`/login?error=${encodeURIComponent("Sign-in verification timed out. Please try again.")}`);
-        }, 10000);
+          window.location.replace(
+            `/login?error=${encodeURIComponent(
+              "Sign-in timed out. Please try again."
+            )}`
+          );
+        }, 12000);
 
         return () => {
           clearTimeout(timeout);
@@ -118,16 +149,17 @@ export default function AuthCallbackPage() {
         if (!active) return;
         const msg = err instanceof Error ? err.message : "Authentication failed";
         setErrorMessage(msg);
-        router.replace(`/login?error=${encodeURIComponent(msg)}`);
+        window.location.replace(
+          `/login?error=${encodeURIComponent(msg)}`
+        );
       }
     }
 
     void handleAuth();
-
     return () => {
       active = false;
     };
-  }, [router]);
+  }, []);
 
   return (
     <main className="min-h-screen w-full flex flex-col items-center justify-center bg-white dark:bg-[#1d1d1c] text-zinc-900 dark:text-white px-4 select-none">
