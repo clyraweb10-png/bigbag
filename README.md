@@ -107,6 +107,8 @@ GLM_API_KEY=your_zhipu_bigmodel_api_key
 
 E2B_API_KEY=your_e2b_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
+# Optional: licensed image candidates for image-forward websites
+PEXELS_API_KEY=your_pexels_api_key
 TURSO_DATABASE_URL=libsql://your-database.turso.io
 TURSO_AUTH_TOKEN=your_turso_database_token
 ```
@@ -135,6 +137,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
+| `PEXELS_API_KEY` | ⬜ Image prompts | Supplies licensed, theme-specific image candidates to image-forward generations; absent/failed searches use designed CSS/SVG fallbacks. |
 | `TURSO_DATABASE_URL` | ✅ Local orchestrator | Durable metadata, complete generated source, and compiled preview artifacts. |
 | `TURSO_AUTH_TOKEN` | ✅ Local orchestrator | Server-only token for the Turso database. |
 | `TENANT_COOKIE_SECRET` | ✅ Production | Dedicated random secret used only to sign anonymous tenant cookies. |

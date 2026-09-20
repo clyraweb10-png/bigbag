@@ -157,14 +157,14 @@ const TESTIMONIALS = [
     name: "Marcus L.",
     role: "Design Lead, Volta Studio",
     avatar: "ML",
-    avatarColor: "bg-[#18a981]",
+    avatarColor: "bg-[#087a5c]",
   },
   {
     quote: "My whole team makes changes without waiting on engineering. The real-time preview is brilliant.",
     name: "Priya M.",
     role: "Head of Product, Launchflow",
     avatar: "PM",
-    avatarColor: "bg-[#ff6b6b]",
+    avatarColor: "bg-[#c83f50]",
   },
 ];
 
@@ -429,28 +429,28 @@ export function LandingPageMarketing() {
           {/* Workspace mockup */}
           <div className="rounded-2xl border border-border overflow-hidden shadow-xl bg-[#1d1d1c]">
             {/* Top bar */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#333332] bg-[#1d1d1c]">
+            <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4 border-b border-[#333332] bg-[#1d1d1c]">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-[#333332]" />
                 <div className="w-3 h-3 rounded-full bg-[#333332]" />
                 <div className="w-3 h-3 rounded-full bg-[#333332]" />
               </div>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#948be8] text-white text-xs font-medium">
+              <div className="flex min-w-0 items-center gap-1.5 sm:gap-3">
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#6554e8] text-white text-xs font-medium">
                   <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
                   Preview
                 </div>
-                <div className="px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Database</div>
-                <div className="px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Code</div>
-                <div className="ml-2 px-3 py-1 rounded-full bg-[#18a981] text-white text-xs font-medium">Publish</div>
+                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Database</div>
+                <div className="hidden sm:block px-3 py-1 rounded-full border border-[#333332] text-[#aaaab6] text-xs">Code</div>
+                <div className="px-3 py-1 rounded-full bg-[#087a5c] text-white text-xs font-medium sm:ml-2">Publish</div>
               </div>
             </div>
             {/* Content area */}
-            <div className="flex h-80 divide-x divide-[#333332]">
+            <div className="flex h-[30rem] flex-col divide-y divide-[#333332] sm:h-80 sm:flex-row sm:divide-x sm:divide-y-0">
               {/* Left: Chat panel */}
-              <div className="w-64 shrink-0 flex flex-col p-4 gap-3 overflow-hidden">
+              <div className="flex h-52 w-full shrink-0 flex-col gap-3 overflow-hidden p-4 sm:h-auto sm:w-64">
                 <div className="flex gap-2 items-start">
-                  <div className="w-7 h-7 shrink-0 rounded-xl bg-[#948be8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
+                  <div className="w-7 h-7 shrink-0 rounded-xl bg-[#6554e8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
                   <div className="rounded-xl rounded-tl-none bg-[#252525] px-3 py-2 text-[11px] text-[#f4f4f7] leading-relaxed">
                     I&apos;ve generated your SaaS landing page with hero, pricing, and testimonials sections.
                   </div>
@@ -459,7 +459,7 @@ export function LandingPageMarketing() {
                   Add a dark mode toggle
                 </div>
                 <div className="flex gap-2 items-start">
-                  <div className="w-7 h-7 shrink-0 rounded-xl bg-[#948be8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
+                  <div className="w-7 h-7 shrink-0 rounded-xl bg-[#6554e8] flex items-center justify-center text-white font-mono text-[9px] font-bold">&lt;/&gt;</div>
                   <div className="rounded-xl rounded-tl-none bg-[#252525] px-3 py-2 text-[11px] text-[#f4f4f7]">
                     Dark mode added ✓
                   </div>
@@ -471,7 +471,7 @@ export function LandingPageMarketing() {
               {/* Right: Preview */}
               <div className="flex-1 bg-white flex items-center justify-center overflow-hidden relative">
                 <div className="absolute inset-0 bg-gradient-to-br from-[#f7f7fa] to-[#efeff5]" />
-                <div className="relative w-full h-full p-6 flex flex-col gap-3 opacity-90">
+                <div className="relative flex h-full w-full flex-col gap-3 p-4 opacity-90 sm:p-6">
                   <div className="h-7 w-32 rounded-full bg-[#948be8]/20 border border-[#948be8]/30" />
                   <div className="h-10 w-3/4 rounded-xl bg-foreground/10" />
                   <div className="h-5 w-1/2 rounded-lg bg-foreground/7" />
@@ -630,7 +630,7 @@ export function LandingPageMarketing() {
       <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 text-center">
           <div className="flex -space-x-2 justify-center mb-5">
-            {["bg-[#6554e8]","bg-[#18a981]","bg-[#ff6b6b]","bg-[#3f8cff]","bg-[#948be8]"].map((c, i) => (
+            {["bg-[#6554e8]","bg-[#087a5c]","bg-[#c83f50]","bg-[#2563b8]","bg-[#6554e8]"].map((c, i) => (
               <div key={i} className={`w-9 h-9 rounded-full border-2 border-background ${c} flex items-center justify-center text-white text-[10px] font-bold`}>
                 {["AB","CD","EF","GH","IJ"][i]}
               </div>

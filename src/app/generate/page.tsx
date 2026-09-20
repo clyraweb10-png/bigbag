@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
-import { BigBagLogo } from "@/components/BigBagLogo";
 import { UserAvatar } from "@/components/auth/AuthProvider";
 import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Lightbulb, ArrowUpRight,
@@ -110,7 +109,8 @@ export default function GeneratePage() {
     if (status !== "authenticated" || !user) {
       const urlPrompt = searchParams.get("prompt") || "";
       if (urlPrompt) sessionStorage.setItem("bigbag:pending-prompt", urlPrompt);
-      router.replace("/login");
+      const returnPath = `${window.location.pathname}${window.location.search}`;
+      router.replace(`/login?next=${encodeURIComponent(returnPath)}`);
     }
   }, [status, user, router, searchParams]);
 
@@ -257,7 +257,7 @@ export default function GeneratePage() {
         <div className="mx-auto flex h-14 max-w-5xl items-center px-4 sm:px-6">
           <button
             type="button"
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/dashboard")}
             className="inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ArrowLeft className="h-4 w-4" />

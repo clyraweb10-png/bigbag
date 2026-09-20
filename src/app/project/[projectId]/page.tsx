@@ -1469,7 +1469,7 @@ export default function WorkspacePage() {
   const btnBorder = darkMode ? "border-[#333332]" : "border-[#e1e1e8]";
 
   if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
-  if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/"><Button variant="outline">{"Back"}</Button></Link></div>;
+  if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
   const popupMenu = menuOpen && (
@@ -1478,11 +1478,11 @@ export default function WorkspacePage() {
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{projectId}</p>
       </div>
       <div className="py-1">
-        <button onClick={() => { setMenuOpen(false); router.push("/"); }}
+        <button onClick={() => { setMenuOpen(false); router.push("/dashboard"); }}
           className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-gray-700 dark:text-gray-200">
           <FolderOpen className="w-4 h-4 text-gray-400" /> {"My projects"}
         </button>
-        <button onClick={() => { setMenuOpen(false); router.push("/"); }}
+        <button onClick={() => { setMenuOpen(false); router.push("/dashboard"); }}
           className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-gray-700 dark:text-gray-200">
           <Plus className="w-4 h-4 text-gray-400" /> {"New project"}
         </button>
@@ -1556,7 +1556,7 @@ export default function WorkspacePage() {
         <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
           {/* LEFT: aside width */}
           <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
-            <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
+            <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="relative flex-1 min-w-0" ref={menuRef}>
@@ -1722,7 +1722,7 @@ export default function WorkspacePage() {
         {/* Mobile header */}
         <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b" style={{ height: 44, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
           <div className="flex items-center gap-1.5">
-            <Link href="/" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
+            <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="relative" ref={menuRef}>

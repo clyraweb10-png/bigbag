@@ -23,14 +23,16 @@ const {
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const { multiModelRouter } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
 const { GEMINI_MAX_RETRIES } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { isSourceBuildFailure, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
 const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
+const { buildPexelsSearchPlan, resolvePexelsImagery } = require("../src/lib/local-orchestrator/pexels-imagery") as typeof import("../src/lib/local-orchestrator/pexels-imagery");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
+const { isProtectedPagePath, safeAuthReturnPath } = require("../src/lib/auth-redirect") as typeof import("../src/lib/auth-redirect");
 const { createAuthSession, isCloudOperator, verifyAuthSession } = require("../src/lib/auth-session") as typeof import("../src/lib/auth-session");
 const { NextRequest } = require("next/server") as typeof import("next/server");
 type LocalProjectRecord = import("../src/lib/local-orchestrator/types").LocalProjectRecord;
@@ -162,6 +164,10 @@ test("intent routing keeps conversation separate from planning and code edits", 
   assert.equal(classifyIntent("Hi, build me a responsive CRM app", "idle"), "plan");
   assert.equal(classifyIntent("portfolio website", "idle"), "plan");
   assert.equal(classifyIntent("recreate https://example.com", "idle"), "plan");
+  assert.equal(classifyIntent("recreate it from this reference", "idle"), "plan");
+  assert.equal(classifyIntent("do not build it", "awaiting_confirmation"), "update_plan");
+  assert.equal(classifyIntent("should we proceed?", "awaiting_confirmation"), "chat");
+  assert.equal(classifyIntent("Proceed!", "awaiting_confirmation"), "confirm_build");
   assert.equal(classifyIntent("thanks", "awaiting_confirmation"), "chat");
   assert.equal(classifyIntent("add a pricing page", "awaiting_confirmation"), "update_plan");
   assert.equal(classifyIntent("proceed", "awaiting_confirmation"), "confirm_build");
@@ -197,6 +203,13 @@ test("generated Tailwind CSS cannot break previews with unsupported apply utilit
   assert.equal(stripGeneratedApplyRules(css), '@import "tailwindcss";\nbody {\n\n  margin: 0;\n}\n');
   assert.equal(stripGeneratedApplyRules('body { @apply bg-background; color: black; }'), 'body {  color: black; }');
   assert.equal(stripGeneratedApplyRules('.button { @apply rounded border px-4; }'), '.button { @apply rounded border px-4; }');
+});
+
+test("only proven source compilation failures can trigger model-based repair", () => {
+  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: unexpected token")), true);
+  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
+  assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
+  assert.equal(isSourceBuildFailure(new Error("Project persistence is temporarily unavailable")), false);
 });
 
 test("runtime-owned model output is discarded without poisoning a valid page", () => {
@@ -241,6 +254,131 @@ test("generation validation rejects invented durable database methods", () => {
     content: `import db from "@/lib/db"; function run(db: { query: () => void }) { db.query(); } export default function Page(){ return <main />; }`,
   }], ["src/lib/db.ts"]);
   assert.equal(shadowedIssues.some((issue) => issue.includes("invents a database method")), false);
+});
+
+test("generation validation rejects broken imagery and fixed mobile shells", () => {
+  const issues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `export default function Page(){ return <main className="min-w-[900px]"><img src="https://picsum.photos/800/600" /></main>; }`,
+  }]);
+  assert.ok(issues.some((issue) => issue.includes("without alt text")));
+  assert.ok(issues.some((issue) => issue.includes("placeholder or random image")));
+  assert.ok(issues.some((issue) => issue.includes("fixed minimum-width")));
+
+  const sharedFallbackIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `export default function Page(){ return <main><img src="https://images.pexels.com/photo.jpeg" alt="Pottery studio" onError={(event) => event.currentTarget.naturalWidth > 0 && event.currentTarget.remove()} /></main>; }`,
+  }]);
+  assert.deepEqual(sharedFallbackIssues, []);
+
+  const prefixedAttributeIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `export default function Page(){ return <main className="md:min-w-[640px]"><img src="/photo.jpg" data-alt="Not an accessible name" /></main>; }`,
+  }]);
+  assert.ok(prefixedAttributeIssues.some((issue) => issue.includes("without alt text")));
+  assert.equal(prefixedAttributeIssues.some((issue) => issue.includes("fixed minimum-width")), false);
+
+  const cssIssues = generationValidationIssues([
+    { path: "src/app/page.tsx", content: "export default function Page(){ return <main>Ready</main>; }" },
+    { path: "src/app/globals.css", content: "@import \"tailwindcss\"; body { min-width: 800px; }" },
+  ]);
+  assert.ok(cssIssues.some((issue) => issue.includes("fixed root minimum width")));
+
+  const expressionShellIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `export default function Page(){ return <main data-ready={() => 1 > 0} className="min-w-[720px]">Ready</main>; }`,
+  }]);
+  assert.ok(expressionShellIssues.some((issue) => issue.includes("fixed minimum-width")));
+
+  const mediaRootIssues = generationValidationIssues([
+    { path: "src/app/page.tsx", content: "export default function Page(){ return <main>Ready</main>; }" },
+    { path: "src/app/globals.css", content: "@import \"tailwindcss\"; @media (min-width: 40rem) { body { min-width: 800px; } }" },
+  ]);
+  assert.ok(mediaRootIssues.some((issue) => issue.includes("fixed root minimum width")));
+
+  const expressionSourceIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `export default function Page(){ return <main className={\`min-w-[720px]\`}><img src={""} alt="Unavailable" /></main>; }`,
+  }]);
+  assert.ok(expressionSourceIssues.some((issue) => issue.includes("unresolved image source")));
+  assert.ok(expressionSourceIssues.some((issue) => issue.includes("fixed minimum-width")));
+
+  const nonRenderedMarkupIssues = generationValidationIssues([{
+    path: "src/app/page.tsx",
+    content: `const example = '<img src="" />'; /* <main className="min-w-[900px]" /> */ export default function Page(){ return <main>Ready</main>; }`,
+  }]);
+  assert.deepEqual(nonRenderedMarkupIssues, []);
+});
+
+test("Pexels sourcing is limited to image-forward prompts and returns real candidates", async () => {
+  assert.deepEqual(buildPexelsSearchPlan("Build a B2B analytics dashboard"), []);
+  const plan = buildPexelsSearchPlan("Build a warm modern restaurant for handmade pasta");
+  assert.deepEqual(plan.map((entry) => entry.orientation), ["landscape", "square", "portrait"]);
+
+  let calls = 0;
+  const context = await resolvePexelsImagery("Build a warm modern restaurant for handmade pasta", {
+    apiKey: "test-key",
+    fetchImpl: (async (input: string | URL | Request) => {
+      calls += 1;
+      const requestUrl = new URL(String(input));
+      const orientation = requestUrl.searchParams.get("orientation") || "landscape";
+      return new Response(JSON.stringify({
+        photos: [{
+          id: calls,
+          alt: `${orientation} restaurant scene`,
+          avg_color: "#6b4f3a",
+          photographer: "Test photographer",
+          src: {
+            large2x: `https://images.pexels.com/photos/${calls}/hero.jpeg`,
+            portrait: `https://images.pexels.com/photos/${calls}/portrait.jpeg`,
+            square: `https://images.pexels.com/photos/${calls}/square.jpeg`,
+          },
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch,
+  });
+  assert.equal(calls, 3);
+  assert.match(context || "", /\[PEXELS IMAGE CANDIDATES\]/);
+  assert.match(context || "", /images\.pexels\.com/);
+
+  let partialCalls = 0;
+  const partialContext = await resolvePexelsImagery("Build a modern restaurant gallery", {
+    apiKey: "test-key",
+    fetchImpl: (async () => {
+      partialCalls += 1;
+      if (partialCalls === 2) return new Response(null, { status: 503 });
+      return new Response(JSON.stringify({
+        photos: [{
+          id: 100 + partialCalls,
+          alt: "Restaurant interior",
+          photographer: "Test photographer",
+          src: { large2x: `https://images.pexels.com/photos/${100 + partialCalls}/hero.jpeg`, portrait: `https://images.pexels.com/photos/${100 + partialCalls}/portrait.jpeg`, square: `https://images.pexels.com/photos/${100 + partialCalls}/square.jpeg` },
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch,
+  });
+  assert.equal(partialCalls, 3);
+  assert.match(partialContext || "", /\[PEXELS IMAGE CANDIDATES\]/);
+
+  let failureCalls = 0;
+  const recoveredContext = await resolvePexelsImagery("Build a modern restaurant gallery", {
+    apiKey: "test-key",
+    fetchImpl: (async () => {
+      failureCalls += 1;
+      if (failureCalls === 1) throw new Error("temporary network failure");
+      if (failureCalls === 2) return new Response("not-json", { status: 200 });
+      return new Response(JSON.stringify({
+        photos: [{
+          id: 303,
+          alt: "Restaurant interior",
+          photographer: "Test photographer",
+          src: { large2x: "https://images.pexels.com/photos/303/hero.jpeg", portrait: "https://images.pexels.com/photos/303/portrait.jpeg", square: "https://images.pexels.com/photos/303/square.jpeg" },
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch,
+  });
+  assert.equal(failureCalls, 3);
+  assert.match(recoveredContext || "", /photos\/303\/portrait\.jpeg/);
 });
 
 test("preview-originated browser requests cannot reach builder APIs", () => {
@@ -290,6 +428,33 @@ test("signed auth sessions protect provider-backed APIs", async () => {
     if (previousOperators === undefined) delete process.env.VCAAS_OPERATOR_UIDS;
     else process.env.VCAAS_OPERATOR_UIDS = previousOperators;
   }
+});
+
+test("authentication redirects preserve safe app destinations and reject open redirects", async () => {
+  assert.equal(safeAuthReturnPath("/project/demo?tab=code#editor"), "/project/demo?tab=code#editor");
+  assert.equal(safeAuthReturnPath("https://attacker.example/path"), "/dashboard");
+  assert.equal(safeAuthReturnPath("//attacker.example/path"), "/dashboard");
+  assert.equal(safeAuthReturnPath("/\\attacker.example/path"), "/dashboard");
+  assert.equal(safeAuthReturnPath("/api/vcaas/projects"), "/dashboard");
+  assert.equal(safeAuthReturnPath("/api"), "/dashboard");
+  assert.equal(safeAuthReturnPath("/login"), "/dashboard");
+  assert.equal(safeAuthReturnPath("/login/continue"), "/dashboard");
+  assert.equal(isProtectedPagePath("/dashboard"), true);
+  assert.equal(isProtectedPagePath("/generate"), true);
+  assert.equal(isProtectedPagePath("/project/demo"), true);
+  assert.equal(isProtectedPagePath("/pricing"), false);
+
+  const blocked = await proxy(new NextRequest("https://builder.example.test/project/demo?tab=code"));
+  assert.equal(blocked.status, 307);
+  assert.equal(
+    blocked.headers.get("location"),
+    "https://builder.example.test/login?next=%2Fproject%2Fdemo%3Ftab%3Dcode"
+  );
+
+  const allowed = await proxy(new NextRequest("https://builder.example.test/dashboard", {
+    headers: { cookie: `bigbag_auth=${createAuthSession("firebase-user")}` },
+  }));
+  assert.equal(allowed.status, 200);
 });
 
 test("Gemini is first and GLM-5.3-Flash is the fallback", () => {

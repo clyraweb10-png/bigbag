@@ -10,6 +10,7 @@ import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "../vcaas-types";
 import { withDesignSystemPrompt } from "../design-system-prompt";
 import { analyzeWebsiteDesign, extractWebsiteUrl } from "./firecrawl-design";
+import { resolvePexelsImagery } from "./pexels-imagery";
 import {
   containsGenerationPlaceholder,
   generationValidationIssues,
@@ -49,7 +50,11 @@ The FIRST file block MUST be src/app/page.tsx, followed by src/app/globals.css w
 
 9. Build efficiency — Prefer lightweight CSS and responsive inline SVG for decorative data visualizations. Import a charting library only when the user explicitly requires that library or the requested interaction cannot reasonably be built with SVG; large chart bundles can exhaust small preview workers.
 
-10. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
+10. Real behavior — Never simulate a backend, AI response, authentication, upload, payment, save, deploy, or success state with timers or hard-coded fake results. Implement the real browser/platform data flow when the requested capability is supported. If an external capability is not available, keep the rest of the application complete and show an honest, recoverable error state instead of fake success.
+
+11. Failure recovery — Optional packages, components, and remote images must never block completion. Prefer existing components and dependencies. If an optional integration is unavailable, implement a local React/CSS equivalent, simplify only the affected feature, and preserve all working functionality. Every remote image needs a designed fallback that cannot show a broken image icon or empty placeholder.
+
+12. DON'T — NO react-dom/client imports. NO require(). NO next/* imports. NO Node built-ins. NO direct use of process.env or secret keys in client files. NO package.json/vite.config/tsconfig/postcss/src/main output. NO layout.tsx. NO explanatory text — ONLY code files. **NEVER output standalone HTML files like index.html** — always build inside src/app/page.tsx. **NEVER copy JSX such as \`{children}\` into an HTML file.**
 `;
 
 const RETRY_PROMPT = `Your previous response did not contain valid code files. You MUST respond with ONLY code file blocks in this exact format — no explanations, no thinking, no plans:
@@ -82,6 +87,20 @@ You MUST:
 `;
 
 const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
+const MAX_BUILD_REPAIR_ATTEMPTS = 5;
+const MAX_PREVIEW_INFRASTRUCTURE_RETRIES = 2;
+const BUILD_REPAIR_STRATEGIES = [
+  "Fix the direct compiler or runtime cause with the smallest targeted change.",
+  "Simplify only the failing implementation while preserving the requested behavior and visual quality.",
+  "Remove or replace the failing optional dependency with the installed React, Tailwind, or native browser stack.",
+  "Rebuild only the affected component using known installed dependencies and keep every passing area unchanged.",
+  "Use the most conservative complete fallback that preserves the core requested functionality and compiles reliably.",
+] as const;
+
+export function isSourceBuildFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Generated app failed to compile");
+}
 
 type SharedAgentRunState = {
   runs: Map<string, Promise<void>>;
@@ -642,6 +661,18 @@ export const localAgentEngine = {
           }
         }
 
+        // Photography-heavy prompts can receive real, server-resolved image
+        // candidates. This is optional by design: missing credentials, empty
+        // searches, or provider failures fall through to the design system's
+        // explicit CSS/SVG fallback instead of blocking generation.
+        try {
+          const imageryContext = await resolvePexelsImagery(prompt);
+          if (imageryContext) userPromptContent = `${userPromptContent}\n\n${imageryContext}`;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[Pexels] Image sourcing failed; using designed fallbacks: ${message}`);
+        }
+
         // MotionSites-style prompts carry precise layout, motion and art direction.
         // Keep them intact and apply our quality constraints at the model boundary,
         // not to the conversation stored and shown to the user.
@@ -815,6 +846,63 @@ export const localAgentEngine = {
           createdAt: new Date().toISOString(),
         });
 
+        const recoverPreviewInfrastructure = async (
+          initialError: unknown,
+          recoveredMessage: string
+        ): Promise<void> => {
+          let infrastructureError = initialError;
+          for (let attempt = 1; attempt <= MAX_PREVIEW_INFRASTRUCTURE_RETRIES; attempt += 1) {
+            newMessages.push({
+              author: "agent",
+              message: `Preview infrastructure failed. Retrying startup (${attempt} of ${MAX_PREVIEW_INFRASTRUCTURE_RETRIES}) without changing your source...`,
+              messageType: "building",
+              createdAt: new Date().toISOString(),
+            });
+            localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
+            try {
+              const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+              newMessages.push({
+                author: "agent",
+                message: recoveredMessage,
+                messageType: "finished",
+                createdAt: new Date().toISOString(),
+              });
+              localProjectStore.update(projectId, {
+                status: "done",
+                conversation: newMessages,
+                previewUrl,
+                serverStatus: "Active",
+              });
+              return;
+            } catch (retryError) {
+              infrastructureError = retryError;
+              console.error(`[localAgentEngine] Preview infrastructure retry ${attempt} failed:`, retryError);
+            }
+          }
+
+          if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
+          let restoredPreviewUrl: string | undefined;
+          try {
+            restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          } catch (restoreError) {
+            console.error(`[localAgentEngine] Previous preview restore failed after infrastructure error:`, restoreError);
+          }
+          newMessages.push({
+            author: "agent",
+            message: restoredPreviewUrl
+              ? "Preview infrastructure remained unavailable for the new build, so the previous working version was restored."
+              : `Preview infrastructure remained unavailable and the previous preview could not be restored: ${infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError)}`,
+            messageType: "error",
+            createdAt: new Date().toISOString(),
+          });
+          localProjectStore.update(projectId, {
+            status: "done",
+            conversation: newMessages,
+            previewUrl: restoredPreviewUrl,
+            serverStatus: restoredPreviewUrl ? "Active" : "Error",
+          });
+        };
+
         // Compile before success is shown. This is the reliability boundary that
         // prevents a model response from becoming a broken user-facing preview.
         try {
@@ -835,61 +923,97 @@ export const localAgentEngine = {
           });
         } catch (sandboxErr) {
           console.error(`[localAgentEngine] Sandbox startup failed:`, sandboxErr);
-          const buildError = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
-          newMessages.push({
-            author: "agent",
-            message: "Preview validation found a build issue. Repairing the generated code automatically...",
-            messageType: "building",
-            createdAt: new Date().toISOString(),
-          });
-          localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
 
-          try {
-            const repairResult = await multiModelRouter.complete(
-              [
-                { role: "system", content: SYSTEM_PROMPT },
-                {
-                  role: "user",
-                  content: `The generated app for this request failed its production build. Fix the implementation without weakening the requested design or removing working features. Return ONLY complete corrected file blocks. Never use @apply in CSS.\n\nOriginal request:\n${prompt}\n\nBuild error:\n${buildError}\n\nCurrent source:\n${workspaceRepairContext(projectId)}`,
-                },
-              ],
-              () => undefined,
-              {
-                deprioritizeProviderId: usedProviderId,
-                perProviderTimeoutMs: 120_000,
-                totalTimeoutMs: 210_000,
-              }
+          // Provisioning, persistence, dependency installation and preview
+          // readiness failures do not prove the generated source is wrong. Retry
+          // the real startup operation without asking a model to rewrite code.
+          if (!isSourceBuildFailure(sandboxErr)) {
+            await recoverPreviewInfrastructure(
+              sandboxErr,
+              `Application generated with ${usedModel}, then verified after the preview infrastructure recovered.`
             );
-            const repairFiles = extractFilesFromMarkdown(repairResult.text);
-            postProcessGeneratedFiles(repairFiles);
-            assertUsableGeneratedFiles(repairFiles, "repair", availableWorkspacePaths(projectId));
+            return;
+          }
 
-            for (const file of repairFiles) {
-              let fileContent = file.content;
-              if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
-              if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
-                fileContent = fixCssImportOrder(fileContent);
-              }
-              localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
-            }
-            purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
-            ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));
+          let repairError: unknown = sandboxErr;
+          let repaired = false;
 
-            const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          for (let attempt = 1; attempt <= MAX_BUILD_REPAIR_ATTEMPTS; attempt += 1) {
+            const strategy = BUILD_REPAIR_STRATEGIES[attempt - 1];
+            const buildError = repairError instanceof Error ? repairError.message : String(repairError);
             newMessages.push({
               author: "agent",
-              message: `Application generated, automatically repaired, and verified in the live preview using ${repairResult.usedModel}.`,
-              messageType: "finished",
+              message: `Build validation failed. Running repair attempt ${attempt} of ${MAX_BUILD_REPAIR_ATTEMPTS}: ${strategy}`,
+              messageType: "building",
               createdAt: new Date().toISOString(),
             });
-            localProjectStore.update(projectId, {
-              status: "done",
-              conversation: newMessages,
-              previewUrl,
-              serverStatus: "Active",
-            });
-          } catch (repairError) {
-            console.error(`[localAgentEngine] Automatic repair failed:`, repairError);
+            localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
+
+            try {
+              const repairResult = await multiModelRouter.complete(
+                [
+                  { role: "system", content: SYSTEM_PROMPT },
+                  {
+                    role: "user",
+                    content: `The generated app failed real production validation. Repair the implementation and return ONLY complete corrected file blocks. Never use @apply in CSS. Preserve every working feature and do not report success; the platform will rebuild and verify it.\n\nRepair strategy for this attempt:\n${strategy}\n\nOriginal request:\n${prompt}\n\nLatest validation error:\n${buildError}\n\nCurrent source:\n${workspaceRepairContext(projectId)}`,
+                  },
+                ],
+                () => undefined,
+                {
+                  deprioritizeProviderId: usedProviderId,
+                  perProviderTimeoutMs: 120_000,
+                  totalTimeoutMs: 210_000,
+                }
+              );
+              const repairFiles = extractFilesFromMarkdown(repairResult.text);
+              postProcessGeneratedFiles(repairFiles);
+              assertUsableGeneratedFiles(repairFiles, "repair", availableWorkspacePaths(projectId));
+
+              for (const file of repairFiles) {
+                let fileContent = file.content;
+                if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
+                if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
+                  fileContent = fixCssImportOrder(fileContent);
+                }
+                localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
+              }
+              purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
+              ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));
+
+              let previewUrl: string;
+              try {
+                previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+              } catch (deploymentError) {
+                if (isSourceBuildFailure(deploymentError)) throw deploymentError;
+                console.error(`[localAgentEngine] Repair attempt ${attempt} reached preview infrastructure failure:`, deploymentError);
+                await recoverPreviewInfrastructure(
+                  deploymentError,
+                  `Application generated, repaired on attempt ${attempt}, and verified after the preview infrastructure recovered.`
+                );
+                repaired = true;
+                break;
+              }
+              newMessages.push({
+                author: "agent",
+                message: `Application generated, repaired on attempt ${attempt}, and verified in the live preview using ${repairResult.usedModel}.`,
+                messageType: "finished",
+                createdAt: new Date().toISOString(),
+              });
+              localProjectStore.update(projectId, {
+                status: "done",
+                conversation: newMessages,
+                previewUrl,
+                serverStatus: "Active",
+              });
+              repaired = true;
+              break;
+            } catch (attemptError) {
+              repairError = attemptError;
+              console.error(`[localAgentEngine] Repair attempt ${attempt} failed:`, attemptError);
+            }
+          }
+
+          if (!repaired) {
             if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
 
             let restoredPreviewUrl: string | undefined;
@@ -902,7 +1026,7 @@ export const localAgentEngine = {
             newMessages.push({
               author: "agent",
               message: restoredPreviewUrl
-                ? "The requested change could not be compiled safely, so the previous working version was restored. Please retry or adjust the prompt."
+                ? `The requested change did not pass validation after ${MAX_BUILD_REPAIR_ATTEMPTS} repair attempts, so the previous working version was restored. Please retry or adjust the prompt.`
                 : `Generation failed validation and the preview could not be restored: ${repairError instanceof Error ? repairError.message : String(repairError)}`,
               messageType: "error",
               createdAt: new Date().toISOString(),

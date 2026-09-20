@@ -141,6 +141,62 @@ function sourceSyntaxIssue(filePath: string, content: string): string | null {
   return diagnostic ? ts.flattenDiagnosticMessageText(diagnostic.messageText, " ") : null;
 }
 
+function jsxOpeningTags(content: string, tagName: "img" | "main" | "section"): string[] {
+  const tags: string[] = [];
+  const sourceFile = sourceFileFor("generated-visual-check.tsx", content);
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      node.tagName.getText(sourceFile).toLowerCase() === tagName
+    ) {
+      tags.push(content.slice(node.getStart(sourceFile), node.end));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return tags;
+}
+
+function visualQualityIssues(filePath: string, content: string): string[] {
+  const issues: string[] = [];
+  if (/\.(?:tsx?|jsx?)$/.test(filePath)) {
+    const imageTags = jsxOpeningTags(content, "img");
+    for (const tag of imageTags) {
+      if (!/(?:^|\s)alt\s*=/.test(tag)) {
+        issues.push(`${filePath} contains an image without alt text`);
+      }
+      if (/\bsrc\s*=\s*(?:["']\s*(?:#|about:blank)?\s*["']|\{\s*["']\s*(?:#|about:blank)?\s*["']\s*\})/i.test(tag)) {
+        issues.push(`${filePath} contains an unresolved image source`);
+      }
+      if (/\b(?:placeholder\.com|placehold\.co|via\.placeholder|picsum\.photos|source\.unsplash\.com)\b/i.test(tag)) {
+        issues.push(`${filePath} contains a placeholder or random image endpoint`);
+      }
+    }
+
+    const shellTags = [
+      ...jsxOpeningTags(content, "main"),
+      ...jsxOpeningTags(content, "section"),
+    ];
+    for (const tag of shellTags) {
+      const fixedMinimum = tag.match(/(?:["'`]|\s)min-w-\[(\d+)px\](?=\s|["'`])/);
+      if (fixedMinimum && Number(fixedMinimum[1]) > 390) {
+        issues.push(`${filePath} contains a fixed minimum-width page section that can overflow mobile viewports`);
+      }
+    }
+  }
+
+  if (filePath.endsWith(".css")) {
+    const rootRules = content.match(/(?:^|[;{}])\s*(?:html|body|#root)(?:\s*,\s*(?:html|body|#root))*\s*\{[^}]*}/gim) || [];
+    for (const rule of rootRules) {
+      const minimum = rule.match(/min-width\s*:\s*(\d+)px/i);
+      if (minimum && Number(minimum[1]) > 390) {
+        issues.push(`${filePath} sets a fixed root minimum width that can cause document-level horizontal scrolling`);
+      }
+    }
+  }
+  return issues;
+}
+
 const UNSUPPORTED_DIRECT_DATABASE_METHODS = new Set([
   "list", "get", "create", "update", "remove", "putMany", "query", "insert", "delete",
 ]);
@@ -326,6 +382,7 @@ export function generationValidationIssues(
     generatedPaths.add(file.path);
     if (isRuntimeOwnedGeneratedPath(file.path)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
+    issues.push(...visualQualityIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
       if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);

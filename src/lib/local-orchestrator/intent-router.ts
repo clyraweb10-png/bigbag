@@ -50,6 +50,11 @@ const CONFIRM_PHRASES: string[] = [
   "generate it",
 ];
 
+function confirmsBuild(message: string): boolean {
+  const normalized = message.trim().toLowerCase().replace(/[.!]+$/g, "").trim();
+  return CONFIRM_PHRASES.includes(normalized);
+}
+
 /**
  * Short messages that are almost certainly chitchat, not app descriptions.
  * Checked before deciding to generate a plan.
@@ -104,8 +109,9 @@ export function classifyIntent(
   // Planning in progress — don't re-plan.
   if (stage === "planning") return "chat";
 
-  // Awaiting confirmation or confirm phrases: proceed immediately.
-  if (CONFIRM_PHRASES.some((phrase) => norm.includes(phrase))) {
+  // An explicit, complete confirmation reply can proceed at any non-running
+  // stage. Embedded or negated phrases must never trigger a build.
+  if (confirmsBuild(norm)) {
     return "confirm_build";
   }
 
@@ -118,8 +124,12 @@ export function classifyIntent(
     return "chat";
   }
 
-  // If prompt has no question, user wants to create a build -> directly proceed to build
-  return "confirm_build";
+  // Once a plan exists, non-confirming product changes refine that plan.
+  if (stage === "awaiting_confirmation") return "update_plan";
+
+  // A fresh product request first gets the conversational planning pass. The
+  // user can then explicitly confirm it, while ordinary chat stays in chat mode.
+  return BUILD_ACTION.test(norm) || APP_SUBJECT.test(norm) ? "plan" : "chat";
 }
 
 /** Infer a stage from a conversation history on page load (no store persistence needed). */
