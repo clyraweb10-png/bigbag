@@ -9,7 +9,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
-import { resolveAppOrigin } from "@/lib/auth-redirect";
+import { oauthCallbackUrl, resolveAppOrigin } from "@/lib/auth-redirect";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface AuthUser {
@@ -195,7 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         sessionStorage.setItem("bigbag:auth:origin", origin);
       } catch {}
-      const redirectTo = `${origin}/auth/callback`;
+      const redirectTo = oauthCallbackUrl(origin);
       const { data, error: signInError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {

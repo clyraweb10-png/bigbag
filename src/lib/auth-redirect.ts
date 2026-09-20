@@ -1,6 +1,7 @@
 const LOCAL_ORIGIN = "https://bigbag.local";
 
 export const DEFAULT_AUTH_RETURN_PATH = "/dashboard";
+export const OAUTH_CALLBACK_PATH = "/api/auth/callback";
 
 /**
  * Accept only same-origin application paths after sign-in. Parsing against a
@@ -44,6 +45,15 @@ export const PRODUCTION_APP_ORIGIN: string =
     return "https://vibecode-spzy.onrender.com";
   })();
 export const LOCAL_DEV_ORIGIN = "http://localhost:3000";
+
+/**
+ * Supabase must return through the server callback registered for this app.
+ * That route preserves the PKCE query and forwards it to the browser callback,
+ * where the verifier is available in localStorage.
+ */
+export function oauthCallbackUrl(origin = resolveAppOrigin()): string {
+  return new URL(OAUTH_CALLBACK_PATH, `${origin}/`).toString();
+}
 
 /**
  * Resolves the canonical application origin for post-login redirects and OAuth callbacks.
