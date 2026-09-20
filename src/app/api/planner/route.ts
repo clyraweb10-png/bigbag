@@ -62,12 +62,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(response);
   } catch (err) {
     console.error("[/api/planner] Error:", err);
+    // Provider availability is an expected application-level outcome. Keep the
+    // stable JSON envelope and avoid a browser-level 503 while the build route's
+    // own model fallback remains available.
     return NextResponse.json(
       {
         ok: false,
-        error: (err as Error).message || "Planner failed",
-      },
-      { status: 503 }
+        error: "Planning is temporarily unavailable. You can still send the build request directly.",
+      }
     );
   }
 }

@@ -726,7 +726,7 @@ export const localAgentEngine = {
         );
 
         const content = routerResult.text;
-        let usedModel = routerResult.usedModel;
+        let usedPublicModelName = routerResult.publicModelName;
         let usedProviderId = routerResult.providerId;
 
         // Extract files from generated markdown, with auto-retry on failure
@@ -776,7 +776,7 @@ export const localAgentEngine = {
               throw new Error(`Retry remained incomplete: ${validationIssues.join("; ")}`);
             }
             files = mergedFiles;
-            usedModel = retryResult.usedModel;
+            usedPublicModelName = retryResult.publicModelName;
             usedProviderId = retryResult.providerId;
             console.log(`[localAgentEngine] Retry succeeded: ${retryFiles.length} files extracted`);
           } catch (retryErr: any) {
@@ -911,7 +911,7 @@ export const localAgentEngine = {
 
           newMessages.push({
             author: "agent",
-            message: `Application generated successfully with ${usedModel}! Generated ${files.length || 1} files, verified the disposable build, and deployed the persistent preview.`,
+            message: `Application generated successfully with ${usedPublicModelName}! Generated ${files.length || 1} files, verified the disposable build, and deployed the persistent preview.`,
             messageType: "finished",
             createdAt: new Date().toISOString(),
           });
@@ -930,7 +930,7 @@ export const localAgentEngine = {
           if (!isSourceBuildFailure(sandboxErr)) {
             await recoverPreviewInfrastructure(
               sandboxErr,
-              `Application generated with ${usedModel}, then verified after the preview infrastructure recovered.`
+              `Application generated with ${usedPublicModelName}, then verified after the preview infrastructure recovered.`
             );
             return;
           }
@@ -995,7 +995,7 @@ export const localAgentEngine = {
               }
               newMessages.push({
                 author: "agent",
-                message: `Application generated, repaired on attempt ${attempt}, and verified in the live preview using ${repairResult.usedModel}.`,
+                message: `Application generated, repaired on attempt ${attempt}, and verified in the live preview using ${repairResult.publicModelName}.`,
                 messageType: "finished",
                 createdAt: new Date().toISOString(),
               });
