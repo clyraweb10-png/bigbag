@@ -404,7 +404,7 @@ export default function GeneratePage() {
                 onClick={() => void handleSubmit()}
                 disabled={(!prompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                 aria-label="Send"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#948BE8] text-white shadow-xs transition-all hover:bg-[#8379dc] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
               </button>

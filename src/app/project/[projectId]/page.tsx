@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { vcaasApi } from "@/lib/vcaas";
 import { Button } from "@/components/ui/button";
 import {
-  Rocket, Loader2, Globe, Terminal,
+  Rocket, Globe, Terminal,
   Server, PanelLeftClose, PanelLeft, Laptop, Smartphone,
   ExternalLink, ChevronDown, FolderOpen, Plus,
   Github, ArrowLeft, Figma, Copy,
@@ -29,7 +29,7 @@ import { GithubModal } from "@/components/workspace/GithubModal";
 import { DeployControl } from "@/components/workspace/DeployControl";
 import { CloneProjectDialog } from "@/components/workspace/ProjectTransferDialogs";
 import { DiffViewer, type DiffSource } from "@/components/workspace/DiffViewer";
-import { Modal } from "@/components/primitives";
+import { Modal, SkeletonWorkspace } from "@/components/primitives";
 import { ImportOverlay } from "@/components/workspace/ImportOverlay";
 import { PathPicker } from "@/components/workspace/PathPicker";
 import { looksLikePlaceholder } from "@/lib/preview-health";
@@ -648,20 +648,19 @@ export default function WorkspacePage() {
     let cancelled = false;
     async function init() {
       setLoading(true);
-      const [proj, , , rebuildStatus] = await Promise.all([fetchProject(), fetchConversation(), fetchGithubStatus(), vcaasApi.rebuild.status(projectId)]);
-      if (cancelled) return; setLoading(false);
+      const [proj] = await Promise.all([fetchProject(), fetchConversation()]);
+      if (cancelled) return;
+      setLoading(false);
+
       if (proj?.agentProcessStatus === "init") startAgentPolling();
       if (proj?.deployment?.status === "deploying") { setDeploying(true); pollDeployOnce(); }
-      /**
-       * ⭐ A REBUILD THE SERVER IS RUNNING AND WE HAVE NO STAMP FOR. A visual apply (or a
-       * file save) starts a rebuild on the server; until now the only record of it was
-       * the `localStorage` stamp written by the tab that pressed Save. Reload mid-rebuild
-       * and the workspace looked idle over a dev server being replaced. Adopting it here
-       * restores the banner, and the watcher below settles it — same as the platform.
-       */
-      if (shouldAdoptServerRebuild(rebuildStatus.ok ? rebuildStatus.data?.status : null, operation.current())) {
-        operation.adopt("rebuild");
-      }
+
+      void Promise.all([fetchGithubStatus(), vcaasApi.rebuild.status(projectId)]).then(([, rebuildStatus]) => {
+        if (cancelled || !rebuildStatus) return;
+        if (shouldAdoptServerRebuild(rebuildStatus.ok ? rebuildStatus.data?.status : null, operation.current())) {
+          operation.adopt("rebuild");
+        }
+      });
       /**
        * ⭐⭐ AN IMPORT IS ADOPTED WITH THE SERVER'S OWN CLOCK, AND IT OUTRANKS THE REST.
        * `importInProgress` is a lock held and dated by the server, so a clone that was
@@ -1464,17 +1463,17 @@ export default function WorkspacePage() {
    */
   const shownPreviewUrl = previewUrl;
   const leftHeaderWidth = chatCollapsed ? "auto" : chatWidth + 5;
-  const pageBg = darkMode ? "#1d1d1c" : "#FFFFFF";
+  const pageBg = darkMode ? "#252525" : "#FFFFFF";
   const cardBg = darkMode ? "#252525" : "#FFFFFF";
   const btnBorder = darkMode ? "border-[#333332]" : "border-[#e1e1e8]";
 
-  if (loading) return <div className="h-screen flex flex-col items-center justify-center gap-3 text-foreground bg-background"><Loader2 className="w-7 h-7 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{"Loading..."}</p></div>;
+  if (loading) return <SkeletonWorkspace />;
   if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
   const popupMenu = menuOpen && (
-    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: cardBg, border: `1px solid ${darkMode ? "#3A3A3A" : "#DDDDD5"}` }}>
-      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#3A3A3A" : "#DDDDD5" }}>
+    <div data-popup-menu className="absolute top-full left-0 mt-1.5 w-56 rounded-xl shadow-xl z-[60] overflow-hidden" style={{ background: cardBg, border: `1px solid ${darkMode ? "#333332" : "#DDDDD5"}` }}>
+      <div className="px-3 py-2 border-b" style={{ borderColor: darkMode ? "#333332" : "#DDDDD5" }}>
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{projectId}</p>
       </div>
       <div className="py-1">
@@ -1553,7 +1552,7 @@ export default function WorkspacePage() {
       {/* ═══ DESKTOP LAYOUT ═══ */}
       <div className="hidden sm:flex flex-col h-full">
         {/* Desktop header 48px */}
-        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
+        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
           {/* LEFT: aside width */}
           <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
             <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
@@ -1592,7 +1591,7 @@ export default function WorkspacePage() {
                       onClick={() => setActiveTab(tab.id)}
                       className={
                         isActive
-                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shrink-0 cursor-pointer"
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
                           : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
                       }
                       title={tab.label}
@@ -1623,7 +1622,7 @@ export default function WorkspacePage() {
             </div>
             <button
               onClick={() => setOpenModal("secrets")}
-              className="h-7.5 w-7.5 flex items-center justify-center rounded-full transition-all shrink-0 neon-glow-magenta cursor-pointer"
+              className="h-7.5 w-7.5 flex items-center justify-center rounded-full transition-all shrink-0 colourless-glass cursor-pointer"
               title="API / Secrets"
             >
               <KeyRound className="w-3.5 h-3.5" />
@@ -1744,7 +1743,7 @@ export default function WorkspacePage() {
       {/* ═══ MOBILE LAYOUT: header → content → fixed switch → fixed textarea ═══ */}
       <div className="flex sm:hidden flex-col h-full">
         {/* Mobile header */}
-        <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b" style={{ height: 44, borderColor: darkMode ? "#3A3A3A" : "#DDDDD5", background: pageBg }}>
+        <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b" style={{ height: 44, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
           <div className="flex items-center gap-1.5">
             <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />

@@ -32,6 +32,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { SetupBanners } from "@/components/SetupBanners";
+import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitives";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
@@ -592,7 +593,7 @@ export function DashboardContent() {
                     )}
                     {landingMessages.length > 0 && !plannerRunning && (
                       <div className="pl-11">
-                        <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-all font-medium">
+                        <Button onClick={() => openBuildModal()} className="h-10 rounded-xl px-4 colourless-glass transition-all font-medium cursor-pointer">
                           <svg
                             className="mr-2 h-4 w-4 shrink-0"
                             viewBox="0 0 24 24"
@@ -684,9 +685,9 @@ export function DashboardContent() {
                       onClick={() => void submitLandingMessage()}
                       disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                       aria-label="Send"
-                      className="flex h-8 w-8 items-center justify-center rounded-full bg-[#948BE8] text-white shadow-xs transition-all hover:bg-[#8379dc] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
-                      {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <ArrowRight className="h-4 w-4 text-white" />}
+                      {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
@@ -697,10 +698,12 @@ export function DashboardContent() {
           </div>
 
         {!chatOpen && projectsLoading && (
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Loading projects">
-            {[0, 1, 2].map((item) => (
-              <div key={item} className="h-48 animate-pulse rounded-xl border border-border bg-card" />
-            ))}
+          <div className="mb-6">
+            {viewMode === "table" ? (
+              <SkeletonProjectTable rows={4} />
+            ) : (
+              <SkeletonProjectGrid count={3} />
+            )}
           </div>
         )}
 
@@ -777,14 +780,14 @@ export function DashboardContent() {
                   <button
                     onClick={() => chooseView("cards")}
                     title="Card view"
-                    className={`h-7 w-7 flex items-center justify-center rounded-md transition-all ${resolvedView === "cards" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`h-7 w-7 flex items-center justify-center rounded-md transition-all ${resolvedView === "cards" ? "colourless-glass font-medium" : "text-muted-foreground hover:text-foreground"}`}
                   >
                     <Grid2X2 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => chooseView("table")}
                     title="Table view"
-                    className={`h-7 w-7 flex items-center justify-center rounded-md transition-all ${resolvedView === "table" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`h-7 w-7 flex items-center justify-center rounded-md transition-all ${resolvedView === "table" ? "colourless-glass font-medium" : "text-muted-foreground hover:text-foreground"}`}
                   >
                     <Rows3 className="w-3.5 h-3.5" />
                   </button>
@@ -802,7 +805,7 @@ export function DashboardContent() {
                 {/* New project */}
                 <button
                   onClick={focusComposer}
-                  className="flex items-center gap-1 text-xs text-primary-foreground bg-primary hover:bg-primary/90 h-8 px-3 rounded-lg transition-all shadow-xs"
+                  className="flex items-center gap-1 text-xs colourless-glass h-8 px-3 rounded-lg transition-all shadow-xs cursor-pointer"
                   title="New project"
                 >
                   <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New</span>

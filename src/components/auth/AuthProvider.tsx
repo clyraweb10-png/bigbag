@@ -209,18 +209,18 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
 
   const isDark = mounted ? resolvedTheme !== "light" : true;
   const theme = isDark ? "dark" : "light";
-  const emblemBg = isDark ? "#1d1d1c" : "#ffffff";
+  const emblemBg = isDark ? "#252525" : "#ffffff";
 
   return (
-    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-white dark:bg-[#1d1d1c] text-zinc-900 dark:text-white flex flex-col justify-between select-none transition-colors duration-200">
+    <main className="relative min-h-[100dvh] w-full overflow-hidden bg-white dark:bg-[#252525] text-zinc-900 dark:text-white flex flex-col justify-between select-none transition-colors duration-200">
       {/* ═══ 6 DISTINCT FLOATING MOCKUP CARDS (3 LEFT, 3 RIGHT, RESPONSIVE) ═══ */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden select-none">
-        {/* Ambient background: white in light mode, #1d1d1c in dark mode */}
-        <div className="absolute inset-0 bg-white dark:bg-[#1d1d1c] transition-colors duration-200" />
+        {/* Ambient background: white in light mode, #252525 in dark mode */}
+        <div className="absolute inset-0 bg-white dark:bg-[#252525] transition-colors duration-200" />
 
         {/* ─── LEFT SIDE CARDS (3 CARDS) ─── */}
         {/* Card 1 (Left Top): Pulse Analytics Dashboard */}
-        <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[12deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute -top-4 -left-12 sm:-left-6 md:left-[1%] lg:left-[2%] xl:left-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[12deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardLeft1Light} alt="SaaS Analytics Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -228,7 +228,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
         </div>
 
         {/* Card 2 (Left Middle): Aura E-Commerce Store */}
-        <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[15deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute top-[32%] -left-16 sm:-left-8 md:left-[0%] lg:left-[1%] xl:left-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[15deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardLeft2Light} alt="E-Commerce Fashion Store" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -236,7 +236,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
         </div>
 
         {/* Card 3 (Left Bottom): Video Ad Studio */}
-        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute -bottom-8 -left-10 sm:-left-4 md:left-[2%] lg:left-[3%] xl:left-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 -rotate-[8deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardLeft3Light} alt="Video Ad Studio" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -245,7 +245,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
 
         {/* ─── RIGHT SIDE CARDS (3 CARDS) ─── */}
         {/* Card 4 (Right Top): Build Unicorns Founder Platform */}
-        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[14deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute -top-4 -right-12 sm:-right-6 md:right-[1%] lg:right-[2%] xl:right-[3%] w-[190px] sm:w-[240px] md:w-[270px] lg:w-[310px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[14deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardRight1Light} alt="Founder Platform" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -253,7 +253,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
         </div>
 
         {/* Card 5 (Right Middle): Pulse Studio Dashboard */}
-        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[17deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute top-[32%] -right-16 sm:-right-8 md:right-[0%] lg:right-[1%] xl:right-[2%] w-[180px] sm:w-[220px] md:w-[250px] lg:w-[290px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[17deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardRight3Light} alt="Pulse Studio Dashboard" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -261,7 +261,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
         </div>
 
         {/* Card 6 (Right Bottom): Mobile Health & Finance App */}
-        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[270px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[22deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#1d1d1c]">
+        <div className="absolute -bottom-8 -right-10 sm:-right-4 md:right-[2%] lg:right-[3%] xl:right-[4%] w-[170px] sm:w-[210px] md:w-[240px] lg:w-[280px] rounded-2xl overflow-hidden shadow-xl shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/60 rotate-[22deg] opacity-85 sm:opacity-90 md:opacity-95 lg:opacity-100 transition-all bg-white dark:bg-[#252525]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={CLOUDINARY_ASSETS.cardRight2Light} alt="Mobile Health App" className="w-full h-auto object-cover rounded-2xl border border-zinc-200/80 dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -269,7 +269,7 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
         </div>
 
         {/* Center radial overlay so text and login button are 100% readable, without washing out the floating cards */}
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.98)_0%,rgba(255,255,255,0.85)_30%,transparent_60%)] dark:bg-[radial-gradient(circle_at_50%_50%,rgba(29,29,28,0.98)_0%,rgba(29,29,28,0.85)_30%,transparent_60%)] transition-all duration-200" />
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.98)_0%,rgba(255,255,255,0.85)_30%,transparent_60%)] dark:bg-[radial-gradient(circle_at_50%_50%,rgba(37,37,37,0.98)_0%,rgba(37,37,37,0.85)_30%,transparent_60%)] transition-all duration-200" />
       </div>
 
       {/* ═══ TOP HEADER ═══ */}
@@ -322,10 +322,10 @@ export function SignInScreen({ status, error, onSignIn }: { status: AuthStatus; 
               type="button"
               onClick={() => void onSignIn()}
               disabled={status === "loading"}
-              className="w-full h-11 sm:h-12 rounded-full bg-white text-zinc-900 border border-zinc-200/90 shadow-md shadow-zinc-900/5 hover:bg-zinc-50 dark:border-transparent dark:text-[#1d1d1c] dark:shadow-lg dark:shadow-white/5 dark:hover:bg-zinc-100 font-semibold text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 active:scale-[0.99] transition-all disabled:opacity-60 cursor-pointer"
+              className="w-full h-11 sm:h-12 rounded-full colourless-glass font-semibold text-[14px] sm:text-[15px] flex items-center justify-center gap-2.5 active:scale-[0.99] transition-all disabled:opacity-60 cursor-pointer"
             >
               {status === "loading" ? (
-                <Loader2 className="h-4 w-4 animate-spin text-zinc-900 dark:text-[#1d1d1c]" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <GoogleMark className="h-4 w-4 shrink-0" />
               )}

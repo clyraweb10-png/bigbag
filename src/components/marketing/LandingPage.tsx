@@ -308,7 +308,7 @@ export function LandingPageMarketing() {
                   onClick={handleSubmit}
                   disabled={(!prompt.trim() && attachedFiles.length === 0) || submitting}
                   aria-label="Send"
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[#948BE8] text-white transition-all hover:bg-[#8379dc] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {submitting
                     ? <Loader2 className="h-4 w-4 animate-spin" />
@@ -427,9 +427,9 @@ export function LandingPageMarketing() {
           </div>
 
           {/* Workspace mockup */}
-          <div className="rounded-2xl border border-border overflow-hidden shadow-xl bg-[#1d1d1c]">
+          <div className="rounded-2xl border border-border overflow-hidden shadow-xl bg-[#252525]">
             {/* Top bar */}
-            <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4 border-b border-[#333332] bg-[#1d1d1c]">
+            <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4 border-b border-[#333332] bg-[#252525]">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-[#333332]" />
                 <div className="w-3 h-3 rounded-full bg-[#333332]" />
@@ -455,7 +455,7 @@ export function LandingPageMarketing() {
                     I&apos;ve generated your SaaS landing page with hero, pricing, and testimonials sections.
                   </div>
                 </div>
-                <div className="self-end bg-[#1d1d1c] border border-[#333332] rounded-xl rounded-br-none px-3 py-2 text-[11px] text-[#f4f4f7] max-w-[80%]">
+                <div className="self-end bg-[#252525] border border-[#333332] rounded-xl rounded-br-none px-3 py-2 text-[11px] text-[#f4f4f7] max-w-[80%]">
                   Add a dark mode toggle
                 </div>
                 <div className="flex gap-2 items-start">

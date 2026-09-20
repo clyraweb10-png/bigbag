@@ -98,7 +98,7 @@
 }
 
 .dark {
-  --background: #1d1d1c;
+  --background: #252525;
   --foreground: #f4f4f7;
   --card: #252525;
   --card-foreground: #f4f4f7;
@@ -121,7 +121,7 @@
   --chart-3: #47d6ae;
   --chart-4: #75aaff;
   --chart-5: #3a3a46;
-  --sidebar: #1d1d1c;
+  --sidebar: #252525;
   --sidebar-foreground: #f4f4f7;
   --sidebar-primary: #948be8;
   --sidebar-primary-foreground: #19191f;
@@ -137,7 +137,7 @@
   --studio-coral: #ff8383;
   --studio-mint: #47d6ae;
   --studio-blue: #75aaff;
-  --user-bubble: #1d1d1c;
+  --user-bubble: #252525;
   --textarea-bg: #252525;
 }
 
@@ -262,18 +262,127 @@ button {
   box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.5);
 }
 
-/* Neon Glow Magenta (#9C2780) treatment */
-.neon-glow-magenta {
-  background: linear-gradient(180deg, #2f0c26 0%, #9C2780 100%) !important;
-  border: 1.5px solid #ba68a6 !important;
-  box-shadow: 0 0 12px rgba(156, 39, 128, 0.5), 0 0 32px rgba(156, 39, 128, 0.25) !important;
-  color: #fce7f7 !important;
+/* Colourless glass effect (modern frosted glassmorphism without color tint) */
+.colourless-glass {
+  background: rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2), 0 4px 16px -2px rgba(0, 0, 0, 0.25) !important;
+  color: #ffffff !important;
 }
 
-.neon-glow-magenta:hover {
-  filter: brightness(1.1);
+.colourless-glass:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(255, 255, 255, 0.28) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0 6px 20px -2px rgba(0, 0, 0, 0.3) !important;
+  color: #ffffff !important;
+  filter: none !important;
 }
 
-.neon-glow-magenta:active {
-  transform: scale(0.97);
+.colourless-glass:active {
+  background: rgba(255, 255, 255, 0.06) !important;
+  transform: scale(0.97) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SKELETON & SHIMMER PRELOADER EFFECTS
+   Smooth flowing luminous wave across all skeleton surfaces
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes tp-shimmer {
+  0% {
+    transform: translate3d(-100%, 0, 0);
+  }
+  100% {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+.tp-shimmer {
+  position: absolute;
+  inset: 0;
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.01) 20%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.01) 80%,
+    transparent 100%
+  );
+  animation: tp-shimmer 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+html:not(.dark) .tp-shimmer,
+:root:not(.dark) .tp-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.1) 80%,
+    transparent 100%
+  );
+}
+
+/* Standalone shimmer overlay utility */
+.shimmer-fx {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.01) 20%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.01) 80%,
+    transparent 100%
+  );
+  animation: tp-shimmer 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+html:not(.dark) .shimmer-fx::after,
+:root:not(.dark) .shimmer-fx::after {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 20%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.1) 80%,
+    transparent 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tp-shimmer,
+  .shimmer-fx::after {
+    animation: none !important;
+    display: none !important;
+  }
+}
+
+html:not(.dark) .colourless-glass {
+  background: rgba(0, 0, 0, 0.06) !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  border: 1px solid rgba(0, 0, 0, 0.12) !important;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.6), 0 4px 16px -2px rgba(0, 0, 0, 0.08) !important;
+  color: #111827 !important;
+}
+
+html:not(.dark) .colourless-glass:hover {
+  background: rgba(0, 0, 0, 0.1) !important;
+  border-color: rgba(0, 0, 0, 0.18) !important;
+  color: #000000 !important;
+}
+
