@@ -261,3 +261,19 @@ button {
 .dark .lovable-card {
   box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.5);
 }
+
+/* Neon Glow Magenta (#9C2780) treatment */
+.neon-glow-magenta {
+  background: linear-gradient(180deg, #2f0c26 0%, #9C2780 100%) !important;
+  border: 1.5px solid #ba68a6 !important;
+  box-shadow: 0 0 12px rgba(156, 39, 128, 0.5), 0 0 32px rgba(156, 39, 128, 0.25) !important;
+  color: #fce7f7 !important;
+}
+
+.neon-glow-magenta:hover {
+  filter: brightness(1.1);
+}
+
+.neon-glow-magenta:active {
+  transform: scale(0.97);
+}

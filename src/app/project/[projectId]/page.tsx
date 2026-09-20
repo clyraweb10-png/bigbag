@@ -9,7 +9,7 @@ import {
   Server, PanelLeftClose, PanelLeft, Laptop, Smartphone,
   ExternalLink, ChevronDown, FolderOpen, Plus,
   Github, ArrowLeft, Figma, Copy,
-  RotateCw, Compass, HardDrive, Braces, History, KeyRound,
+  RotateCw, Eye, Database as DatabaseIcon, Code2, History, KeyRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -309,9 +309,9 @@ export default function WorkspacePage() {
   const blocked = useServerBlocked();
 
   const TABS = [
-    { id: "preview", label: "Preview", icon: Compass },
-    { id: "database", label: "Database", icon: HardDrive },
-    { id: "code", label: "Code", icon: Braces },
+    { id: "preview", label: "Preview", icon: Eye },
+    { id: "database", label: "Database", icon: DatabaseIcon },
+    { id: "code", label: "Code", icon: Code2 },
   ];
 
   // The errands, for the mobile menu: each opens a modal rather than a tab.
@@ -1576,13 +1576,33 @@ export default function WorkspacePage() {
           </div>
           {/* RIGHT: preview width */}
           <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
-            <div className="flex items-center gap-1 shrink-0 p-0.5 rounded-lg border border-border bg-secondary/50">
-              {TABS.map((tab) => (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium transition-all ${activeTab === tab.id ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:text-foreground hover:bg-card/60"}`}>
-                  <tab.icon className="w-3.5 h-3.5" /><span className="hidden lg:inline">{tab.label}</span>
-                </button>
-              ))}
+            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
+              {TABS.map((tab, idx) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <div key={tab.id} className="flex items-center">
+                    {idx === 2 && activeTab !== "code" && (
+                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
+                    )}
+                    {idx === 1 && activeTab === "code" && (
+                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={
+                        isActive
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shrink-0 cursor-pointer"
+                          : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+                      }
+                      title={tab.label}
+                    >
+                      <tab.icon className={isActive ? "w-3.5 h-3.5 shrink-0" : "w-4 h-4 shrink-0"} />
+                      {isActive && <span>{tab.label}</span>}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             <div className="flex-1 flex items-center justify-center min-w-0">
               <div className={`flex items-center h-8 w-[340px] rounded-full border ${btnBorder} bg-card/80 px-2 gap-1.5 shadow-xs`}>
@@ -1601,7 +1621,11 @@ export default function WorkspacePage() {
                 {previewUrl && <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>}
               </div>
             </div>
-            <button onClick={() => setOpenModal("secrets")} className={`h-8 w-8 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-muted-foreground hover:text-foreground hover:bg-accent`} title={translate("workspace.secrets.title")}>
+            <button
+              onClick={() => setOpenModal("secrets")}
+              className="h-7.5 w-7.5 flex items-center justify-center rounded-full transition-all shrink-0 neon-glow-magenta cursor-pointer"
+              title="API / Secrets"
+            >
               <KeyRound className="w-3.5 h-3.5" />
             </button>
             <ThemeToggle showLabel={false} />

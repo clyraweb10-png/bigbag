@@ -29,6 +29,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { AiSparklesIcon } from "@/components/AiSparklesIcon";
 
 // Monaco must never run during SSR — bring it in dynamically with ssr:false.
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
@@ -900,10 +901,10 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
           {selected && onAskAiEdit && (
             <button
               onClick={() => onAskAiEdit(selected)}
-              className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 transition-colors shadow-sm"
+              className="flex items-center gap-1.5 h-7.5 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shadow-sm cursor-pointer shrink-0"
               title={"Ask AI to edit this file"}
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <AiSparklesIcon className="w-3.5 h-3.5 shrink-0" />
               <span className="hidden md:inline">{"Ask AI to edit this file"}</span>
             </button>
           )}
