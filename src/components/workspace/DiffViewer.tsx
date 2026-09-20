@@ -9,7 +9,7 @@ import {
     LoaderIcon,
     UnfoldVerticalIcon,
 } from "lucide-react";
-import { CopyButton, EmptyState, ErrorState, Modal, StatusPill, type StatusTone } from "@/components/primitives";
+import { CopyButton, EmptyState, ErrorState, Modal, SkeletonDiffViewer, StatusPill, type StatusTone } from "@/components/primitives";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { ServerWakeNotice } from "./ServerWakeNotice";
@@ -380,14 +380,7 @@ export function DiffViewer({ open, onOpenChange, source }: DiffViewerProps) {
                     <ServerWakeNotice wake={wake} className="mb-3" />
                 )}
 
-                {loading && (
-                    <div className="grid place-items-center py-12">
-                        <div className="flex flex-col items-center gap-3">
-                            <LoaderIcon className="text-muted-foreground size-5 animate-spin" aria-hidden />
-                            <p className="text-muted-foreground text-sm">{t("workspace.diff.loading")}</p>
-                        </div>
-                    </div>
-                )}
+                {loading && <SkeletonDiffViewer />}
 
                 {!loading && failure && (
                     <ErrorState
