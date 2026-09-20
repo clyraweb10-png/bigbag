@@ -5,7 +5,6 @@ import {
     ArrowDownIcon,
     CloudIcon,
     DownloadIcon,
-    LoaderIcon,
     RefreshCwIcon,
     RocketIcon,
     SearchIcon,

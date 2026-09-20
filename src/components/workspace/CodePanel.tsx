@@ -30,12 +30,15 @@ import {
   X,
 } from "lucide-react";
 import { AiSparklesIcon } from "@/components/AiSparklesIcon";
-import { SkeletonCodeEditor } from "@/components/primitives";
 
 // Monaco must never run during SSR — bring it in dynamically with ssr:false.
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
-  loading: () => <SkeletonCodeEditor hideSidebar />,
+  loading: () => (
+    <div className="h-full w-full flex items-center justify-center">
+      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+    </div>
+  ),
 });
 
 interface CodePanelProps {
@@ -854,7 +857,12 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
 
   // ── Render states ──────────────────────────────────────────────────────────
   if (loading) {
-    return <SkeletonCodeEditor />;
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        <p className="text-sm text-gray-400">{"Loading source code..."}</p>
+      </div>
+    );
   }
 
   if (error) {
@@ -893,7 +901,7 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
           {selected && onAskAiEdit && (
             <button
               onClick={() => onAskAiEdit(selected)}
-              className="flex items-center gap-1.5 h-7.5 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shadow-sm cursor-pointer shrink-0"
+              className="flex items-center gap-1.5 h-7.5 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shadow-sm cursor-pointer shrink-0"
               title={"Ask AI to edit this file"}
             >
               <AiSparklesIcon className="w-3.5 h-3.5 shrink-0" />
@@ -967,13 +975,7 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
             <>
               {/* Breadcrumb + the save control */}
               <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2 shrink-0">
-                <div
-                  className="inline-flex items-center gap-2 px-3 py-1 rounded-full colourless-glass text-xs font-mono shadow-xs"
-                  title={selected}
-                >
-                  {iconForFile(selected)}
-                  <span className="truncate">{selected.split("/").pop()}</span>
-                </div>
+                <code className="text-xs font-mono text-gray-600 dark:text-gray-300 truncate">{selected}</code>
                 {/* ⭐ The dot is the whole "unsaved" signal — see the `drafts` note. */}
                 {isDirty(selected) && (
                   <span className="shrink-0 text-[10px] font-medium text-amber-600 dark:text-amber-400">

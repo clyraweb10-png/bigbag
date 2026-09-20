@@ -1,4 +1,3 @@
-import * as React from "react";
 import { SkeletonBox, SkeletonText } from "./Skeletons";
 import { cn } from "@/lib/utils";
 
@@ -40,7 +39,7 @@ export function SkeletonProjectCard({ className }: { className?: string }) {
 }
 
 /** Grid of project cards */
-export function SkeletonProjectGrid({ count = 6, className }: { count?: number; className?: string }) {
+export function SkeletonProjectGrid({ count = 3, className }: { count?: number; className?: string }) {
   return (
     <div
       className={cn("grid gap-4 sm:grid-cols-2 lg:grid-cols-3", className)}
@@ -83,7 +82,7 @@ export function SkeletonProjectTableRow() {
 }
 
 /** Table view skeleton for dashboard */
-export function SkeletonProjectTable({ rows = 6 }: { rows?: number }) {
+export function SkeletonProjectTable({ rows = 4 }: { rows?: number }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs">
       <div className="overflow-x-auto">
@@ -159,7 +158,7 @@ export function SkeletonDashboard({ viewMode = "cards" }: { viewMode?: "cards" |
         </div>
 
         {/* Project List */}
-        {viewMode === "table" ? <SkeletonProjectTable rows={6} /> : <SkeletonProjectGrid count={6} />}
+        {viewMode === "table" ? <SkeletonProjectTable rows={4} /> : <SkeletonProjectGrid count={3} />}
       </main>
     </div>
   );

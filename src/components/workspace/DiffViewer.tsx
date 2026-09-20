@@ -6,7 +6,6 @@ import {
     ChevronRightIcon,
     FileDiffIcon,
     FoldVerticalIcon,
-    LoaderIcon,
     UnfoldVerticalIcon,
 } from "lucide-react";
 import { CopyButton, EmptyState, ErrorState, Modal, SkeletonDiffViewer, StatusPill, type StatusTone } from "@/components/primitives";

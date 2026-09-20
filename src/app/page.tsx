@@ -32,7 +32,6 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { SetupBanners } from "@/components/SetupBanners";
-import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitives";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
@@ -641,7 +640,7 @@ export function DashboardContent() {
                 )}
 
                 {/* Prompt area - colour + rounded only */}
-                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#232730] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#252525] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
                   <textarea
                     ref={heroTextareaRef}
                     value={firstPrompt}
@@ -698,12 +697,10 @@ export function DashboardContent() {
           </div>
 
         {!chatOpen && projectsLoading && (
-          <div className="mb-6">
-            {viewMode === "table" ? (
-              <SkeletonProjectTable rows={6} />
-            ) : (
-              <SkeletonProjectGrid count={6} />
-            )}
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" role="status" aria-label="Loading projects">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-48 animate-pulse rounded-xl border border-border bg-card" />
+            ))}
           </div>
         )}
 

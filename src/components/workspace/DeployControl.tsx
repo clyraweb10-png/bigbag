@@ -134,7 +134,7 @@ export function DeployControl({
 
             <button
                 type="button"
-                className="h-7.5 shrink-0 gap-1.5 px-3.5 rounded-full font-semibold text-xs transition-all inline-flex items-center justify-center colourless-glass disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+                className="h-7.5 shrink-0 gap-1.5 px-3.5 rounded-full font-semibold text-xs transition-all inline-flex items-center justify-center neon-glow-magenta disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                 disabled={isRunning}
                 onClick={() => setOpen(true)}
                 title={t("workspace.deploy.publish")}
@@ -176,7 +176,7 @@ export function DeployControl({
                             {t("common.close")}
                         </Button>
                         <Button
-                            className="gap-2 rounded-full font-semibold colourless-glass border-none cursor-pointer"
+                            className="gap-2 rounded-full font-semibold neon-glow-magenta border-none cursor-pointer"
                             disabled={isDeploying || isRunning || !!blockedReason}
                             onClick={() => {
                                 setOpen(false);

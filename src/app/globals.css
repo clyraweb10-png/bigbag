@@ -98,36 +98,36 @@
 }
 
 .dark {
-  --background: #1d2026;
+  --background: #1d1d1c;
   --foreground: #f4f4f7;
-  --card: #232730;
+  --card: #252525;
   --card-foreground: #f4f4f7;
-  --popover: #232730;
+  --popover: #252525;
   --popover-foreground: #f4f4f7;
   --primary: #948be8;
   --primary-foreground: #19191f;
-  --secondary: #272c36;
+  --secondary: #282827;
   --secondary-foreground: #efeff4;
-  --muted: #232730;
-  --muted-foreground: #a0a6b5;
-  --accent: #2c323e;
+  --muted: #252525;
+  --muted-foreground: #aaaab6;
+  --accent: #2c2c2b;
   --accent-foreground: #e4e0ff;
   --destructive: #ff6b7f;
-  --border: #2d3340;
-  --input: #2d3340;
+  --border: #333332;
+  --input: #333332;
   --ring: #948be8;
   --chart-1: #948be8;
   --chart-2: #ff8383;
   --chart-3: #47d6ae;
   --chart-4: #75aaff;
   --chart-5: #3a3a46;
-  --sidebar: #1d2026;
+  --sidebar: #1d1d1c;
   --sidebar-foreground: #f4f4f7;
   --sidebar-primary: #948be8;
   --sidebar-primary-foreground: #19191f;
-  --sidebar-accent: #2c323e;
+  --sidebar-accent: #2c2c2b;
   --sidebar-accent-foreground: #e4e0ff;
-  --sidebar-border: #2d3340;
+  --sidebar-border: #333332;
   --sidebar-ring: #948be8;
   --warning: #ffb84d;
   --warning-foreground: #1f1405;
@@ -137,8 +137,8 @@
   --studio-coral: #ff8383;
   --studio-mint: #47d6ae;
   --studio-blue: #75aaff;
-  --user-bubble: #1d2026;
-  --textarea-bg: #232730;
+  --user-bubble: #1d1d1c;
+  --textarea-bg: #252525;
 }
 
 @layer base {
@@ -262,125 +262,18 @@ button {
   box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.5);
 }
 
-/* Colourless glass effect (modern frosted glassmorphism without color tint) */
-.colourless-glass {
-  background: rgba(255, 255, 255, 0.08) !important;
-  backdrop-filter: blur(16px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.16) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.2), 0 4px 16px -2px rgba(0, 0, 0, 0.25) !important;
-  color: #ffffff !important;
+/* Neon Glow Magenta (#9C2780) treatment */
+.neon-glow-magenta {
+  background: linear-gradient(180deg, #2f0c26 0%, #9C2780 100%) !important;
+  border: 1.5px solid #ba68a6 !important;
+  box-shadow: 0 0 12px rgba(156, 39, 128, 0.5), 0 0 32px rgba(156, 39, 128, 0.25) !important;
+  color: #fce7f7 !important;
 }
 
-.colourless-glass:hover {
-  background: rgba(255, 255, 255, 0.14) !important;
-  border-color: rgba(255, 255, 255, 0.28) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0 6px 20px -2px rgba(0, 0, 0, 0.3) !important;
-  color: #ffffff !important;
-  filter: none !important;
+.neon-glow-magenta:hover {
+  filter: brightness(1.1);
 }
 
-.colourless-glass:active {
-  background: rgba(255, 255, 255, 0.06) !important;
-  transform: scale(0.97) !important;
+.neon-glow-magenta:active {
+  transform: scale(0.97);
 }
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SKELETON & SHIMMER PRELOADER EFFECTS
-   Smooth flowing luminous wave across all skeleton surfaces
-   ═══════════════════════════════════════════════════════════════════════════ */
-@keyframes tp-shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
-
-.tp-shimmer {
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.02) 15%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0.02) 85%,
-    transparent 100%
-  );
-  animation: tp-shimmer 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  pointer-events: none;
-}
-
-html:not(.dark) .tp-shimmer,
-:root:not(.dark) .tp-shimmer {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.15) 15%,
-    rgba(255, 255, 255, 0.7) 50%,
-    rgba(255, 255, 255, 0.15) 85%,
-    transparent 100%
-  );
-}
-
-/* Standalone shimmer overlay utility */
-.shimmer-fx {
-  position: relative;
-  overflow: hidden;
-}
-
-.shimmer-fx::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  transform: translateX(-100%);
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.02) 15%,
-    rgba(255, 255, 255, 0.14) 50%,
-    rgba(255, 255, 255, 0.02) 85%,
-    transparent 100%
-  );
-  animation: tp-shimmer 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  pointer-events: none;
-}
-
-html:not(.dark) .shimmer-fx::after,
-:root:not(.dark) .shimmer-fx::after {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.15) 15%,
-    rgba(255, 255, 255, 0.7) 50%,
-    rgba(255, 255, 255, 0.15) 85%,
-    transparent 100%
-  );
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tp-shimmer,
-  .shimmer-fx::after {
-    animation: none !important;
-    display: none !important;
-  }
-}
-
-html:not(.dark) .colourless-glass {
-  background: rgba(0, 0, 0, 0.06) !important;
-  backdrop-filter: blur(16px) saturate(180%) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
-  border: 1px solid rgba(0, 0, 0, 0.12) !important;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.6), 0 4px 16px -2px rgba(0, 0, 0, 0.08) !important;
-  color: #111827 !important;
-}
-
-html:not(.dark) .colourless-glass:hover {
-  background: rgba(0, 0, 0, 0.1) !important;
-  border-color: rgba(0, 0, 0, 0.18) !important;
-  color: #000000 !important;
-}
-
