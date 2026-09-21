@@ -334,8 +334,6 @@ function assertUsableGeneratedFiles(
     "src/app.jsx",
     "src/main.tsx",
     "src/main.jsx",
-    "src/index.tsx",
-    "src/index.jsx",
     "app/page.tsx",
     "app/page.jsx",
     "pages/index.tsx",
@@ -366,7 +364,12 @@ function availableWorkspacePaths(projectId: string): string[] {
     .entries.filter((entry) => entry.type === "file")
     .filter((entry) => {
       const file = localFileManager.getContent(projectId, entry.path);
-      return Boolean(file && file.encoding === "utf8" && !containsGenerationPlaceholder(file.content));
+      return Boolean(
+        file &&
+        file.encoding === "utf8" &&
+        !containsGenerationPlaceholder(file.content) &&
+        !isRuntimeOwnedGeneratedPath(entry.path, file.content)
+      );
     })
     .map((entry) => normalizeGeneratedPath(entry.path));
 }
@@ -485,6 +488,8 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
     if (!file.path.endsWith(".tsx") && !file.path.endsWith(".jsx")) continue;
 
     let content = file.content;
+    const normalizedPath = normalizeGeneratedPath(file.path);
+    const isReactEntry = /^src\/(?:main|index)\.(?:tsx|jsx)$/.test(normalizedPath);
 
     // Detect non-code content
     const looksLikeCode =
@@ -501,8 +506,18 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
       console.warn(`[localAgentEngine] Non-code content detected in ${file.path}`);
     }
 
-    // Remove react-dom/client imports (never needed in component files)
-    content = content.replace(/^\s*import\s+.*from\s+['"]react-dom\/client['"];?\s*$/gm, "");
+    // Component files must not mount a second React tree. Browser entrypoints,
+    // however, own createRoot and must retain (or recover) this import.
+    if (isReactEntry) {
+      const usesBareCreateRoot = /\bcreateRoot\s*\(/.test(content);
+      const importsCreateRoot = /import\s*{[^}]*\bcreateRoot\b[^}]*}\s*from\s*['"]react-dom\/client['"]/.test(content);
+      if (usesBareCreateRoot && !importsCreateRoot) {
+        content = `import { createRoot } from "react-dom/client";\n${content}`;
+        console.log(`[localAgentEngine] Restored createRoot import in ${file.path}`);
+      }
+    } else {
+      content = content.replace(/^\s*import\s+.*from\s+['"]react-dom\/client['"];?\s*$/gm, "");
+    }
 
     // Remove styled-jsx <style jsx> blocks
     content = content.replace(/<style\s+jsx[^>]*>[\s\S]*?<\/style>/gi, "");
