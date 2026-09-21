@@ -12,6 +12,7 @@ import { withDesignSystemPrompt } from "../design-system-prompt";
 import { analyzeWebsiteDesign, extractWebsiteUrl } from "./firecrawl-design";
 import { resolvePexelsImagery } from "./pexels-imagery";
 import {
+  APPLICATION_ENTRYPOINT_PATHS,
   containsGenerationPlaceholder,
   generationValidationIssues,
   isRuntimeOwnedGeneratedPath,
@@ -19,25 +20,27 @@ import {
   type GeneratedSourceFile,
 } from "./generation-validator";
 
-const SYSTEM_PROMPT = `You are an expert full-stack software engineer and product designer. Build production-quality, modular web applications using React, TypeScript, and modern styling.
+const SYSTEM_PROMPT = `You are the code-generation engine for BigBag AI App Builder. Generate complete, working full-stack React and TypeScript applications from plain-English requests. Follow-up requests are incremental edits to the existing project.
 
 ## CRITICAL RULES
 
-**OUTPUT FORMAT: You MUST output ONLY file blocks. Do NOT write explanations, conversational filler, plans, or thinking before, between, or after code blocks. Start your response immediately with the first file block.**
+OUTPUT FORMAT: Return ONLY complete file blocks. Do not return explanations, plans, thinking, summaries, or prose before, between, or after file blocks.
 
-1. Architecture & Multi-File Structure
-- Build complete, modular, real-world applications with clean separation of concerns.
-- Split code across logical files: entry points, components, hooks, utilities, styles, and types.
-- Standard structure:
-  - Entry point: \`src/App.tsx\` or \`src/app/page.tsx\`
-  - Components: \`src/components/<ComponentName>.tsx\`
-  - Styles: \`src/index.css\` or \`src/app/globals.css\`
-  - Utilities: \`src/lib/utils.ts\`
-  - Types: \`src/types/<module>.ts\`
-- For multi-view or multi-page flows, create dedicated view components with client-side routing and clean state management.
-- When importing a custom local module (e.g. \`import { TaskList } from './components/TaskList'\`), you MUST output the complete code for that file in the same response.
+1. Mandatory entrypoint contract
+- For every initial build, the FIRST file block must be exactly one application entrypoint. Prefer \`src/App.tsx\`. \`src/app/page.tsx\` or \`src/pages/index.tsx\` are also supported when the user explicitly asks for those conventions.
+- The entrypoint must be non-empty, syntactically valid, and have a default export.
+- Never output more than one application entrypoint.
+- The BigBag runtime owns \`index.html\`, \`src/main.tsx\`, \`src/app/layout.tsx\`, build configuration, and package metadata. Do not output or import framework-only server modules such as \`next/*\`.
+- Secondary routes and components come only after the complete entrypoint. If output might be truncated, finish the current file instead of starting another one.
 
-2. Output Format
+2. File integrity
+- Use plain ASCII punctuation and spaces. Never emit curly quotes, em dash, en dash, ellipsis characters, non-breaking spaces, zero-width characters, or byte-order marks. Unicode text is allowed only when the user explicitly requests localized content, and never in code syntax or file paths.
+- Every file must be complete. Never end mid-token, mid-import, mid-string, or mid-JSX tag.
+- Every TypeScript, JavaScript, JSX, TSX, CSS, and JSON file must parse. Match all braces, brackets, parentheses, quotes, template literals, and JSX tags. JSON must not contain comments or trailing commas.
+- Do not emit TODO, FIXME, lorem ipsum, fake success, fake timers, placeholders, pseudo-code, empty stubs, or comments standing in for behavior.
+- Every local import must resolve to a file you return in this response or an existing file shown in project context.
+
+3. Output format
 Each file must be preceded by a clear file header and markdown code fence:
 ### File: path/to/file.tsx
 \`\`\`tsx
@@ -47,33 +50,40 @@ Each file must be preceded by a clear file header and markdown code fence:
 To delete an obsolete file, output:
 ### Delete: path/to/file.tsx
 
-3. Dependencies & Standard Libraries
+4. Full-stack behavior and dependencies
 - Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner.
 - Pre-existing UI primitives: @/components/ui/button, @/components/ui/card, and @/lib/utils (cn).
-- For durable database storage, use: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`.
+- For durable database storage, use exactly: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`.
+- When the request needs persisted records, implement real initial loading plus create/update/delete flows through that database client. Show honest loading, empty, and recoverable error states. Do not substitute hardcoded rows for requested persistence.
+- The database client is browser-safe and project-scoped. Never import server-only database libraries, expose credentials, or invent database methods.
+- Do not reference environment variables unless the user explicitly requests an external integration and you also return a complete \`.env.example\` declaration. Browser variables must use the \`VITE_\` prefix and \`import.meta.env.VITE_NAME\`. Never hardcode keys or secrets.
 - If you import additional packages, the system automatically detects them, adds them to package.json, and installs them.
 
-4. Styling & Visual Craft
+5. Architecture and visual craft
+- Build modular applications with logical components, hooks, utilities, and types. For multi-view flows, use explicit view components and working client-side navigation.
 - Use Tailwind CSS utilities. In CSS files, ensure all rules are inside standard selectors (no orphaned CSS properties).
 - Keep \`@import "tailwindcss";\` at the top of the global CSS file.
 - Deliver rich, responsive layouts (mobile, tablet, desktop) with intentional typography, deliberate color palettes, and accessible contrast.
 - Ensure all interactive elements (buttons, links, inputs) have active, focus-visible, and disabled states.
 
-5. Real Behavior & Code Quality
-- Output complete, working, production-ready code. Never leave TODOs, placeholders, empty stubs, or ellipses (\`// ...\`).
-- Never simulate actions with fake timers or pretend success. Provide honest loading, error, and empty states.
-- Ensure all imports and exports match across files. Default export your main entry point component.
+6. Silent self-check before returning
+- Confirm exactly one supported entrypoint exists, is the first file block on initial generation, and has a default export.
+- Confirm every local import resolves and every imported package is real.
+- Confirm no forbidden Unicode punctuation or invisible characters exist.
+- Confirm no file is truncated and every source, CSS, and JSON file parses.
+- Confirm requested interactions and persistence are implemented rather than described.
+- If any check fails, repair it before returning. Never rely on a later retry.
 `;
 
-const RETRY_PROMPT = `Your previous response was incomplete or contained validation issues.
-You MUST respond with ONLY complete code file blocks in this exact format — no explanations, no thinking, no prose:
+const RETRY_PROMPT = `Your previous response was incomplete or failed validation.
+Return ONLY complete corrected file blocks in this exact format - no explanations, thinking, summaries, or prose:
 
 ### File: path/to/file.tsx
 \`\`\`tsx
 // complete code here
 \`\`\`
 
-Make sure all imported local files are provided, all syntax is valid, and the app has a complete, working entrypoint (e.g. src/App.tsx or src/app/page.tsx). Generate the complete corrected files now.`;
+For an initial build, return the complete application entrypoint as the first file block. Use exactly one entrypoint. Replace every file named by the validation report with a complete corrected version. Preserve valid requested behavior, provide every missing local import, use plain ASCII punctuation, and finish every file. Generate the corrected files now.`;
 
 /**
  * Appended to the system prompt when the user is iterating on an existing project.
@@ -93,6 +103,7 @@ You MUST:
 `;
 
 const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
+const MAX_STATIC_VALIDATION_RETRIES = 3;
 const MAX_BUILD_REPAIR_ATTEMPTS = 5;
 const MAX_PREVIEW_INFRASTRUCTURE_RETRIES = 2;
 const BUILD_REPAIR_STRATEGIES = [
@@ -322,29 +333,15 @@ export function extractDeletionsFromMarkdown(text: string): string[] {
 function assertUsableGeneratedFiles(
   files: GeneratedSourceFile[],
   phase: "generation" | "repair",
-  existingPaths: Iterable<string>
+  existingPaths: Iterable<string>,
+  existingEnvironmentExample?: string
 ): void {
   const existing = [...existingPaths].map(normalizeGeneratedPath);
-  const VALID_ENTRYPOINTS = new Set([
-    "src/app/page.tsx",
-    "src/app/page.jsx",
-    "src/App.tsx",
-    "src/App.jsx",
-    "src/app.tsx",
-    "src/app.jsx",
-    "src/main.tsx",
-    "src/main.jsx",
-    "app/page.tsx",
-    "app/page.jsx",
-    "pages/index.tsx",
-    "pages/index.jsx",
-    "index.html",
-  ]);
-  const hasExistingEntrypoint = existing.some(
-    (p) => VALID_ENTRYPOINTS.has(p) || p.endsWith("/page.tsx") || p.endsWith("/page.jsx") || p === "index.html"
-  );
+  const hasExistingEntrypoint = existing.some((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry));
   const issues = generationValidationIssues(files, existing, {
     requireEntrypoint: phase === "generation" && !hasExistingEntrypoint,
+    requireEntrypointFirst: phase === "generation" && !hasExistingEntrypoint,
+    existingEnvironmentExample,
   });
   if (issues.length > 0) throw new Error(`The AI ${phase} was incomplete: ${issues.join("; ")}`);
 }
@@ -354,8 +351,33 @@ function mergeGeneratedFiles(
   retry: Array<{ path: string; content: string }>
 ): Array<{ path: string; content: string }> {
   const merged = new Map(original.map((file) => [normalizeGeneratedPath(file.path), file]));
-  for (const file of retry) merged.set(normalizeGeneratedPath(file.path), file);
+  for (const file of retry) {
+    const normalized = normalizeGeneratedPath(file.path);
+    merged.delete(normalized);
+    merged.set(normalized, { ...file, path: normalized });
+  }
   return [...merged.values()];
+}
+
+export function mergeGeneratedActions(
+  currentFiles: GeneratedSourceFile[],
+  currentDeletions: Iterable<string>,
+  replacementFiles: GeneratedSourceFile[],
+  replacementDeletions: Iterable<string>
+): { files: GeneratedSourceFile[]; deletions: Set<string> } {
+  const deletions = new Set([...currentDeletions].map(normalizeGeneratedPath));
+  const removedPaths = new Set([...replacementDeletions].map(normalizeGeneratedPath));
+  const withoutDeletedFiles = currentFiles.filter(
+    (file) => !removedPaths.has(normalizeGeneratedPath(file.path))
+  );
+  for (const removedPath of removedPaths) deletions.add(removedPath);
+
+  const files = mergeGeneratedFiles(withoutDeletedFiles, replacementFiles);
+  // A later response that recreates a path wins over an earlier delete. This is
+  // also the conservative choice for a contradictory single response: keep the
+  // complete file the model supplied instead of deleting it after validation.
+  for (const file of replacementFiles) deletions.delete(normalizeGeneratedPath(file.path));
+  return { files, deletions };
 }
 
 function availableWorkspacePaths(projectId: string): string[] {
@@ -372,6 +394,25 @@ function availableWorkspacePaths(projectId: string): string[] {
       );
     })
     .map((entry) => normalizeGeneratedPath(entry.path));
+}
+
+function workspaceEnvironmentExample(projectId: string): string | undefined {
+  const file = localFileManager.getContent(projectId, ".env.example");
+  return file?.encoding === "utf8" ? file.content : undefined;
+}
+
+export function hasRealGeneratedSource(files: GeneratedSourceFile[]): boolean {
+  return files.some((file) => {
+    const normalized = normalizeGeneratedPath(file.path);
+    if (containsGenerationPlaceholder(file.content) || isRuntimeOwnedGeneratedPath(normalized, file.content)) {
+      return false;
+    }
+    return (
+      APPLICATION_ENTRYPOINT_PATHS.has(normalized) ||
+      (normalized.startsWith("src/components/") && !normalized.startsWith("src/components/ui/")) ||
+      (normalized.endsWith(".html") && normalized !== "public/index.html")
+    );
+  });
 }
 
 function fixCssImportOrder(css: string): string {
@@ -633,19 +674,20 @@ export const localAgentEngine = {
         // Check if there is real code in the workspace (not just the initial placeholder)
         const nonPlaceholderEntries = allSourceEntries.filter((entry) => {
           const file = localFileManager.getContent(projectId, entry.path);
-          return file && file.encoding === "utf8" && !containsGenerationPlaceholder(file.content);
+          return file &&
+            file.encoding === "utf8" &&
+            !containsGenerationPlaceholder(file.content) &&
+            !isRuntimeOwnedGeneratedPath(entry.path, file.content);
         });
 
-        const hasRealExistingCode = nonPlaceholderEntries.some((entry) => {
-          const p = entry.path;
-          return (
-            p === "src/App.tsx" ||
-            p === "src/app/page.tsx" ||
-            (p.startsWith("src/components/") && !p.includes("src/components/ui/")) ||
-            p.startsWith("src/pages/") ||
-            (p.endsWith(".html") && p !== "public/index.html")
-          );
-        });
+        const hasRealExistingCode = hasRealGeneratedSource(
+          nonPlaceholderEntries.flatMap((entry) => {
+            const file = localFileManager.getContent(projectId, entry.path);
+            return file && file.encoding === "utf8"
+              ? [{ path: entry.path, content: file.content }]
+              : [];
+          })
+        );
 
         if (hasRealExistingCode && nonPlaceholderEntries.length > 0) {
           isFollowUp = true;
@@ -778,59 +820,101 @@ export const localAgentEngine = {
         // Extract files from generated markdown, with auto-retry on failure
         let files = extractFilesFromMarkdown(content);
         postProcessGeneratedFiles(files);
+        let finalDeletions = new Set(extractDeletionsFromMarkdown(content).map(normalizeGeneratedPath));
+        for (const file of files) finalDeletions.delete(normalizeGeneratedPath(file.path));
 
         const existingPaths = availableWorkspacePaths(projectId);
-        let validationIssues = generationValidationIssues(files, existingPaths);
+        const existingEnvironmentExample = workspaceEnvironmentExample(projectId);
+        let effectiveExistingEnvironmentExample = finalDeletions.has(".env.example")
+          ? undefined
+          : existingEnvironmentExample;
+        const initialGeneration = !isFollowUp;
+        let effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
+        let validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
+          requireEntrypoint: initialGeneration,
+          requireEntrypointFirst: initialGeneration,
+          existingEnvironmentExample: effectiveExistingEnvironmentExample,
+        });
 
         // Auto-retry incomplete or disconnected output before it touches the workspace.
-        if (validationIssues.length > 0) {
-          console.log(`[localAgentEngine] Generation was incomplete: ${validationIssues.join("; ")}`);
-
-          const retryStatusMsg: ConversationMessage = {
-            author: "agent",
-            message: "Retrying generation with stricter instructions...",
-            messageType: "building",
-            createdAt: new Date().toISOString(),
-          };
+        for (
+          let retryAttempt = 1;
+          validationIssues.length > 0 && retryAttempt <= MAX_STATIC_VALIDATION_RETRIES;
+          retryAttempt += 1
+        ) {
+          console.log(`[localAgentEngine] Static validation attempt ${retryAttempt} required: ${validationIssues.join("; ")}`);
           const currentRecRetry = localProjectStore.getRecord(projectId);
           localProjectStore.update(projectId, {
-            conversation: [...(currentRecRetry?.conversation || []), retryStatusMsg],
+            conversation: [
+              ...(currentRecRetry?.conversation || []),
+              {
+                author: "agent",
+                message: `Correcting generated files before build (${retryAttempt} of ${MAX_STATIC_VALIDATION_RETRIES})...`,
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+              },
+            ],
           });
 
-          const retryMessages = [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPromptContent },
-            { role: "assistant", content: content.substring(0, 500) },
-            {
-              role: "user",
-              content: `${RETRY_PROMPT}\n\nThe previous output failed these checks:\n- ${validationIssues.join("\n- ")}`,
-            },
-          ];
-
+          const extractedContext = files
+            .map((file) => `### File: ${file.path}\n\`\`\`\n${file.content}\n\`\`\``)
+            .join("\n\n")
+            .slice(0, 48_000);
           try {
-            const retryResult = await multiModelRouter.complete(retryMessages, () => {}, {
-              deprioritizeProviderId: routerResult.providerId,
-              perProviderTimeoutMs: 120_000,
-              totalTimeoutMs: 210_000,
-            });
+            const retryResult = await multiModelRouter.complete(
+              [
+                { role: "system", content: systemPromptForRun },
+                { role: "user", content: userPromptContent },
+                { role: "assistant", content: extractedContext },
+                {
+                  role: "user",
+                  content: `${RETRY_PROMPT}\n\nValidation pass ${retryAttempt} failed:\n- ${validationIssues.join("\n- ")}`,
+                },
+              ],
+              () => {},
+              {
+                deprioritizeProviderId: usedProviderId,
+                perProviderTimeoutMs: 120_000,
+                totalTimeoutMs: 210_000,
+              }
+            );
             const retryFiles = extractFilesFromMarkdown(retryResult.text);
             postProcessGeneratedFiles(retryFiles);
-            const mergedFiles = mergeGeneratedFiles(files, retryFiles);
-            postProcessGeneratedFiles(mergedFiles);
-            validationIssues = generationValidationIssues(mergedFiles, existingPaths);
-            if (validationIssues.length > 0) {
-              throw new Error(`Retry remained incomplete: ${validationIssues.join("; ")}`);
-            }
-            files = mergedFiles;
+            const mergedActions = mergeGeneratedActions(
+              files,
+              finalDeletions,
+              retryFiles,
+              extractDeletionsFromMarkdown(retryResult.text)
+            );
+            files = mergedActions.files;
+            finalDeletions = mergedActions.deletions;
+            effectiveExistingEnvironmentExample = finalDeletions.has(".env.example")
+              ? undefined
+              : existingEnvironmentExample;
+            postProcessGeneratedFiles(files);
             usedPublicModelName = retryResult.publicModelName;
             usedProviderId = retryResult.providerId;
-            console.log(`[localAgentEngine] Retry succeeded: ${retryFiles.length} files extracted`);
-          } catch (retryErr: any) {
-            console.error(`[localAgentEngine] Retry failed:`, retryErr.message || retryErr);
+            effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
+            validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
+              requireEntrypoint: initialGeneration,
+              requireEntrypointFirst: initialGeneration,
+              existingEnvironmentExample: effectiveExistingEnvironmentExample,
+            });
+            if (validationIssues.length === 0) {
+              console.log(`[localAgentEngine] Static correction succeeded with ${retryFiles.length} replacement files`);
+            }
+          } catch (retryError) {
+            console.error(`[localAgentEngine] Static correction request failed:`, retryError);
+            break;
           }
         }
 
-        assertUsableGeneratedFiles(files, "generation", existingPaths);
+        assertUsableGeneratedFiles(
+          files,
+          "generation",
+          effectiveExistingPaths,
+          effectiveExistingEnvironmentExample
+        );
 
         const currentRec = localProjectStore.getRecord(projectId);
         const newMessages: ConversationMessage[] = [...(currentRec?.conversation || [])];
@@ -857,8 +941,7 @@ export const localAgentEngine = {
           });
         }
 
-        const deletions = extractDeletionsFromMarkdown(content);
-        for (const delPath of deletions) {
+        for (const delPath of finalDeletions) {
           if (localFileManager.deleteFile(projectId, delPath)) {
             newMessages.push({
               author: "agent",
@@ -1034,7 +1117,25 @@ export const localAgentEngine = {
               );
               const repairFiles = extractFilesFromMarkdown(repairResult.text);
               postProcessGeneratedFiles(repairFiles);
-              assertUsableGeneratedFiles(repairFiles, "repair", availableWorkspacePaths(projectId));
+              const repairDeletions = new Set(
+                extractDeletionsFromMarkdown(repairResult.text).map(normalizeGeneratedPath)
+              );
+              for (const file of repairFiles) repairDeletions.delete(normalizeGeneratedPath(file.path));
+              const repairExistingPaths = availableWorkspacePaths(projectId)
+                .filter((entry) => !repairDeletions.has(entry));
+              const replacementEnvironmentExample = repairFiles.find(
+                (file) => normalizeGeneratedPath(file.path) === ".env.example"
+              )?.content;
+              const repairEnvironmentExample = replacementEnvironmentExample ??
+                (repairDeletions.has(".env.example")
+                  ? undefined
+                  : workspaceEnvironmentExample(projectId));
+              assertUsableGeneratedFiles(
+                repairFiles,
+                "repair",
+                repairExistingPaths,
+                repairEnvironmentExample
+              );
 
               for (const file of repairFiles) {
                 let fileContent = file.content;
@@ -1043,6 +1144,9 @@ export const localAgentEngine = {
                   fileContent = fixCssImportOrder(fileContent);
                 }
                 localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
+              }
+              for (const deletedPath of repairDeletions) {
+                localFileManager.deleteFile(projectId, deletedPath);
               }
               purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
               ensureWorkspaceDependencies(repairFiles, localProjectStore.getWorkspaceDir(projectId));

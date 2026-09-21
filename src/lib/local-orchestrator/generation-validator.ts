@@ -1,9 +1,91 @@
 import path from "path";
+import postcss from "postcss";
 import ts from "typescript";
 
 export type GeneratedSourceFile = { path: string; content: string };
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".css", ".json"];
+export const APPLICATION_ENTRYPOINT_PATHS = new Set([
+  "src/app/page.tsx",
+  "src/app/page.jsx",
+  "src/app/page.js",
+  "src/App.tsx",
+  "src/App.jsx",
+  "src/App.js",
+  "src/app.tsx",
+  "src/app.jsx",
+  "src/app.js",
+  "src/pages/index.tsx",
+  "src/pages/index.jsx",
+  "src/pages/index.js",
+  "app/page.tsx",
+  "app/page.jsx",
+  "app/page.js",
+  "pages/index.tsx",
+  "pages/index.jsx",
+  "pages/index.js",
+]);
+const FORBIDDEN_GENERATED_CHARACTERS = /[\u00a0\u200b-\u200d\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2060\ufeff]/u;
+const VITE_BUILT_IN_ENVIRONMENT_VARIABLES = new Set(["BASE_URL", "DEV", "MODE", "PROD", "SSR"]);
+
+function forbiddenCharacterIssue(filePath: string, content: string): string | null {
+  const match = FORBIDDEN_GENERATED_CHARACTERS.exec(content);
+  if (!match) return null;
+  const codePoint = match[0].codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0") || "UNKNOWN";
+  return `${filePath} contains forbidden Unicode character U+${codePoint}; use plain ASCII punctuation and spaces`;
+}
+
+function structuredFileIssue(filePath: string, content: string): string | null {
+  if (filePath.endsWith(".json")) {
+    try {
+      JSON.parse(content);
+    } catch (error) {
+      return `invalid JSON in ${filePath}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  if (filePath.endsWith(".css")) {
+    try {
+      postcss.parse(content, { from: filePath });
+    } catch (error) {
+      return `invalid CSS in ${filePath}: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  return null;
+}
+
+function referencedEnvironmentVariables(content: string): string[] {
+  const names = new Set<string>();
+  for (const match of content.matchAll(/\bprocess\.env\.([A-Z][A-Z0-9_]*)\b/g)) {
+    if (match[1] !== "NODE_ENV") names.add(match[1]);
+  }
+  for (const match of content.matchAll(/\bimport\.meta\.env\.([A-Z][A-Z0-9_]*)\b/g)) {
+    if (
+      !VITE_BUILT_IN_ENVIRONMENT_VARIABLES.has(match[1]) &&
+      match[1].startsWith("VITE_")
+    ) names.add(match[1]);
+  }
+  return [...names];
+}
+
+function unexposedViteEnvironmentVariables(content: string): string[] {
+  const names = new Set<string>();
+  for (const match of content.matchAll(/\bimport\.meta\.env\.([A-Z][A-Z0-9_]*)\b/g)) {
+    const name = match[1];
+    if (!VITE_BUILT_IN_ENVIRONMENT_VARIABLES.has(name) && !name.startsWith("VITE_")) {
+      names.add(name);
+    }
+  }
+  return [...names];
+}
+
+function declaredEnvironmentVariables(content: string): Set<string> {
+  const names = new Set<string>();
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^\s*([A-Z][A-Z0-9_]*)\s*=/.exec(line);
+    if (match) names.add(match[1]);
+  }
+  return names;
+}
 
 function isCompleteHtmlDocument(content: string): boolean {
   const trimmed = content.trim();
@@ -361,9 +443,14 @@ function resolvesLocalImport(
 export function generationValidationIssues(
   files: GeneratedSourceFile[],
   existingPaths: Iterable<string> = [],
-  options: { requireEntrypoint?: boolean } = {}
+  options: {
+    requireEntrypoint?: boolean;
+    requireEntrypointFirst?: boolean;
+    existingEnvironmentExample?: string;
+  } = {}
 ): string[] {
   const issues: string[] = [];
+  const existingPathList = [...existingPaths].map(normalizeGeneratedPath);
   if (files.length === 0) issues.push("no source files were returned");
   const normalizedFiles = files.map((file) => ({
     path: normalizeGeneratedPath(file.path),
@@ -386,8 +473,13 @@ export function generationValidationIssues(
     }
     if (generatedPaths.has(file.path)) issues.push(`duplicate file block: ${file.path}`);
     generatedPaths.add(file.path);
+    if (!file.content.trim()) issues.push(`empty generated file: ${file.path}`);
     if (isRuntimeOwnedGeneratedPath(file.path, file.content)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
+    const characterIssue = forbiddenCharacterIssue(file.path, file.content);
+    if (characterIssue) issues.push(characterIssue);
+    const structuredIssue = structuredFileIssue(file.path, file.content);
+    if (structuredIssue) issues.push(structuredIssue);
     issues.push(...visualQualityIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
@@ -398,52 +490,59 @@ export function generationValidationIssues(
     }
   }
 
-  const VALID_ENTRYPOINTS = new Set([
-    "src/app/page.tsx",
-    "src/app/page.jsx",
-    "src/App.tsx",
-    "src/App.jsx",
-    "src/app.tsx",
-    "src/app.jsx",
-    "src/main.tsx",
-    "src/main.jsx",
-    "app/page.tsx",
-    "app/page.jsx",
-    "pages/index.tsx",
-    "pages/index.jsx",
-    "index.html",
-  ]);
-
-  const existingNormalized = new Set([...existingPaths].map(normalizeGeneratedPath));
-  const hasExistingEntrypoint = [...existingNormalized].some(
-    (p) => VALID_ENTRYPOINTS.has(p) || p.endsWith("/page.tsx") || p.endsWith("/page.jsx") || p === "index.html"
-  );
-
-  const foundEntrypoint = normalizedFiles.find(
-    (file) => VALID_ENTRYPOINTS.has(file.path) || file.path.endsWith("/page.tsx") || file.path.endsWith("/page.jsx")
-  );
+  const existingNormalized = new Set(existingPathList);
+  const hasExistingEntrypoint = [...existingNormalized].some((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry));
+  const foundEntrypointIndex = normalizedFiles.findIndex((file) => APPLICATION_ENTRYPOINT_PATHS.has(file.path));
+  const foundEntrypoint = foundEntrypointIndex >= 0 ? normalizedFiles[foundEntrypointIndex] : undefined;
 
   if (!hasExistingEntrypoint && !foundEntrypoint && options.requireEntrypoint !== false) {
-    issues.push("missing required application entrypoint (e.g. src/App.tsx, src/app/page.tsx, or index.html)");
+    issues.push("missing required application entrypoint (src/App.tsx, src/app/page.tsx, or src/pages/index.tsx)");
+  }
+  if (!hasExistingEntrypoint && foundEntrypointIndex > 0 && options.requireEntrypointFirst) {
+    issues.push(`${foundEntrypoint!.path} must be the first generated file block`);
   }
 
+  const effectiveEntrypoints = new Set(
+    [...existingNormalized].filter((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry) && !generatedPaths.has(entry))
+  );
+  for (const generatedPath of generatedPaths) {
+    if (APPLICATION_ENTRYPOINT_PATHS.has(generatedPath)) effectiveEntrypoints.add(generatedPath);
+  }
+  if (effectiveEntrypoints.size > 1) {
+    issues.push(`multiple application entrypoints are present: ${[...effectiveEntrypoints].sort().join(", ")}`);
+  }
+
+  const generatedEnvironmentExample = normalizedFiles.find((file) => file.path === ".env.example");
+  const hasExistingEnvironmentExample =
+    existingNormalized.has(".env.example") || options.existingEnvironmentExample !== undefined;
+  const declaredEnvironment = generatedEnvironmentExample
+    ? declaredEnvironmentVariables(generatedEnvironmentExample.content)
+    : options.existingEnvironmentExample !== undefined
+      ? declaredEnvironmentVariables(options.existingEnvironmentExample)
+      : null;
   for (const file of normalizedFiles) {
-    if (
-      file.path === "src/app/page.tsx" ||
-      file.path === "src/app/page.jsx" ||
-      file.path === "src/App.tsx" ||
-      file.path === "src/App.jsx" ||
-      file.path === "src/app.tsx" ||
-      file.path === "src/app.jsx"
-    ) {
-      if (!hasDefaultExport(file.path, file.content)) {
-        issues.push(`${file.path} has no default export`);
+    for (const variable of unexposedViteEnvironmentVariables(file.content)) {
+      issues.push(`${file.path} references import.meta.env.${variable}, which Vite does not expose; use a VITE_ prefix`);
+    }
+    for (const variable of referencedEnvironmentVariables(file.content)) {
+      if (!generatedEnvironmentExample && !hasExistingEnvironmentExample) {
+        issues.push(`${file.path} references ${variable} but .env.example is missing`);
+      } else if (declaredEnvironment && !declaredEnvironment.has(variable)) {
+        issues.push(`${file.path} references ${variable} but .env.example does not declare it`);
+      } else if (!declaredEnvironment) {
+        issues.push(`${file.path} references ${variable} but existing .env.example declarations were not provided for validation`);
       }
     }
   }
 
+  for (const file of normalizedFiles) {
+    if (APPLICATION_ENTRYPOINT_PATHS.has(file.path) && !hasDefaultExport(file.path, file.content)) {
+      issues.push(`${file.path} has no default export`);
+    }
+  }
+
   const availablePaths = new Set(
-    [...existingPaths, ...generatedPaths].map(normalizeGeneratedPath)
+    [...existingPathList, ...generatedPaths]
   );
   for (const file of normalizedFiles) {
     if (!/\.(?:tsx?|jsx?|css)$/.test(file.path)) continue;

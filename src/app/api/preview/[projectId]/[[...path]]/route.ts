@@ -594,6 +594,15 @@ async function handle(
             return serveAppData(request, projectId, targetSegments);
         }
         const localRecord = localProjectStore.getRecord(projectId);
+        // Generated applications need their project-scoped data client to work
+        // in ordinary Preview and deployed-preview tabs, not only while the
+        // visual editor is open. The signed capability is bound to this project
+        // and tenant, cannot authenticate builder APIs, and is still required by
+        // every mutation endpoint below. Apps that need end-user authorization
+        // must add that policy before presenting public write controls.
+        if (!writeCapability && localRecord) {
+            writeCapability = createPreviewWriteCapability(projectId, localRecord.tenantId);
+        }
         const usesDisposableE2b = process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b";
         const runningOrigin = localSandboxManager.getRunningOrigin(projectId) ||
             (!usesDisposableE2b && localRecord?.serverStatus === "Active"

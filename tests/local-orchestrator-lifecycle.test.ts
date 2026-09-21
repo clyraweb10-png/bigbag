@@ -43,7 +43,7 @@ const {
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { isSourceBuildFailure, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { hasRealGeneratedSource, isSourceBuildFailure, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
@@ -292,6 +292,54 @@ test("runtime-owned model output is discarded without poisoning a valid page", (
 
   assert.deepEqual(files.map((file) => file.path), ["src/app/page.tsx"]);
   assert.deepEqual(generationValidationIssues(files), []);
+});
+
+test("fresh runtime scaffolding is not misclassified as a follow-up project", () => {
+  assert.equal(hasRealGeneratedSource([
+    { path: "index.html", content: '<div id="root"></div>' },
+    { path: "src/main.tsx", content: "// @bigbag-runtime-entry\ncreateRoot(root).render(<App />);" },
+    { path: "src/components/ui/button.tsx", content: "export function Button() { return <button />; }" },
+  ]), false);
+  assert.equal(hasRealGeneratedSource([
+    { path: "src/App.tsx", content: "export default function App() { return <main>Built</main>; }" },
+  ]), true);
+  for (const entrypoint of ["src/app.tsx", "src/App.js", "app/page.tsx", "pages/index.tsx", "src/app/page.js"]) {
+    assert.equal(hasRealGeneratedSource([
+      { path: entrypoint, content: "export default function App() { return <main>Built</main>; }" },
+    ]), true, `${entrypoint} must count as generated source`);
+  }
+});
+
+test("generation retries keep only the latest file or deletion action per path", () => {
+  const firstRetry = mergeGeneratedActions(
+    [
+      { path: "src/App.tsx", content: "old app" },
+      { path: "src/components/Legacy.tsx", content: "legacy" },
+    ],
+    [],
+    [{ path: "src/App.tsx", content: "new app" }],
+    ["src/components/Legacy.tsx", "src/components/Recreated.tsx"]
+  );
+  assert.deepEqual(firstRetry.files, [{ path: "src/App.tsx", content: "new app" }]);
+  assert.deepEqual([...firstRetry.deletions].sort(), [
+    "src/components/Legacy.tsx",
+    "src/components/Recreated.tsx",
+  ]);
+
+  const secondRetry = mergeGeneratedActions(
+    firstRetry.files,
+    firstRetry.deletions,
+    [{ path: "src/components/Recreated.tsx", content: "export function Recreated() { return null; }" }],
+    []
+  );
+  assert.deepEqual(secondRetry.files, [
+    { path: "src/App.tsx", content: "new app" },
+    {
+      path: "src/components/Recreated.tsx",
+      content: "export function Recreated() { return null; }",
+    },
+  ]);
+  assert.deepEqual([...secondRetry.deletions], ["src/components/Legacy.tsx"]);
 });
 
 test("React browser entrypoints retain or recover the createRoot import", () => {
@@ -603,6 +651,97 @@ test("generation validation rejects broken imagery and fixed mobile shells", () 
     content: `const example = '<img src="" />'; /* <main className="min-w-[900px]" /> */ export default function Page(){ return <main>Ready</main>; }`,
   }]);
   assert.deepEqual(nonRenderedMarkupIssues, []);
+});
+
+test("generation validation enforces entrypoint, encoding, JSON, CSS, and env contracts", () => {
+  const valid = generationValidationIssues([
+    {
+      path: "src/App.tsx",
+      content: `export default function App(){ return <main>Ready</main>; }`,
+    },
+    {
+      path: "src/app/globals.css",
+      content: `@import "tailwindcss";\nbody { margin: 0; }`,
+    },
+    {
+      path: "src/lib/config.ts",
+      content: `export const apiUrl = import.meta.env.VITE_API_URL;`,
+    },
+    {
+      path: ".env.example",
+      content: `VITE_API_URL=`,
+    },
+  ], ["src/lib/db.ts"], { requireEntrypointFirst: true });
+  assert.deepEqual(valid, []);
+
+  const entrypointOrder = generationValidationIssues([
+    { path: "src/components/Hero.tsx", content: `export function Hero(){ return <h1>Ready</h1>; }` },
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
+  ], [], { requireEntrypointFirst: true });
+  assert.ok(entrypointOrder.some((issue) => issue.includes("first generated file block")));
+
+  const nestedRouteOnly = generationValidationIssues([{
+    path: "src/app/settings/page.tsx",
+    content: `export default function Settings(){ return <main>Settings</main>; }`,
+  }]);
+  assert.ok(nestedRouteOnly.some((issue) => issue.includes("missing required application entrypoint")));
+
+  const duplicateEntrypoints = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>App</main>; }` },
+    { path: "src/app/page.tsx", content: `export default function Page(){ return <main>Page</main>; }` },
+  ]);
+  assert.ok(duplicateEntrypoints.some((issue) => issue.includes("multiple application entrypoints")));
+
+  const malformed = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Bad\u2014copy</main>; }` },
+    { path: "src/app/globals.css", content: `body { color: red;` },
+    { path: "src/data.json", content: `{ "ok": true, }` },
+    { path: "src/lib/config.ts", content: `export const secret = import.meta.env.VITE_MISSING;` },
+  ]);
+  assert.ok(malformed.some((issue) => issue.includes("U+2014")));
+  assert.ok(malformed.some((issue) => issue.includes("invalid CSS")));
+  assert.ok(malformed.some((issue) => issue.includes("invalid JSON")));
+  assert.ok(malformed.some((issue) => issue.includes(".env.example is missing")));
+
+  const existingEnvironment = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
+    { path: "src/lib/config.ts", content: `export const apiUrl = import.meta.env.VITE_API_URL;` },
+  ], [".env.example"], { existingEnvironmentExample: "VITE_API_URL=" });
+  assert.deepEqual(existingEnvironment, []);
+
+  const undeclaredExistingEnvironment = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
+    { path: "src/lib/config.ts", content: `export const apiUrl = import.meta.env.VITE_NEW_API_URL;` },
+  ], [".env.example"], { existingEnvironmentExample: "VITE_API_URL=" });
+  assert.ok(undeclaredExistingEnvironment.some((issue) => issue.includes("does not declare")));
+
+  const runtimeEnvironment = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>{import.meta.env.MODE}</main>; }` },
+    { path: "src/lib/runtime.ts", content: `export const production = process.env.NODE_ENV === "production";` },
+  ]);
+  assert.deepEqual(runtimeEnvironment, []);
+
+  const processBaseUrl = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>{process.env.BASE_URL}</main>; }` },
+  ]);
+  assert.ok(processBaseUrl.some((issue) => issue.includes("BASE_URL")));
+
+  const unexposedViteVariable = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>{import.meta.env.API_URL}</main>; }` },
+    { path: ".env.example", content: "API_URL=" },
+  ]);
+  assert.ok(unexposedViteVariable.some((issue) => issue.includes("use a VITE_ prefix")));
+
+  function* oneShotPaths() {
+    yield "src/lib/db.ts";
+  }
+  const oneShotIterableIssues = generationValidationIssues([
+    {
+      path: "src/App.tsx",
+      content: `import db from "@/lib/db"; export default function App(){ return <main>{String(db)}</main>; }`,
+    },
+  ], oneShotPaths());
+  assert.deepEqual(oneShotIterableIssues, []);
 });
 
 test("Pexels sourcing is limited to image-forward prompts and returns real candidates", async () => {
