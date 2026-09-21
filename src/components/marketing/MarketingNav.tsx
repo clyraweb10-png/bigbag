@@ -7,6 +7,7 @@ import { Menu, X } from "lucide-react";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { usePageFlip } from "@/context/PageFlipContext";
 
 const NAV_LINKS = [
   { label: "Features", href: "/#features" },
@@ -21,6 +22,7 @@ export function MarketingNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
   const { user, status } = useAuth();
+  const { flipToLogin } = usePageFlip();
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 20);
@@ -75,13 +77,21 @@ export function MarketingNav() {
               <>
                 <Link
                   href="/login"
-                  className="px-3.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    flipToLogin();
+                  }}
+                  className="px-3.5 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   Sign in
                 </Link>
                 <Link
                   href="/login"
-                  className="px-4 py-1.5 text-sm font-semibold bg-foreground text-background rounded-full hover:bg-foreground/90 transition-colors"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    flipToLogin();
+                  }}
+                  className="px-4 py-1.5 text-sm font-semibold bg-foreground text-background rounded-full hover:bg-foreground/90 transition-colors cursor-pointer"
                 >
                   Start building
                 </Link>
@@ -130,15 +140,23 @@ export function MarketingNav() {
                 <>
                   <Link
                     href="/login"
-                    onClick={() => setMobileOpen(false)}
-                    className="px-4 py-2.5 text-sm font-medium text-center text-foreground border border-border rounded-xl hover:bg-accent transition-colors"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setMobileOpen(false);
+                      flipToLogin();
+                    }}
+                    className="px-4 py-2.5 text-sm font-medium text-center text-foreground border border-border rounded-xl hover:bg-accent transition-colors cursor-pointer"
                   >
                     Sign in
                   </Link>
                   <Link
                     href="/login"
-                    onClick={() => setMobileOpen(false)}
-                    className="px-4 py-2.5 text-sm font-semibold text-center bg-foreground text-background rounded-xl hover:bg-foreground/90 transition-colors"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setMobileOpen(false);
+                      flipToLogin();
+                    }}
+                    className="px-4 py-2.5 text-sm font-semibold text-center bg-foreground text-background rounded-xl hover:bg-foreground/90 transition-colors cursor-pointer"
                   >
                     Start building free
                   </Link>

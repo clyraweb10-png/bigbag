@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import { filesFromClipboard } from "@/lib/attachments";
 import { splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
+import { usePageFlip } from "@/context/PageFlipContext";
+import { BorderBeam } from "@/components/ui/border-beam";
 
 /* ─── Prompt example chips ─── */
 const EXAMPLE_PROMPTS = [
@@ -191,6 +193,7 @@ const STATS = [
 export function LandingPageMarketing() {
   const router = useRouter();
   const { user, status } = useAuth();
+  const { flipToLogin } = usePageFlip();
   const [prompt, setPrompt] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -218,7 +221,7 @@ export function LandingPageMarketing() {
       if (status === "authenticated" && user) {
         router.push(`/generate?prompt=${encodeURIComponent(trimmed || "Build something amazing")}`);
       } else {
-        router.push("/login");
+        flipToLogin();
       }
     } catch {
       setSubmitting(false);
@@ -263,59 +266,67 @@ export function LandingPageMarketing() {
           </p>
 
           {/* Prompt composer */}
-          <div className="mt-8 mx-auto max-w-2xl">
-            <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm">
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onPaste={handlePaste}
-                placeholder="Describe the app you want to build…"
-                rows={3}
-                className="w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
-                }}
-              />
+          <div className="mt-8 mx-auto max-w-2xl relative">
+            <BorderBeam
+              size="md"
+              colorVariant="colorful"
+              duration={12}
+              borderRadius={21}
+              className="w-full relative"
+            >
+              <div className="relative rounded-[21px] bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/30 transition-all shadow-sm min-h-[7.5rem] flex flex-col justify-between">
+                <textarea
+                  ref={textareaRef}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onPaste={handlePaste}
+                  placeholder="Describe the app you want to build…"
+                  rows={2}
+                  className="w-full resize-none bg-transparent px-5 pt-4 pb-1 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground flex-1 min-h-[72px]"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+                  }}
+                />
 
-              {/* Attached files preview */}
-              {attachedFiles.length > 0 && (
-                <div className="px-5 pb-2 flex flex-wrap gap-2">
-                  {attachedFiles.map((f, i) => (
-                    <span key={i} className="inline-flex items-center gap-1.5 text-xs bg-secondary rounded-md px-2 py-1">
-                      {f.name}
-                      <button onClick={() => setAttachedFiles((p) => p.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground">×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
+                {/* Attached files preview */}
+                {attachedFiles.length > 0 && (
+                  <div className="px-5 pb-2 flex flex-wrap gap-2">
+                    {attachedFiles.map((f, i) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 text-xs bg-secondary rounded-md px-2 py-1">
+                        {f.name}
+                        <button onClick={() => setAttachedFiles((p) => p.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
-              <div className="flex items-center justify-between px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
-                    <input
-                      type="file"
-                      multiple
-                      className="hidden"
-                      accept="image/*,.pdf,.svg"
-                      onChange={(e) => { if (e.target.files) { attachFiles(Array.from(e.target.files)); e.target.value = ""; } }}
-                    />
-                    <AttachChainIcon className="w-4 h-4" />
-                    <span className="hidden sm:inline font-medium">Attach</span>
-                  </label>
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        accept="image/*,.pdf,.svg"
+                        onChange={(e) => { if (e.target.files) { attachFiles(Array.from(e.target.files)); e.target.value = ""; } }}
+                      />
+                      <AttachChainIcon className="w-4 h-4" />
+                      <span className="hidden sm:inline font-medium">Attach</span>
+                    </label>
+                  </div>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={(!prompt.trim() && attachedFiles.length === 0) || submitting}
+                    aria-label="Send"
+                    className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {submitting
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <ArrowRight className="h-4 w-4" />}
+                  </button>
                 </div>
-                <button
-                  onClick={handleSubmit}
-                  disabled={(!prompt.trim() && attachedFiles.length === 0) || submitting}
-                  aria-label="Send"
-                  className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {submitting
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <ArrowRight className="h-4 w-4" />}
-                </button>
               </div>
-            </div>
+            </BorderBeam>
 
             {/* Example chips */}
             <div className="mt-3 flex flex-wrap justify-center gap-2">
@@ -579,7 +590,11 @@ export function LandingPageMarketing() {
 
                 <Link
                   href="/login"
-                  className={`w-full text-center py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  onClick={(e) => {
+                    e.preventDefault();
+                    flipToLogin();
+                  }}
+                  className={`w-full text-center py-2.5 rounded-xl text-sm font-semibold transition-colors cursor-pointer ${
                     plan.highlighted
                       ? "bg-primary text-primary-foreground hover:bg-primary/90"
                       : "border border-border bg-background hover:bg-accent text-foreground"
@@ -674,7 +689,11 @@ export function LandingPageMarketing() {
           <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
             <Link
               href="/login"
-              className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-full text-sm font-semibold hover:bg-primary/90 transition-colors"
+              onClick={(e) => {
+                e.preventDefault();
+                flipToLogin();
+              }}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground rounded-full text-sm font-semibold hover:bg-primary/90 transition-colors cursor-pointer"
             >
               Start building for free
               <ArrowRight className="w-4 h-4" />
