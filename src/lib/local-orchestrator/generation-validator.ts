@@ -23,10 +23,14 @@ function isCompleteHtmlDocument(content: string): boolean {
 export function isRuntimeOwnedGeneratedPath(value: string, content?: string): boolean {
   const normalized = normalizeGeneratedPath(value);
   if (normalized === "package-lock.json") return true;
+  if (normalized === "index.html") return true;
+  if (/^src\/(?:main|index)\.[cm]?[jt]sx?$/.test(normalized) && content?.includes("@bigbag-runtime-entry")) {
+    return true;
+  }
   // Discard Next.js App Router layout snippets that cannot execute under the client runtime
   if (/^src\/app\/layout\.[cm]?[jt]sx?$/.test(normalized)) return true;
-  // Incomplete HTML fragments (e.g. `<div id="root"></div>`) that are not complete HTML documents
-  if (normalized === "index.html" || normalized.endsWith(".html")) {
+  // Incomplete HTML fragments that are not complete HTML documents
+  if (normalized.endsWith(".html")) {
     if (content !== undefined && !isCompleteHtmlDocument(content)) {
       return true;
     }
@@ -403,8 +407,6 @@ export function generationValidationIssues(
     "src/app.jsx",
     "src/main.tsx",
     "src/main.jsx",
-    "src/index.tsx",
-    "src/index.jsx",
     "app/page.tsx",
     "app/page.jsx",
     "pages/index.tsx",

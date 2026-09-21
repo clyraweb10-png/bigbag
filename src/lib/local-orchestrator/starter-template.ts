@@ -479,6 +479,254 @@ function writeIfMissing(dir: string, relative: string, content: string): void {
   if (!fs.existsSync(full)) write(dir, relative, content);
 }
 
+const RUNTIME_ENTRY_MARKER = "@bigbag-runtime-entry";
+
+function isManagedRuntimeEntry(content: string): boolean {
+  if (content.includes(RUNTIME_ENTRY_MARKER)) return true;
+
+  const appImport = content.match(/^import App from "([^"]+)";$/m)?.[1];
+  const cssImport = content.match(/^import "([^"]+\.css)";$/m)?.[1];
+  const rawTitle = content.match(/^document\.title = (.+);$/m)?.[1];
+  const rawDescription = content.match(/^descriptionMeta\.content = (.+);$/m)?.[1];
+  if (!appImport || !cssImport || !rawTitle || !rawDescription) return false;
+
+  try {
+    const metadata = {
+      title: JSON.parse(rawTitle) as string,
+      description: JSON.parse(rawDescription) as string,
+    };
+    return (
+      content === runtimeMainSource(appImport, cssImport, metadata).replace(`// ${RUNTIME_ENTRY_MARKER}\n`, "") ||
+      content === legacyRuntimeMainSource(appImport, cssImport, metadata)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function legacyStarterPageSource(projectId: string): string {
+  return `export default function Home() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-8 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white">
+      <div className="max-w-md p-8 bg-slate-900/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-800">
+        <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+        </div>
+        <h1 className="text-xl font-semibold tracking-tight text-white mb-2">
+          ${projectId}
+        </h1>
+        <p className="text-sm text-slate-400 mb-6">
+          AI is assembling your application. Preview will update live as files are generated.
+        </p>
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+          Ready for Prompt
+        </div>
+      </div>
+    </main>
+  );
+}
+`;
+}
+
+export function legacyStarterLayoutSource(projectId: string): string {
+  return `import type { ReactNode } from 'react';
+import './globals.css';
+
+export const metadata = {
+  title: '${projectId}',
+  description: 'Built with AI App Builder',
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`;
+}
+
+function isLegacyStarterPage(content: string): boolean {
+  const embeddedId = content.match(/<h1 className="text-xl font-semibold tracking-tight text-white mb-2">\s*([^\r\n<]+)\s*<\/h1>/)?.[1]?.trim();
+  return Boolean(embeddedId && content === legacyStarterPageSource(embeddedId));
+}
+
+function isLegacyStarterLayout(content: string): boolean {
+  const embeddedId = content.match(/\btitle:\s*'([^'\r\n]+)'/)?.[1];
+  return Boolean(embeddedId && content === legacyStarterLayoutSource(embeddedId));
+}
+
+function removeLegacyStarterFiles(dir: string): void {
+  for (const relativePath of ["src/app/page.tsx", "src/app/page.jsx"]) {
+    const fullPath = path.join(/* turbopackIgnore: true */ dir, relativePath);
+    if (!fs.existsSync(/* turbopackIgnore: true */ fullPath)) continue;
+    const content = fs.readFileSync(/* turbopackIgnore: true */ fullPath, "utf-8");
+    if (isLegacyStarterPage(content) || content.includes("@bigbag-managed-starter")) {
+      fs.unlinkSync(/* turbopackIgnore: true */ fullPath);
+    }
+  }
+
+  const layoutPath = path.join(/* turbopackIgnore: true */ dir, "src/app/layout.tsx");
+  if (fs.existsSync(/* turbopackIgnore: true */ layoutPath)) {
+    const content = fs.readFileSync(/* turbopackIgnore: true */ layoutPath, "utf-8");
+    if (isLegacyStarterLayout(content) || content.includes("@bigbag-managed-starter")) {
+      fs.unlinkSync(/* turbopackIgnore: true */ layoutPath);
+    }
+  }
+}
+
+function generatedAppImport(dir: string): string | null {
+  const candidates = [
+    "src/App.tsx",
+    "src/App.jsx",
+    "src/app.tsx",
+    "src/app.jsx",
+    "src/app/page.tsx",
+    "src/app/page.jsx",
+  ];
+  for (const candidate of candidates) {
+    const parent = path.join(/* turbopackIgnore: true */ dir, path.dirname(candidate));
+    const requestedName = path.basename(candidate);
+    try {
+      const files = fs.readdirSync(/* turbopackIgnore: true */ parent, { withFileTypes: true })
+        .filter((item) => item.isFile());
+      const entry = files.find((item) => item.name === requestedName) ||
+        files.find((item) => item.name.toLocaleLowerCase() === requestedName.toLocaleLowerCase());
+      if (!entry) continue;
+      const relativePath = path.posix.join(path.dirname(candidate), entry.name)
+        .replace(/\.[cm]?[jt]sx?$/i, "");
+      return `./${relativePath.slice("src/".length)}`;
+    } catch {
+      // Try the next conventional generated entrypoint.
+    }
+  }
+  return null;
+}
+
+function runtimeMainSource(
+  appImport: string | null,
+  cssImport: string,
+  metadata: { title: string; description: string }
+): string {
+  const appDefinition = appImport
+    ? `import App from ${JSON.stringify(appImport)};`
+    : `function App() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 p-8 text-center text-white">
+      <p className="text-sm text-slate-400">Waiting for the first generated application...</p>
+    </main>
+  );
+}`;
+
+  return `// ${RUNTIME_ENTRY_MARKER}
+import { createRoot } from "react-dom/client";
+${appDefinition}
+import ${JSON.stringify(cssImport)};
+
+document.title = ${JSON.stringify(metadata.title)};
+let descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+if (!descriptionMeta) {
+  descriptionMeta = document.createElement("meta");
+  descriptionMeta.name = "description";
+  document.head.appendChild(descriptionMeta);
+}
+descriptionMeta.content = ${JSON.stringify(metadata.description)};
+
+const fallbackImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23dedbd4'/%3E%3Cstop offset='1' stop-color='%238b877f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='1000' fill='url(%23g)'/%3E%3Cpath d='M0 760L430 390l230 205 220-175 720 580H0Z' fill='%23181715' opacity='.28'/%3E%3C/svg%3E";
+
+document.addEventListener("error", (event) => {
+  const image = event.target;
+  if (image instanceof HTMLImageElement && image.dataset.fallbackApplied !== "true") {
+    image.dataset.fallbackApplied = "true";
+    image.src = fallbackImage;
+  }
+}, true);
+
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error('Missing <div id="root"></div> in index.html');
+
+createRoot(rootElement).render(<App />);
+`;
+}
+
+function legacyRuntimeMainSource(
+  appImport: string,
+  cssImport: string,
+  metadata: { title: string; description: string }
+): string {
+  return runtimeMainSource(appImport, cssImport, metadata)
+    .replace(`// ${RUNTIME_ENTRY_MARKER}\n`, "")
+    .replace(
+      'import { createRoot } from "react-dom/client";',
+      'import React from "react";\nimport { createRoot } from "react-dom/client";',
+    )
+    .replace(
+      `const rootElement = document.getElementById("root");\nif (!rootElement) throw new Error('Missing <div id="root"></div> in index.html');\n\n`,
+      "",
+    )
+    .replace(
+      "createRoot(rootElement).render(<App />);",
+      `createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);`,
+    );
+}
+
+function ensureRuntimeIndexHtml(dir: string, content: string): string {
+  let updated = content;
+  // Keep comments intact, but do not let disabled markup satisfy the runtime
+  // contract. Replacing non-newline comment characters with spaces preserves
+  // source offsets, so invalid active script tags can still be removed from
+  // the original document below.
+  const activeHtml = content.replace(/<!--[\s\S]*?-->/g, (comment) =>
+    comment.replace(/[^\r\n]/g, " ")
+  );
+  const hasRoot = /<[a-z][\w:-]*\b[^>]*\bid\s*=\s*["']root["'][^>]*>/i.test(activeHtml);
+  let hasMainScript = false;
+  for (const match of activeHtml.matchAll(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi)) {
+    const element = match[0];
+    const tag = element.match(/^<script\b[^>]*>/i)?.[0] || "";
+    if (!/\btype\s*=\s*["']module["']/i.test(tag)) continue;
+    const source = tag.match(
+      /\bsrc\s*=\s*["'](?:(?:\/|\.\/)?)(src\/[a-zA-Z0-9_.@/-]+\.(?:js|jsx|ts|tsx))(?:[?#][^"']*)?["']/i,
+    )?.[1];
+    if (!source) continue;
+    const relativePath = path.posix.normalize(source.replace(/^(?:\/|\.\/)/, ""));
+    const workspaceRoot = path.resolve(/* turbopackIgnore: true */ dir);
+    const fullPath = path.resolve(/* turbopackIgnore: true */ workspaceRoot, relativePath);
+    const isInsideWorkspace =
+      relativePath.startsWith("src/") &&
+      fullPath.startsWith(`${workspaceRoot}${path.sep}`);
+    if (
+      isInsideWorkspace &&
+      (relativePath === "src/main.tsx" || fs.existsSync(/* turbopackIgnore: true */ fullPath))
+    ) {
+      hasMainScript = true;
+    } else {
+      const start = match.index ?? -1;
+      if (start >= 0) {
+        // Preserve offsets while removing only the active invalid element. A
+        // matching string inside a preceding comment must remain untouched.
+        updated = `${updated.slice(0, start)}${" ".repeat(element.length)}${updated.slice(start + element.length)}`;
+      }
+    }
+  }
+  if (hasRoot && hasMainScript) return updated;
+  const insertionPoint = /<\/body\s*>/i.exec(activeHtml) || /<\/html\s*>/i.exec(activeHtml);
+  const insertionIndex = insertionPoint?.index ?? updated.length;
+
+  const requiredNodes = [
+    !hasRoot ? '    <div id="root"></div>' : null,
+    !hasMainScript ? '    <script type="module" src="/src/main.tsx"></script>' : null,
+  ].filter((line): line is string => Boolean(line));
+  const closingIndent = insertionPoint ? "  " : "";
+  return `${updated.slice(0, insertionIndex)}\n${requiredNodes.join("\n")}\n${closingIndent}${updated.slice(insertionIndex)}`;
+}
+
 function readLayoutMetadata(
   dir: string,
   projectId: string
@@ -593,7 +841,11 @@ export default {
     }
   }
 
-  writeIfMissing(dir, "src/app/globals.css", `@import "tailwindcss";\n`);
+  const globalsCssPath = path.join(/* turbopackIgnore: true */ dir, "src/app/globals.css");
+  const hadGlobalsCss = fs.existsSync(/* turbopackIgnore: true */ globalsCssPath);
+  const indexCssPath = path.join(/* turbopackIgnore: true */ dir, "src/index.css");
+  const useIndexCss = !hadGlobalsCss && fs.existsSync(/* turbopackIgnore: true */ indexCssPath);
+  if (!useIndexCss) writeIfMissing(dir, "src/app/globals.css", `@import "tailwindcss";\n`);
 
   if (!fs.existsSync(dbClientPath)) {
     write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
@@ -601,12 +853,10 @@ export default {
     write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
   }
 
-  writeIfMissing(
-    dir,
-    "index.html",
-    `<!doctype html>
+  const runtimeIndex = `<!doctype html>
 <html lang="en">
   <head>
+    <!-- ${RUNTIME_ENTRY_MARKER} -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#09090b" />
@@ -617,8 +867,17 @@ export default {
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-`
-  );
+`;
+  const indexPath = path.join(/* turbopackIgnore: true */ dir, "index.html");
+  if (!fs.existsSync(/* turbopackIgnore: true */ indexPath)) {
+    write(dir, "index.html", runtimeIndex);
+  } else {
+    const currentIndex = fs.readFileSync(/* turbopackIgnore: true */ indexPath, "utf-8");
+    const updatedIndex = currentIndex.includes(RUNTIME_ENTRY_MARKER)
+      ? runtimeIndex
+      : ensureRuntimeIndexHtml(dir, currentIndex);
+    if (updatedIndex !== currentIndex) write(dir, "index.html", updatedIndex);
+  }
 
   writeIfMissing(
     dir,
@@ -700,48 +959,18 @@ export default defineConfig({
     write(dir, "vite.config.ts", updatedViteConfig);
   }
 
+  removeLegacyStarterFiles(dir);
   const metadata = readLayoutMetadata(dir, projectId);
-  const hasAppTsx = fs.existsSync(path.join(dir, "src/App.tsx")) || fs.existsSync(path.join(dir, "src/App.jsx"));
-  const hasPageTsx = fs.existsSync(path.join(dir, "src/app/page.tsx")) || fs.existsSync(path.join(dir, "src/app/page.jsx"));
-  const appImport = hasAppTsx && !hasPageTsx ? "./App" : "./app/page";
-  const hasIndexCss = fs.existsSync(path.join(dir, "src/index.css"));
-  const hasGlobalsCss = fs.existsSync(path.join(dir, "src/app/globals.css"));
-  const cssImport = hasIndexCss && !hasGlobalsCss ? "./index.css" : "./app/globals.css";
+  const appImport = generatedAppImport(dir);
+  const cssImport = useIndexCss ? "./index.css" : "./app/globals.css";
 
-  writeIfMissing(
-    dir,
-    "src/main.tsx",
-    `import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "${appImport}";
-import "${cssImport}";
-
-document.title = ${JSON.stringify(metadata.title)};
-let descriptionMeta = document.querySelector<HTMLMetaElement>('meta[name="description"]');
-if (!descriptionMeta) {
-  descriptionMeta = document.createElement("meta");
-  descriptionMeta.name = "description";
-  document.head.appendChild(descriptionMeta);
-}
-descriptionMeta.content = ${JSON.stringify(metadata.description)};
-
-const fallbackImage = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1600' height='1000' viewBox='0 0 1600 1000'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23dedbd4'/%3E%3Cstop offset='1' stop-color='%238b877f'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1600' height='1000' fill='url(%23g)'/%3E%3Cpath d='M0 760L430 390l230 205 220-175 720 580H0Z' fill='%23181715' opacity='.28'/%3E%3C/svg%3E";
-
-document.addEventListener("error", (event) => {
-  const image = event.target;
-  if (image instanceof HTMLImageElement && image.dataset.fallbackApplied !== "true") {
-    image.dataset.fallbackApplied = "true";
-    image.src = fallbackImage;
+  const mainPath = path.join(/* turbopackIgnore: true */ dir, "src/main.tsx");
+  if (
+    !fs.existsSync(/* turbopackIgnore: true */ mainPath) ||
+    isManagedRuntimeEntry(fs.readFileSync(/* turbopackIgnore: true */ mainPath, "utf-8"))
+  ) {
+    write(dir, "src/main.tsx", runtimeMainSource(appImport, cssImport, metadata));
   }
-}, true);
-
-createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
-`
-  );
 }
 
 /** Seed a Lovable-style Vite + React + Tailwind app. Idempotent. */
@@ -833,54 +1062,6 @@ body {
   --color-muted-foreground: rgb(var(--muted-foreground));
   --color-border: rgb(var(--border));
   --color-ring: rgb(var(--ring));
-}
-`
-  );
-
-  write(
-    dir,
-    "src/app/layout.tsx",
-    `import type { ReactNode } from 'react';
-import './globals.css';
-
-export const metadata = {
-  title: '${projectId}',
-  description: 'Built with AI App Builder',
-};
-
-export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
-}
-`
-  );
-
-  write(
-    dir,
-    "src/app/page.tsx",
-    `export default function Home() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-black text-white">
-      <div className="max-w-md p-8 bg-slate-900/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-slate-800">
-        <div className="w-12 h-12 mx-auto mb-4 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-          <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-        </div>
-        <h1 className="text-xl font-semibold tracking-tight text-white mb-2">
-          ${projectId}
-        </h1>
-        <p className="text-sm text-slate-400 mb-6">
-          AI is assembling your application. Preview will update live as files are generated.
-        </p>
-        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
-          Ready for Prompt
-        </div>
-      </div>
-    </main>
-  );
 }
 `
   );

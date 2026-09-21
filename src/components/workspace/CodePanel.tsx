@@ -42,6 +42,7 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
 
 interface CodePanelProps {
   projectId: string;
+  sourceRevision?: string;
   darkMode?: boolean;
   // Called when the user clicks "Ask AI to edit this file" — receives the file path.
   onAskAiEdit?: (path: string) => void;
@@ -108,6 +109,7 @@ function loadArchiveOnce(projectId: string): Promise<ArchiveResult> {
 // ── Cache constants ──────────────────────────────────────────────────────────
 const CACHE_PREFIX = "vibebuild-code-";
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+const LOCAL_SOURCE_ALWAYS_FRESH = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local";
 
 interface CachePayload {
   ts: number;
@@ -439,7 +441,7 @@ function TreeRow({
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
-export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildStarted, onRebuildFinished }: CodePanelProps) {
+export function CodePanel({ projectId, sourceRevision, darkMode, onAskAiEdit, wake, onRebuildStarted, onRebuildFinished }: CodePanelProps) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -642,10 +644,12 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
         textFiles: decodedText,
         paths: filteredPaths,
       };
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(payload));
-      } catch {
-        /* ignore */
+      if (!LOCAL_SOURCE_ALWAYS_FRESH) {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(payload));
+        } catch {
+          /* ignore */
+        }
       }
 
       return filteredPaths;
@@ -677,7 +681,7 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
       setError(null);
 
       // Try the 3-minute localStorage cache first.
-      if (!bypassCache) {
+      if (!bypassCache && !LOCAL_SOURCE_ALWAYS_FRESH) {
         try {
           const raw = localStorage.getItem(cacheKey);
           if (raw) {
@@ -719,6 +723,22 @@ export function CodePanel({ projectId, darkMode, onAskAiEdit, wake, onRebuildSta
     fetchCode(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  const previousSourceRevision = useRef(sourceRevision);
+  useEffect(() => {
+    const previous = previousSourceRevision.current;
+    previousSourceRevision.current = sourceRevision;
+    if (previous !== "init" || !sourceRevision || sourceRevision === "init") return;
+
+    // A generation just finished. Refresh the archive without remounting this
+    // panel so selected files and unsaved drafts remain intact.
+    try {
+      localStorage.removeItem(cacheKey);
+    } catch {
+      /* ignore */
+    }
+    void fetchCode(false);
+  }, [sourceRevision, cacheKey, fetchCode]);
 
   // Clean up any object URL on unmount.
   useEffect(() => {

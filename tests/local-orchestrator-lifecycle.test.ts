@@ -47,6 +47,8 @@ const { isSourceBuildFailure, postProcessGeneratedFiles, stripGeneratedApplyRule
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
+  legacyStarterLayoutSource,
+  legacyStarterPageSource,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
 const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
@@ -290,6 +292,245 @@ test("runtime-owned model output is discarded without poisoning a valid page", (
 
   assert.deepEqual(files.map((file) => file.path), ["src/app/page.tsx"]);
   assert.deepEqual(generationValidationIssues(files), []);
+});
+
+test("React browser entrypoints retain or recover the createRoot import", () => {
+  const files = [
+    {
+      path: "src/main.tsx",
+      content: `import App from "./App";\ncreateRoot(document.getElementById("root")!).render(<App />);`,
+    },
+    {
+      path: "src/components/NestedRoot.tsx",
+      content: `import { createRoot } from "react-dom/client";\nexport default function NestedRoot(){ return <main>One tree</main>; }`,
+    },
+  ];
+
+  postProcessGeneratedFiles(files);
+
+  assert.match(files[0].content, /import \{ createRoot \} from ["']react-dom\/client["']/);
+  assert.match(files[0].content, /createRoot\(document\.getElementById/);
+  assert.doesNotMatch(files[1].content, /react-dom\/client/);
+});
+
+test("starter runtime removes the hardcoded page and mounts generated source", () => {
+  const workspace = path.join(tempRoot, `runtime-entry-${randomUUID()}`);
+  writeStarterTemplate(workspace, "runtime-entry-test");
+
+  assert.equal(fs.existsSync(path.join(workspace, "src/app/page.tsx")), false);
+  assert.equal(fs.existsSync(path.join(workspace, "src/app/layout.tsx")), false);
+  const initialMain = fs.readFileSync(path.join(workspace, "src/main.tsx"), "utf8");
+  assert.match(initialMain, /import \{ createRoot \} from "react-dom\/client"/);
+  assert.match(initialMain, /createRoot\(rootElement\)\.render\(<App \/>\)/);
+  assert.doesNotMatch(initialMain, /StrictMode/);
+  const index = fs.readFileSync(path.join(workspace, "index.html"), "utf8");
+  assert.match(index, /<div id="root"><\/div>/);
+  assert.match(index, /src="\/src\/main\.tsx"/);
+
+  fs.writeFileSync(
+    path.join(workspace, "src/App.tsx"),
+    `export default function App(){ return <main>Generated application</main>; }`,
+  );
+  writeStarterTemplate(workspace, "runtime-entry-test");
+
+  const generatedMain = fs.readFileSync(path.join(workspace, "src/main.tsx"), "utf8");
+  assert.match(generatedMain, /import App from "\.\/App"/);
+  assert.doesNotMatch(generatedMain, /Waiting for the first generated application/);
+
+  fs.unlinkSync(path.join(workspace, "src/App.tsx"));
+  fs.writeFileSync(
+    path.join(workspace, "src/app.tsx"),
+    `export default function App(){ return <main>Alternate generated entry</main>; }`,
+  );
+  writeStarterTemplate(workspace, "runtime-entry-test");
+  assert.match(
+    fs.readFileSync(path.join(workspace, "src/main.tsx"), "utf8"),
+    /import App from "\.\/app"/,
+  );
+
+  const migrationWorkspace = path.join(tempRoot, `runtime-migration-${randomUUID()}`);
+  writeStarterTemplate(migrationWorkspace, "runtime-migration-test");
+  fs.writeFileSync(
+    path.join(migrationWorkspace, "src/app/page.tsx"),
+    `export default function Home(){ return <main>AI is assembling your application — Ready for Prompt, with user changes.</main>; }`,
+  );
+  fs.writeFileSync(path.join(migrationWorkspace, "src/index.css"), "body { color: rebeccapurple; }");
+  fs.unlinkSync(path.join(migrationWorkspace, "src/app/globals.css"));
+  writeStarterTemplate(migrationWorkspace, "runtime-migration-test");
+
+  assert.equal(fs.existsSync(path.join(migrationWorkspace, "src/app/page.tsx")), true);
+  assert.equal(fs.existsSync(path.join(migrationWorkspace, "src/app/globals.css")), false);
+  assert.match(
+    fs.readFileSync(path.join(migrationWorkspace, "src/main.tsx"), "utf8"),
+    /import "\.\/index\.css"/,
+  );
+  writeStarterTemplate(migrationWorkspace, "runtime-migration-test");
+  assert.equal(fs.existsSync(path.join(migrationWorkspace, "src/app/globals.css")), false);
+  assert.match(
+    fs.readFileSync(path.join(migrationWorkspace, "src/main.tsx"), "utf8"),
+    /import "\.\/index\.css"/,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(migrationWorkspace, "src/index.css"), "utf8"),
+    "body { color: rebeccapurple; }",
+  );
+
+  const renamedWorkspace = path.join(tempRoot, `runtime-renamed-${randomUUID()}`);
+  writeStarterTemplate(renamedWorkspace, "new-project-id");
+  fs.writeFileSync(
+    path.join(renamedWorkspace, "src/app/page.tsx"),
+    legacyStarterPageSource("old-project-id"),
+  );
+  fs.writeFileSync(
+    path.join(renamedWorkspace, "src/app/layout.tsx"),
+    legacyStarterLayoutSource("old-project-id"),
+  );
+  fs.writeFileSync(
+    path.join(renamedWorkspace, "src/App.tsx"),
+    `export default function App(){ return <main>Renamed generated app</main>; }`,
+  );
+  writeStarterTemplate(renamedWorkspace, "new-project-id");
+  assert.equal(fs.existsSync(path.join(renamedWorkspace, "src/app/page.tsx")), false);
+  assert.equal(fs.existsSync(path.join(renamedWorkspace, "src/app/layout.tsx")), false);
+  assert.match(
+    fs.readFileSync(path.join(renamedWorkspace, "src/main.tsx"), "utf8"),
+    /import App from "\.\/App"/,
+  );
+  assert.match(
+    fs.readFileSync(path.join(renamedWorkspace, "src/main.tsx"), "utf8"),
+    /document\.title = "new-project-id"/,
+  );
+
+  const legacyMainWorkspace = path.join(tempRoot, `runtime-legacy-main-${randomUUID()}`);
+  writeStarterTemplate(legacyMainWorkspace, "legacy-main-test");
+  fs.writeFileSync(
+    path.join(legacyMainWorkspace, "src/App.tsx"),
+    `export default function App(){ return <main>Legacy generated app</main>; }`,
+  );
+  writeStarterTemplate(legacyMainWorkspace, "legacy-main-test");
+  const legacyMainPath = path.join(legacyMainWorkspace, "src/main.tsx");
+  const legacyMain = fs.readFileSync(legacyMainPath, "utf8")
+    .replace("// @bigbag-runtime-entry\n", "")
+    .replace(
+      'import { createRoot } from "react-dom/client";',
+      'import React from "react";\nimport { createRoot } from "react-dom/client";',
+    )
+    .replace(
+      `const rootElement = document.getElementById("root");\nif (!rootElement) throw new Error('Missing <div id="root"></div> in index.html');\n\n`,
+      "",
+    )
+    .replace(
+      "createRoot(rootElement).render(<App />);",
+      `createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);`,
+    );
+  fs.writeFileSync(legacyMainPath, legacyMain);
+  writeStarterTemplate(legacyMainWorkspace, "legacy-main-test");
+  const migratedLegacyMain = fs.readFileSync(legacyMainPath, "utf8");
+  assert.match(migratedLegacyMain, /@bigbag-runtime-entry/);
+  assert.match(migratedLegacyMain, /createRoot\(rootElement\)\.render\(<App \/>\)/);
+  assert.doesNotMatch(migratedLegacyMain, /StrictMode/);
+
+  const customMainWorkspace = path.join(tempRoot, `runtime-custom-main-${randomUUID()}`);
+  writeStarterTemplate(customMainWorkspace, "custom-main-test");
+  const customMainPath = path.join(customMainWorkspace, "src/main.tsx");
+  const customizedMain = fs.readFileSync(customMainPath, "utf8")
+    .replace("// @bigbag-runtime-entry\n", "")
+    .concat("\nconsole.info('keep this custom runtime');\n");
+  fs.writeFileSync(customMainPath, customizedMain);
+  writeStarterTemplate(customMainWorkspace, "custom-main-test");
+  assert.equal(fs.readFileSync(customMainPath, "utf8"), customizedMain);
+
+  const customIndexWorkspace = path.join(tempRoot, `runtime-custom-index-${randomUUID()}`);
+  writeStarterTemplate(customIndexWorkspace, "custom-index-test");
+  const customIndexPath = path.join(customIndexWorkspace, "index.html");
+  fs.writeFileSync(
+    customIndexPath,
+    `<!doctype html><html><head><meta name="custom" content="preserve-me"></head><body><main>Custom shell</main></body></html>`,
+  );
+  writeStarterTemplate(customIndexWorkspace, "custom-index-test");
+  const repairedIndex = fs.readFileSync(customIndexPath, "utf8");
+  assert.match(repairedIndex, /<meta name="custom" content="preserve-me">/);
+  assert.match(repairedIndex, /<main>Custom shell<\/main>/);
+  assert.match(repairedIndex, /<div id="root"><\/div>/);
+  assert.match(repairedIndex, /<script type="module" src="\/src\/main\.tsx"><\/script>/);
+
+  fs.writeFileSync(
+    customIndexPath,
+    `<!doctype html><html><body><div id="root"></div><script type="module" src="./src/bootstrap/client.tsx?v=2#app"></script></body></html>`,
+  );
+  fs.mkdirSync(path.join(customIndexWorkspace, "src/bootstrap"), { recursive: true });
+  fs.writeFileSync(
+    path.join(customIndexWorkspace, "src/bootstrap/client.tsx"),
+    `document.getElementById("root").textContent = "Custom entry";`,
+  );
+  writeStarterTemplate(customIndexWorkspace, "custom-index-test");
+  const compatibleIndex = fs.readFileSync(customIndexPath, "utf8");
+  assert.match(compatibleIndex, /src="\.\/src\/bootstrap\/client\.tsx\?v=2#app"/);
+  assert.doesNotMatch(compatibleIndex, /src="\/src\/main\.tsx"/);
+  fs.unlinkSync(path.join(customIndexWorkspace, "src/bootstrap/client.tsx"));
+  writeStarterTemplate(customIndexWorkspace, "custom-index-test");
+  const staleEntryRepaired = fs.readFileSync(customIndexPath, "utf8");
+  assert.doesNotMatch(staleEntryRepaired, /src="\.\/src\/bootstrap\/client\.tsx/);
+  assert.match(staleEntryRepaired, /src="\/src\/main\.tsx"/);
+
+  const commentedRuntimeWorkspace = path.join(tempRoot, `runtime-commented-${randomUUID()}`);
+  writeStarterTemplate(commentedRuntimeWorkspace, "commented-runtime-test");
+  const commentedIndexPath = path.join(commentedRuntimeWorkspace, "index.html");
+  fs.writeFileSync(
+    commentedIndexPath,
+    `<!doctype html><html><body><!-- <div id="root"></div><script type="module" src="/src/main.tsx"></script> --></body></html>`,
+  );
+  writeStarterTemplate(commentedRuntimeWorkspace, "commented-runtime-test");
+  const commentedRuntimeIndex = fs.readFileSync(commentedIndexPath, "utf8");
+  assert.match(commentedRuntimeIndex, /<!-- <div id="root"><\/div><script type="module" src="\/src\/main\.tsx"><\/script> -->/);
+  const activeRuntimeIndex = commentedRuntimeIndex.replace(/<!--[\s\S]*?-->/g, "");
+  assert.match(activeRuntimeIndex, /<div id="root"><\/div>/);
+  assert.match(activeRuntimeIndex, /<script type="module" src="\/src\/main\.tsx"><\/script>/);
+
+  const compatibleIndexWorkspace = path.join(tempRoot, `runtime-compatible-index-${randomUUID()}`);
+  writeStarterTemplate(compatibleIndexWorkspace, "compatible-index-test");
+  const compatibleIndexPath = path.join(compatibleIndexWorkspace, "index.html");
+  fs.writeFileSync(
+    compatibleIndexPath,
+    `<!doctype html><html><body><main id="root"></main><script type="module" src="src/main.tsx"></script></body></html>`,
+  );
+  writeStarterTemplate(compatibleIndexWorkspace, "compatible-index-test");
+  const compatibleRuntimeIndex = fs.readFileSync(compatibleIndexPath, "utf8");
+  assert.equal((compatibleRuntimeIndex.match(/\bid="root"/g) || []).length, 1);
+  assert.match(compatibleRuntimeIndex, /<main id="root"><\/main>/);
+  assert.match(compatibleRuntimeIndex, /<script type="module" src="src\/main\.tsx"><\/script>/);
+  assert.doesNotMatch(compatibleRuntimeIndex, /src="\/src\/main\.tsx"/);
+
+  const commentedBodyWorkspace = path.join(tempRoot, `runtime-commented-body-${randomUUID()}`);
+  writeStarterTemplate(commentedBodyWorkspace, "commented-body-test");
+  const commentedBodyIndexPath = path.join(commentedBodyWorkspace, "index.html");
+  fs.writeFileSync(
+    commentedBodyIndexPath,
+    `<!doctype html><html><body><!-- disabled closing tag: </body> --></body></html>`,
+  );
+  writeStarterTemplate(commentedBodyWorkspace, "commented-body-test");
+  const commentedBodyIndex = fs.readFileSync(commentedBodyIndexPath, "utf8");
+  assert.match(commentedBodyIndex, /<!-- disabled closing tag: <\/body> -->/);
+  const activeCommentedBodyIndex = commentedBodyIndex.replace(/<!--[\s\S]*?-->/g, "");
+  assert.match(activeCommentedBodyIndex, /<div id="root"><\/div>/);
+  assert.match(activeCommentedBodyIndex, /<script type="module" src="\/src\/main\.tsx"><\/script>/);
+
+  const bodylessIndexWorkspace = path.join(tempRoot, `runtime-bodyless-${randomUUID()}`);
+  writeStarterTemplate(bodylessIndexWorkspace, "bodyless-index-test");
+  const bodylessIndexPath = path.join(bodylessIndexWorkspace, "index.html");
+  fs.writeFileSync(
+    bodylessIndexPath,
+    `<!doctype html><html><body><main>Custom shell</main></html>`,
+  );
+  writeStarterTemplate(bodylessIndexWorkspace, "bodyless-index-test");
+  const bodylessIndex = fs.readFileSync(bodylessIndexPath, "utf8");
+  assert.match(bodylessIndex, /<div id="root"><\/div>/);
+  assert.match(bodylessIndex, /<script type="module" src="\/src\/main\.tsx"><\/script>/);
+  assert.match(bodylessIndex, /<\/html>/);
 });
 
 test("generation validation rejects invented durable database methods", () => {
