@@ -581,10 +581,22 @@ function generatedAppImport(dir: string): string | null {
   const candidates = [
     "src/App.tsx",
     "src/App.jsx",
+    "src/App.js",
     "src/app.tsx",
     "src/app.jsx",
+    "src/app.js",
     "src/app/page.tsx",
     "src/app/page.jsx",
+    "src/app/page.js",
+    "src/pages/index.tsx",
+    "src/pages/index.jsx",
+    "src/pages/index.js",
+    "app/page.tsx",
+    "app/page.jsx",
+    "app/page.js",
+    "pages/index.tsx",
+    "pages/index.jsx",
+    "pages/index.js",
   ];
   for (const candidate of candidates) {
     const parent = path.join(/* turbopackIgnore: true */ dir, path.dirname(candidate));
@@ -597,7 +609,8 @@ function generatedAppImport(dir: string): string | null {
       if (!entry) continue;
       const relativePath = path.posix.join(path.dirname(candidate), entry.name)
         .replace(/\.[cm]?[jt]sx?$/i, "");
-      return `./${relativePath.slice("src/".length)}`;
+      const fromRuntimeEntry = path.posix.relative("src", relativePath);
+      return fromRuntimeEntry.startsWith(".") ? fromRuntimeEntry : `./${fromRuntimeEntry}`;
     } catch {
       // Try the next conventional generated entrypoint.
     }

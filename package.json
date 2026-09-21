@@ -10,6 +10,8 @@
     "test:supabase": "node --test --require ts-node/register/transpile-only tests/supabase-durable-store.test.ts",
     "test:orchestrator": "node --test --require ts-node/register/transpile-only tests/local-orchestrator-lifecycle.test.ts",
     "test:real-generation": "node --test --require ts-node/register/transpile-only tests/real-file-generation.test.ts",
+    "test:prompt-matrix": "node --test --require ts-node/register/transpile-only tests/prompt-contract-matrix.test.ts",
+    "test:live-generation": "node --require ts-node/register/transpile-only --require tsconfig-paths/register scripts/live-generation-smoke.ts",
     "test:serve": "TESTING_MODE=true PORT=3000 next start"
   },
   "dependencies": {
