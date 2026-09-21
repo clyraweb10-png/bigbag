@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { t } from "@/i18n";
-import { classifyIntent, type ProjectStage } from "@/lib/local-orchestrator/intent-router";
+import { approvedBuildInstruction, classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -83,6 +83,7 @@ export default function GeneratePage() {
   const [stage, setStage] = useState<ProjectStage>("idle");
   const [plannerRunning, setPlannerRunning] = useState(false);
   const [approvedPrompt, setApprovedPrompt] = useState("");
+  const [planRequest, setPlanRequest] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [typingIndex, setTypingIndex] = useState<number | null>(null);
   const [initialized, setInitialized] = useState(false);
@@ -117,21 +118,27 @@ export default function GeneratePage() {
   }, [messages, plannerRunning, suggestions]);
 
   /* ── Initialize from URL prompt ── */
-  const sendToPlanner = useCallback(async (message: string, history: Message[]) => {
+  const sendToPlanner = useCallback(async (
+    message: string,
+    history: Message[],
+    intent: Extract<UserIntent, "chat" | "plan" | "update_plan">
+  ) => {
     setPlannerRunning(true);
     setSuggestions([]);
     try {
       const res = await fetch("/api/planner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "chat", message, history: history.slice(-10) }),
+        body: JSON.stringify({ intent, message, history: history.slice(-10) }),
       });
       const payload = await res.json() as { ok: boolean; data?: { text?: string; suggestions?: string[] }; error?: string };
       if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "Assistant unavailable");
       setTypingIndex(history.length);
       setMessages((prev) => [...prev, { role: "assistant", content: payload.data!.text! }]);
       setSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
-      setStage("awaiting_confirmation");
+      if (intent === "plan" || intent === "update_plan") {
+        setStage("awaiting_confirmation");
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not reach the assistant");
       setMessages((prev) => [...prev, { role: "assistant", content: "I couldn't reach the assistant. Try sending your message again." }]);
@@ -146,10 +153,15 @@ export default function GeneratePage() {
     const initial = (() => { try { return sessionStorage.getItem("bigbag:pending-prompt") || ""; } catch { return ""; } })();
     if (initial) {
       try { sessionStorage.removeItem("bigbag:pending-prompt"); } catch { /* ok */ }
-      setApprovedPrompt(initial);
+      const intent = classifyIntent(initial, "idle");
+      const plannerIntent = intent === "plan" ? "plan" : "chat";
+      if (plannerIntent === "plan") {
+        setApprovedPrompt(initial);
+        setPlanRequest(initial);
+      }
       const userMsg: Message = { role: "user", content: initial };
       setMessages([userMsg]);
-      void sendToPlanner(initial, []);
+      void sendToPlanner(initial, [], plannerIntent);
     }
   }, [status, user, initialized, sendToPlanner]);
 
@@ -168,17 +180,20 @@ export default function GeneratePage() {
     const intent = classifyIntent(msg, stage, lastAssistant);
 
     if (intent === "confirm_build") {
-      setApprovedPrompt(msg);
       setPrompt("");
-      openBuildModal(msg);
+      prepareBuildFromConversation(msg);
       return;
     }
 
     const next: Message[] = [...messages, { role: "user", content: msg }];
     setMessages(next);
     setPrompt("");
-    if (!approvedPrompt) setApprovedPrompt(msg);
-    await sendToPlanner(msg, messages);
+    if (intent === "plan") {
+      if (!approvedPrompt) setApprovedPrompt(msg);
+      setPlanRequest(msg);
+    }
+    const plannerIntent = intent === "plan" || intent === "update_plan" ? intent : "chat";
+    await sendToPlanner(msg, messages, plannerIntent);
   };
 
   /* ── Build modal helpers ── */
@@ -191,6 +206,18 @@ export default function GeneratePage() {
     setBuildError(null);
     setNameModalOpen(true);
   };
+
+  function prepareBuildFromConversation(fallback: string) {
+    const buildInstruction = approvedBuildInstruction(
+      messages.map((message) => ({
+        author: message.role === "assistant" ? "agent" : "user",
+        message: message.content,
+      })),
+      fallback.trim() || "Build a complete modern web application."
+    );
+    setApprovedPrompt(buildInstruction);
+    openBuildModal(planRequest || buildInstruction);
+  }
 
   const confirmBuild = async () => {
     const id = normalizeId(buildName);
@@ -221,7 +248,8 @@ export default function GeneratePage() {
 
     try {
       sessionStorage.setItem(`bigbag:pendingPrompt:${id2}`, buildInstruction);
-      sessionStorage.setItem(`bigbag:pendingDisplayPrompt:${id2}`, approvedPrompt);
+      const displayPrompt = planRequest || approvedPrompt;
+      sessionStorage.setItem(`bigbag:pendingDisplayPrompt:${id2}`, displayPrompt);
       if (upload.uploaded.length > 0) sessionStorage.setItem(`bigbag:pendingFiles:${id2}`, JSON.stringify(upload.uploaded));
     } catch { /* ok */ }
 
@@ -317,10 +345,10 @@ export default function GeneratePage() {
           )}
 
           {/* Proceed to build */}
-          {messages.length > 0 && !plannerRunning && (
+          {stage === "awaiting_confirmation" && messages.length > 0 && !plannerRunning && (
             <div className="pl-11">
               <Button
-                onClick={() => openBuildModal()}
+                onClick={() => prepareBuildFromConversation(approvedPrompt)}
                 className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
               >
                 <svg className="mr-2 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

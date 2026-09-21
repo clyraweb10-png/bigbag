@@ -6,6 +6,26 @@ export interface PlannerOutput {
 }
 
 /**
+ * Keep the planner/UI lifecycle contract deterministic when a provider omits
+ * a requested boundary marker. Model-authored visible content is preserved.
+ */
+export function normalizePlannerText(
+  intent: "chat" | "plan" | "update_plan",
+  text: string
+): string {
+  const visible = text.trim();
+  if (intent === "chat" || !visible) return visible;
+
+  const withHeading = /^##\s+Implementation Plan\b/im.test(visible)
+    ? visible
+    : `## Implementation Plan\n\n${visible}`;
+
+  return /Ready to build\?\s*$/i.test(withHeading)
+    ? withHeading
+    : `${withHeading}\n\nReady to build?`;
+}
+
+/**
  * Separates model-authored follow-up ideas from the assistant response. The
  * marker is intentionally HTML-comment syntax so older clients still render a
  * readable response if they receive a newer planner payload.

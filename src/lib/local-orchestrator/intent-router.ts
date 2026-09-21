@@ -109,9 +109,9 @@ export function classifyIntent(
   // Planning in progress — don't re-plan.
   if (stage === "planning") return "chat";
 
-  // An explicit, complete confirmation reply can proceed at any non-running
-  // stage. Embedded or negated phrases must never trigger a build.
-  if (confirmsBuild(norm)) {
+  // A confirmation is meaningful only after a plan exists. Treating "start"
+  // or "proceed" as a fresh build request loses the actual product brief.
+  if (stage === "awaiting_confirmation" && confirmsBuild(norm)) {
     return "confirm_build";
   }
 
@@ -119,17 +119,26 @@ export function classifyIntent(
   // change code when the message actually asks for a product or UI change.
   if (stage === "active") return isActiveEditRequest(norm) ? "direct_edit" : "chat";
 
-  // If user is chatting or asking a doubt / question -> chat mode to answer them
+  // Once a plan exists, questions stay conversational and concrete product
+  // changes refine the plan.
+  if (stage === "awaiting_confirmation") {
+    return isQuestionOrDoubt(norm) ? "chat" : "update_plan";
+  }
+
+  // "Can you build ...?" is a build request despite its grammar. Explanatory
+  // questions such as "How can I build ...?" remain chat.
+  if (!EXPLANATORY_QUESTION_START.test(norm) && BUILD_ACTION.test(norm)) {
+    return "plan";
+  }
+
+  // If user is chatting or asking a doubt / question -> chat mode to answer them.
   if (isQuestionOrDoubt(norm)) {
     return "chat";
   }
 
-  // Once a plan exists, non-confirming product changes refine that plan.
-  if (stage === "awaiting_confirmation") return "update_plan";
-
   // A fresh product request first gets the conversational planning pass. The
   // user can then explicitly confirm it, while ordinary chat stays in chat mode.
-  return BUILD_ACTION.test(norm) || APP_SUBJECT.test(norm) ? "plan" : "chat";
+  return APP_SUBJECT.test(norm) ? "plan" : "chat";
 }
 
 /** Infer a stage from a conversation history on page load (no store persistence needed). */
@@ -180,7 +189,12 @@ export function approvedBuildInstruction(
       break;
     }
   }
-  if (planIndex < 0) return fallback;
+  if (planIndex < 0) {
+    const requests = messages
+      .filter((message) => message.author === "user" && message.message.trim())
+      .map((message) => message.message.trim());
+    return requests.length > 0 ? requests.join("\n\n") : fallback;
+  }
 
   const plan = messages[planIndex].message.trim();
   const requestContext = messages

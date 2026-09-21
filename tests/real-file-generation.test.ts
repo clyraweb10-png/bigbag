@@ -5,16 +5,18 @@ import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 
-const envFile = fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8");
-envFile.split("\n").forEach((line) => {
-  const trimmed = line.trim();
-  if (trimmed && !trimmed.startsWith("#")) {
-    const idx = trimmed.indexOf("=");
-    if (idx !== -1) {
-      process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+const envPath = path.join(process.cwd(), ".env.local");
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const idx = trimmed.indexOf("=");
+      if (idx !== -1) {
+        process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+      }
     }
-  }
-});
+  });
+}
 
 const { localFileManager } = require("../src/lib/local-orchestrator/file-manager") as typeof import("../src/lib/local-orchestrator/file-manager");
 const { localProjectStore } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
