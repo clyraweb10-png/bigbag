@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callPlanner } from "@/lib/local-orchestrator/planner-client";
-import { CHAT_PROMPT } from "@/lib/local-orchestrator/planner-prompts";
-import { parsePlannerOutput } from "@/lib/local-orchestrator/planner-output";
+import { plannerPromptForIntent } from "@/lib/local-orchestrator/planner-prompts";
+import { normalizePlannerText, parsePlannerOutput } from "@/lib/local-orchestrator/planner-output";
 import type { UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
 
@@ -37,8 +37,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "message is required" }, { status: 400 });
   }
 
-  // Use conversational prompt to answer questions and doubts without implementation plans.
-  const systemPrompt = CHAT_PROMPT;
+  const plannerIntent = intent === "chat" || intent === "plan" || intent === "update_plan"
+    ? intent
+    : null;
+  if (!plannerIntent) {
+    return NextResponse.json(
+      { ok: false, error: "intent must be chat, plan, or update_plan" },
+      { status: 400 }
+    );
+  }
+  const systemPrompt = plannerPromptForIntent(plannerIntent)!;
 
   // Build message list from history + current user message.
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [
@@ -52,7 +60,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const response: { ok: true; data: PlannerResponseData } = {
       ok: true,
       data: {
-        text: plannerOutput.text,
+        text: normalizePlannerText(plannerIntent, plannerOutput.text),
         durationMs: result.durationMs,
         provider: result.provider,
         intent,

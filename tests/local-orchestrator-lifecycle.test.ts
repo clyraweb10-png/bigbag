@@ -6,16 +6,18 @@ import path from "node:path";
 import test from "node:test";
 import { Client as PgClient } from "pg";
 
-const envFile = fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8");
-envFile.split("\n").forEach((line) => {
-  const trimmed = line.trim();
-  if (trimmed && !trimmed.startsWith("#")) {
-    const idx = trimmed.indexOf("=");
-    if (idx !== -1) {
-      process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+const envPath = path.join(process.cwd(), ".env.local");
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const idx = trimmed.indexOf("=");
+      if (idx !== -1) {
+        process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+      }
     }
-  }
-});
+  });
+}
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-lifecycle-"));
 process.env.NEXT_PUBLIC_APP_URL = "https://builder.example.test";
@@ -28,7 +30,8 @@ const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-p
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
-const { parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
+const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
+const { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT, plannerPromptForIntent } = require("../src/lib/local-orchestrator/planner-prompts") as typeof import("../src/lib/local-orchestrator/planner-prompts");
 const {
   createPreviewWriteCapability,
   isPreviewInitiatedRequest,
@@ -188,6 +191,9 @@ test("website URL detection is explicit and strips chat punctuation", () => {
 test("intent routing keeps conversation separate from planning and code edits", () => {
   assert.equal(classifyIntent("hi", "idle"), "chat");
   assert.equal(classifyIntent("Hi, build me a responsive CRM app", "idle"), "plan");
+  assert.equal(classifyIntent("Can you build me a responsive CRM app?", "idle"), "plan");
+  assert.equal(classifyIntent("How can I build a responsive CRM app?", "idle"), "chat");
+  assert.equal(classifyIntent("proceed", "idle"), "chat");
   assert.equal(classifyIntent("portfolio website", "idle"), "plan");
   assert.equal(classifyIntent("recreate https://example.com", "idle"), "plan");
   assert.equal(classifyIntent("recreate it from this reference", "idle"), "plan");
@@ -213,6 +219,11 @@ test("intent routing keeps conversation separate from planning and code edits", 
     { author: "user", message: "Make it work offline too" },
     { author: "agent", message: "## Implementation Plan\n\n**Project:** Wayfinder v2" },
   ], "proceed"), /1\. Build a calm travel planner[\s\S]*2\. Make it work offline too[\s\S]*Wayfinder v2/);
+  assert.equal(approvedBuildInstruction([
+    { author: "user", message: "Build a calm travel planner" },
+    { author: "agent", message: "I can help with that." },
+    { author: "user", message: "Make it work offline too" },
+  ], "proceed"), "Build a calm travel planner\n\nMake it work offline too");
 });
 
 test("planner output keeps generated suggestions separate from visible chat", () => {
@@ -222,6 +233,23 @@ test("planner output keeps generated suggestions separate from visible chat", ()
   assert.equal(output.suggestions.length, 10);
   assert.equal(output.suggestions[0], "Make it calmer");
   assert.deepEqual(parsePlannerOutput("Visible only"), { text: "Visible only", suggestions: [] });
+  assert.equal(plannerPromptForIntent("chat"), CHAT_PROMPT);
+  assert.equal(plannerPromptForIntent("plan"), PLANNER_PROMPT);
+  assert.equal(plannerPromptForIntent("update_plan"), REFINE_PROMPT);
+  assert.equal(plannerPromptForIntent("confirm_build"), null);
+  assert.notEqual(PLANNER_PROMPT, CHAT_PROMPT);
+  assert.notEqual(REFINE_PROMPT, CHAT_PROMPT);
+  assert.match(PLANNER_PROMPT, /## Implementation Plan/);
+  assert.match(REFINE_PROMPT, /complete replacement plan/i);
+  assert.equal(normalizePlannerText("chat", "A concise response."), "A concise response.");
+  assert.equal(
+    normalizePlannerText("plan", "### Frontend\nBuild the responsive shell."),
+    "## Implementation Plan\n\n### Frontend\nBuild the responsive shell.\n\nReady to build?"
+  );
+  assert.equal(
+    normalizePlannerText("update_plan", "## Implementation Plan\n\nUpdated.\n\nReady to build?"),
+    "## Implementation Plan\n\nUpdated.\n\nReady to build?"
+  );
 });
 
 test("generated Tailwind CSS cannot break previews with unsupported apply utilities", () => {
