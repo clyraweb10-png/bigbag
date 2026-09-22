@@ -72,6 +72,7 @@ const QUESTION_START = /^(what|how|why|when|where|who|which|whose|whom|can you|c
 const EXPLANATORY_QUESTION_START = /^(what|how|why|when|where|who)\b/i;
 const IMPLICIT_EDIT = /\b(should|needs?|must|want|prefer|hate|(?:do not|don't) like|too (?:big|small|dark|light|busy|plain)|more|less|bigger|smaller|different|wrong|broken)\b/i;
 const DOUBT_KEYWORDS = /\b(doubt|doubts|confused|not sure|wondering|clarify|clarification|explain|meaning|question|questions|difference between|how to|can I|can we|should I)\b/i;
+const PLATFORM_CAPABILITY_QUESTION = /^(?:can|could|would)\s+(?:bigbag|this platform|the platform)\b/i;
 
 export function isQuestionOrDoubt(message: string): boolean {
   const norm = message.trim().toLowerCase();
@@ -127,6 +128,7 @@ export function classifyIntent(
 
   // "Can you build ...?" is a build request despite its grammar. Explanatory
   // questions such as "How can I build ...?" remain chat.
+  if (PLATFORM_CAPABILITY_QUESTION.test(norm)) return "chat";
   if (!EXPLANATORY_QUESTION_START.test(norm) && BUILD_ACTION.test(norm)) {
     return "plan";
   }

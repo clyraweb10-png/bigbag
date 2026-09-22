@@ -22,9 +22,29 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { t } from "@/i18n";
-import { approvedBuildInstruction, classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
+import { classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
+import { ProjectOnboardingDialog, type OnboardingAnswer } from "@/components/generate/ProjectOnboardingDialog";
+import {
+  EMPTY_PROJECT_CONTEXT,
+  mergeProjectContext,
+  projectContextForPrompt,
+  type OnboardingAnalysis,
+  type OnboardingQuestion,
+  type ProjectContext,
+} from "@/lib/local-orchestrator/onboarding-context";
 
 type Message = { role: "user" | "assistant"; content: string };
+type DirectBuildRequest = { instruction: string; projectId: string };
+
+const PROJECT_TYPE_QUESTION: OnboardingQuestion = {
+  kind: "project_type",
+  title: "What would you like me to create?",
+  description: "Choose the closest starting point. I’ll only ask for details that are still missing.",
+  placeholder: "Describe the kind of project you have in mind…",
+  optional: true,
+  requestProjectName: false,
+  paletteChoices: [],
+};
 
 function normalizeId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 35);
@@ -87,6 +107,13 @@ export default function GeneratePage() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [typingIndex, setTypingIndex] = useState<number | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [projectContext, setProjectContext] = useState<ProjectContext>(EMPTY_PROJECT_CONTEXT);
+  const [onboardingQuestion, setOnboardingQuestion] = useState<OnboardingQuestion | null>(null);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingRunning, setOnboardingRunning] = useState(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [sourcePrompt, setSourcePrompt] = useState("");
+  const [pendingDirectBuild, setPendingDirectBuild] = useState<DirectBuildRequest | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; imageDescription: string; file: File }[]>([]);
@@ -102,6 +129,7 @@ export default function GeneratePage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const directBuildStartedRef = useRef<DirectBuildRequest | null>(null);
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -145,9 +173,6 @@ export default function GeneratePage() {
       setTypingIndex(history.length);
       setMessages((prev) => [...prev, { role: "assistant", content: payload.data!.text! }]);
       setSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
-      if (intent === "plan" || intent === "update_plan") {
-        setStage("awaiting_confirmation");
-      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not reach the assistant");
       setMessages((prev) => [...prev, { role: "assistant", content: "I couldn't reach the assistant. Try sending your message again." }]);
@@ -155,6 +180,72 @@ export default function GeneratePage() {
       setPlannerRunning(false);
     }
   }, []);
+
+  const continueToBuild = useCallback(async (
+    originalPrompt: string,
+    context: ProjectContext,
+    _history: Message[]
+  ) => {
+    const buildInstruction = projectContextForPrompt(originalPrompt, context);
+    const displayPrompt = originalPrompt.trim() || context.projectDescription || context.customProjectType || "Create a complete project";
+    const idSource = context.projectName || context.customProjectType || context.projectDescription || originalPrompt || "new project";
+    const normalizedProjectId = normalizeId(idSource.split(/\s+/).slice(0, 5).join("-"));
+    const projectId = normalizedProjectId.length >= 3
+      ? normalizedProjectId
+      : `app-${Math.random().toString(36).slice(2, 7)}`;
+    setApprovedPrompt(buildInstruction);
+    setPlanRequest(displayPrompt);
+    setOnboardingQuestion(null);
+    setOnboardingOpen(false);
+    setStage("building");
+    setPendingDirectBuild({ instruction: buildInstruction, projectId });
+  }, []);
+
+  const requestOnboarding = useCallback(async (
+    originalPrompt: string,
+    history: Message[],
+    currentContext: ProjectContext
+  ) => {
+    setOnboardingRunning(true);
+    setOnboardingError(null);
+    setSuggestions([]);
+    try {
+      const res = await fetch("/api/planner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "onboard",
+          message: originalPrompt.trim() || "Help me create a new project.",
+          history: history.slice(-10),
+          context: currentContext,
+        }),
+      });
+      const payload = await res.json() as {
+        ok: boolean;
+        data?: { onboarding?: OnboardingAnalysis };
+        error?: string;
+      };
+      if (!payload.ok || !payload.data?.onboarding) {
+        throw new Error(payload.error || "Could not inspect the project context");
+      }
+      const analysis = payload.data.onboarding;
+      setProjectContext(analysis.context);
+      if (analysis.nextQuestion) {
+        setOnboardingQuestion(analysis.nextQuestion);
+        setOnboardingOpen(true);
+      } else {
+        await continueToBuild(originalPrompt, analysis.context, history);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not inspect the project context";
+      setOnboardingError(message);
+      toast.error(message);
+      setStage("idle");
+      setOnboardingOpen(true);
+    } finally {
+      setOnboardingRunning(false);
+    }
+  }, [continueToBuild]);
 
   useEffect(() => {
     if (status !== "authenticated" || !user || initialized) return;
@@ -165,81 +256,68 @@ export default function GeneratePage() {
       const intent = classifyIntent(initial, "idle");
       const plannerIntent = intent === "plan" ? "plan" : "chat";
       if (plannerIntent === "plan") {
-        setApprovedPrompt(initial);
-        setPlanRequest(initial);
+        setSourcePrompt(initial);
+        setStage("planning");
       }
       const userMsg: Message = { role: "user", content: initial };
       setMessages([userMsg]);
-      void sendToPlanner(initial, [], plannerIntent);
+      if (plannerIntent === "plan") void requestOnboarding(initial, [], EMPTY_PROJECT_CONTEXT);
+      else void sendToPlanner(initial, [], plannerIntent);
+    } else {
+      setOnboardingQuestion(PROJECT_TYPE_QUESTION);
+      setOnboardingOpen(true);
     }
-  }, [status, user, initialized, sendToPlanner]);
+  }, [status, user, initialized, requestOnboarding, sendToPlanner]);
 
   /* ── Submit new message ── */
   const handleSubmit = async () => {
     const msg = prompt.trim();
-    if ((!msg && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
+    if ((!msg && attachedFiles.length === 0) || plannerRunning || onboardingRunning || buildCreating) return;
 
     if (!msg) {
-      setApprovedPrompt("Build a complete application using the attached files as reference.");
-      openBuildModal("Build a complete application using the attached files as reference.");
+      const attachmentPrompt = "Build a complete application using the attached files as reference.";
+      const next = [...messages, { role: "user" as const, content: attachmentPrompt }];
+      setMessages(next);
+      setSourcePrompt(attachmentPrompt);
+      setStage("planning");
+      await requestOnboarding(attachmentPrompt, messages, projectContext);
       return;
     }
 
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")?.content;
     const intent = classifyIntent(msg, stage, lastAssistant);
 
-    if (intent === "confirm_build") {
-      setPrompt("");
-      prepareBuildFromConversation(msg);
-      return;
-    }
-
     const next: Message[] = [...messages, { role: "user", content: msg }];
     setMessages(next);
     setPrompt("");
     if (intent === "plan") {
-      if (!approvedPrompt) setApprovedPrompt(msg);
-      setPlanRequest(msg);
+      setSourcePrompt(msg);
+      setStage("planning");
+      await requestOnboarding(msg, messages, projectContext);
+      return;
     }
-    const plannerIntent = intent === "plan" || intent === "update_plan" ? intent : "chat";
+    const plannerIntent = intent === "update_plan" ? intent : "chat";
     await sendToPlanner(msg, messages, plannerIntent);
   };
 
   /* ── Build modal helpers ── */
-  const openBuildModal = (promptOverride?: string) => {
-    const bp = promptOverride?.trim() || approvedPrompt.trim() ||
-      messages.filter((m) => m.role === "user").map((m) => m.content).filter(Boolean).join(" ");
-    if (!bp && attachedFiles.length === 0) return;
-    const words = bp.split(/\s+/).slice(0, 4).join("-");
-    setBuildName(normalizeId(words) || `app-${Math.random().toString(36).slice(2, 7)}`);
-    setBuildError(null);
-    setNameModalOpen(true);
-  };
-
-  function prepareBuildFromConversation(fallback: string) {
-    const buildInstruction = approvedBuildInstruction(
-      messages.map((message) => ({
-        author: message.role === "assistant" ? "agent" : "user",
-        message: message.content,
-      })),
-      fallback.trim() || "Build a complete modern web application."
-    );
-    setApprovedPrompt(buildInstruction);
-    openBuildModal(planRequest || buildInstruction);
-  }
-
-  const confirmBuild = async () => {
-    const id = normalizeId(buildName);
+  const confirmBuild = async (nameOverride?: string, instructionOverride?: string) => {
+    const id = normalizeId(nameOverride || buildName);
     if (!id || id.length < 3) { setBuildError("Project name must be at least 3 characters"); return; }
     setBuildCreating(true);
     setBuildError(null);
 
-    const buildInstruction = approvedPrompt.trim() ||
+    const buildInstruction = instructionOverride?.trim() || approvedPrompt.trim() ||
       messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n") ||
       "Build a complete modern web application.";
 
     const res = await vcaasApi.projects.create({ projectId: id, description: buildInstruction.slice(0, 200) });
-    if (!res.ok) { setBuildError(res.error || `Could not create "${id}"`); setBuildCreating(false); return; }
+    if (!res.ok) {
+      setBuildError(res.error || `Could not create "${id}"`);
+      setBuildCreating(false);
+      setNameModalOpen(true);
+      return;
+    }
 
     const id2 = res.data?.projectId || id;
     if (id2 !== id) toast.info(`"${id}" was taken — your project is "${id2}"`);
@@ -263,6 +341,41 @@ export default function GeneratePage() {
     } catch { /* ok */ }
 
     router.push(`/project/${id2}`);
+  };
+
+  useEffect(() => {
+    if (!pendingDirectBuild || buildCreating) return;
+    const request = pendingDirectBuild;
+    if (directBuildStartedRef.current === request) return;
+    directBuildStartedRef.current = request;
+    setPendingDirectBuild(null);
+    setBuildName(request.projectId);
+    void confirmBuild(request.projectId, request.instruction);
+    // The request object is the single trigger. confirmBuild intentionally uses
+    // the latest attachments and integration state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDirectBuild]);
+
+  const submitOnboardingAnswer = (answer: OnboardingAnswer) => {
+    if (!onboardingQuestion || onboardingRunning) return;
+    // A direct user answer is authoritative over an earlier model inference.
+    const nextContext = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+      ...projectContext,
+      ...answer,
+      skippedQuestions: projectContext.skippedQuestions,
+    });
+    setProjectContext(nextContext);
+    void requestOnboarding(sourcePrompt, messages, nextContext);
+  };
+
+  const skipOnboardingQuestion = () => {
+    if (!onboardingQuestion || onboardingRunning) return;
+    const nextContext = mergeProjectContext(projectContext, {
+      ...(onboardingQuestion.kind === "project_type" ? { projectType: "website" as const } : {}),
+      skippedQuestions: [onboardingQuestion.kind],
+    });
+    setProjectContext(nextContext);
+    void requestOnboarding(sourcePrompt, messages, nextContext);
   };
 
   const attachLocalFiles = useCallback((files: File[]) => {
@@ -342,30 +455,35 @@ export default function GeneratePage() {
             )
           )}
 
-          {plannerRunning && (
+          {(plannerRunning || onboardingRunning) && (
             <div className="flex items-center gap-3 text-sm text-foreground/65" role="status">
               <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
                 <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
               </div>
               <span className="inline-flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />Thinking…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {onboardingRunning ? "Understanding your project…" : "Thinking…"}
               </span>
             </div>
           )}
 
-          {/* Proceed to build */}
-          {stage === "awaiting_confirmation" && messages.length > 0 && !plannerRunning && (
-            <div className="pl-11">
+          {onboardingQuestion && !onboardingOpen && !onboardingRunning && (
+            <div className="pl-0 sm:pl-11">
+              <Button variant="outline" onClick={() => setOnboardingOpen(true)}>
+                Continue project setup
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+
+          {onboardingError && !onboardingQuestion && !onboardingRunning && (
+            <div className="pl-0 sm:pl-11">
               <Button
-                onClick={() => prepareBuildFromConversation(approvedPrompt)}
-                className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
+                variant="outline"
+                onClick={() => void requestOnboarding(sourcePrompt, messages, projectContext)}
               >
-                <svg className="mr-2 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="7 8 3 12 7 16" />
-                  <line x1="14" y1="4" x2="10" y2="20" strokeWidth="2.2" />
-                  <polyline points="17 8 21 12 17 16" />
-                </svg>
-                Proceed to build
+                Retry project setup
+                <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
           )}
@@ -441,11 +559,11 @@ export default function GeneratePage() {
               <button
                 type="button"
                 onClick={() => void handleSubmit()}
-                disabled={(!prompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
+                disabled={(!prompt.trim() && attachedFiles.length === 0) || plannerRunning || onboardingRunning || buildCreating}
                 aria-label="Send"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
-                {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                {plannerRunning || onboardingRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
               </button>
             </div>
           </div>
@@ -496,6 +614,15 @@ export default function GeneratePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ProjectOnboardingDialog
+        open={onboardingOpen}
+        question={onboardingQuestion}
+        busy={onboardingRunning}
+        onOpenChange={setOnboardingOpen}
+        onSubmit={submitOnboardingAnswer}
+        onSkip={skipOnboardingQuestion}
+      />
 
       <FigmaModal
         open={figmaModalOpen}
