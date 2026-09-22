@@ -4,10 +4,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { LandingPageMarketing } from "@/components/marketing/LandingPage";
-import { PageFlipProvider, usePageFlip } from "@/context/PageFlipContext";
-import { PageFlip3D } from "@/components/transitions/PageFlip3D";
-import { LoginView } from "@/components/auth/LoginView";
-import { PortalTransitionProvider, usePortalTransition, PortalZoomContainer } from "@/components/transitions/PortalZoom";
 import { vcaasApi } from "@/lib/vcaas";
 import {
   CloneProjectDialog,
@@ -23,7 +19,6 @@ import { FigmaPromptButton } from "@/components/prompt/FigmaPromptButton";
 import { AttachmentPreviews } from "@/components/workspace/AttachmentPreview";
 import { filesFromClipboard } from "@/lib/attachments";
 import { t } from "@/i18n";
-import { BorderBeam } from "@/components/ui/border-beam";
 import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import {
   Plus, Loader2, Trash2, ArrowRight, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
@@ -199,61 +194,18 @@ function TypingAssistantMessage({
   );
 }
 
-function UnauthenticatedLandingWithFlip() {
-  const { flipToFront } = usePageFlip();
-  return (
-    <PageFlip3D
-      front={<LandingPageMarketing />}
-      back={<LoginView onFlipBack={flipToFront} />}
-    />
-  );
-}
-
-function AuthenticatedDashboardWithFlip() {
-  const { status, user } = useAuth();
-  const { isFlipped, flipToLogin, flipToFront } = usePageFlip();
-
-  useEffect(() => {
-    if (status === "unauthenticated" && !isFlipped) {
-      flipToLogin();
-    } else if (status === "authenticated" && user && isFlipped) {
-      flipToFront();
-    }
-  }, [status, user, isFlipped, flipToLogin, flipToFront]);
-
-  return (
-    <PageFlip3D
-      front={<DashboardContent />}
-      back={<LoginView onFlipBack={flipToFront} />}
-    />
-  );
-}
-
 /** Root page — shows marketing landing to guests, dashboard to signed-in users */
 export default function RootPage() {
   const { user, status } = useAuth();
-  // Show marketing landing with 3D flip to login for unauthenticated visitors (including loading state)
+  // Show marketing landing for unauthenticated visitors (including loading state)
   if (status !== "authenticated" || !user) {
-    return (
-      <PortalTransitionProvider>
-        <PageFlipProvider>
-          <UnauthenticatedLandingWithFlip />
-        </PageFlipProvider>
-      </PortalTransitionProvider>
-    );
+    return <LandingPageMarketing />;
   }
-  return (
-    <PortalTransitionProvider>
-      <PageFlipProvider>
-        <AuthenticatedDashboardWithFlip />
-      </PageFlipProvider>
-    </PortalTransitionProvider>
-  );
+  return <DashboardContent />;
 }
 
 export function DashboardContent() {
   const router = useRouter();
-  const { navigateWithPortal } = usePortalTransition();
   const { user } = useAuth();
   const [projects, setProjects] = useState<VcaasProjectSummary[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -476,12 +428,12 @@ export function DashboardContent() {
     const message = firstPrompt.trim();
     if ((!message && attachedFiles.length === 0) || plannerRunning || buildCreating) return;
 
-    // Redirect to the dedicated generation/chat page with smooth portal zoom
+    // Redirect to the dedicated generation/chat page
     try {
       if (message) sessionStorage.setItem("bigbag:pending-prompt", message);
     } catch { /* storage unavailable */ }
     setFirstPrompt("");
-    navigateWithPortal("/generate", "forward");
+    router.push("/generate");
   };
 
   const confirmBuild = async () => {
@@ -551,8 +503,7 @@ export function DashboardContent() {
   const hasProjects = projects.length > 0;
 
   return (
-    <PortalZoomContainer pageType="dashboard">
-      <div className={`${chatOpen ? "h-[100dvh] overflow-hidden" : "min-h-screen overflow-hidden"} relative bg-background text-foreground transition-colors duration-200`}>
+    <div className={`${chatOpen ? "h-[100dvh] overflow-hidden" : "min-h-screen overflow-hidden"} relative bg-background text-foreground transition-colors duration-200`}>
       {/* Background */}
       <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
 
@@ -690,65 +641,55 @@ export function DashboardContent() {
                 )}
 
                 {/* Prompt area - colour + rounded only */}
-                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} relative`}>
-                  <BorderBeam
-                    size="md"
-                    colorVariant="colorful"
-                    duration={12}
-                    borderRadius={21}
-                    className="w-full relative"
-                  >
-                    <div className="relative rounded-[21px] bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all min-h-[7.5rem] flex flex-col justify-between">
-                      <textarea
-                        ref={heroTextareaRef}
-                        value={firstPrompt}
-                        onChange={(e) => setFirstPrompt(e.target.value)}
-                        placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
-                        className={`w-full resize-none bg-transparent px-5 pt-4 pb-1 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground flex-1 ${chatOpen ? "min-h-[64px] max-h-36" : landingMessages.length ? "min-h-[64px]" : "min-h-[72px]"}`}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
-                        onPaste={handleHeroPaste}
+                <div className={`${landingMessages.length > 0 ? "mt-3 shrink-0" : ""} rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all`}>
+                  <textarea
+                    ref={heroTextareaRef}
+                    value={firstPrompt}
+                    onChange={(e) => setFirstPrompt(e.target.value)}
+                    placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
+                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
+                    onPaste={handleHeroPaste}
+                  />
+
+                  {/* Attachments */}
+                  <AttachmentPreviews
+                    className="px-5 pb-2"
+                    items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
+                    onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
+                  />
+
+                  <div className="flex items-center justify-between bg-transparent px-3 py-3 sm:px-4">
+                    <div className="flex items-center gap-1.5">
+                      <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
+                        <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
+                        {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[#003399] dark:text-[#60a5fa]" /> : <AttachChainIcon className="w-4 h-4 text-[#003399] dark:text-[#60a5fa]" />}
+                        <span className="hidden sm:inline font-medium">Attach</span>
+                      </label>
+
+                      <FigmaPromptButton
+                        onAdd={appendToPrompt}
+                        hasText={firstPrompt.trim().length > 0}
+                        onConnect={() => setFigmaModalOpen(true)}
+                        connected={!!figmaToken}
+                        onDisconnect={() => {
+                          setFigmaToken(null);
+                          toast.success(t("workspace.figma.pendingForgotten"));
+                        }}
+                        disconnectConfirm={t("workspace.figma.disconnectPendingConfirm")}
                       />
-
-                      {/* Attachments */}
-                      <AttachmentPreviews
-                        className="px-5 pb-2"
-                        items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
-                        onRemove={(index) => setAttachedFiles((prev) => prev.filter((_, j) => j !== index))}
-                      />
-
-                      <div className="flex items-center justify-between bg-transparent px-3 py-2.5 sm:px-4">
-                        <div className="flex items-center gap-1.5">
-                          <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
-                            <input type="file" multiple className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.svg" />
-                            {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[#003399] dark:text-[#60a5fa]" /> : <AttachChainIcon className="w-4 h-4 text-[#003399] dark:text-[#60a5fa]" />}
-                            <span className="hidden sm:inline font-medium">Attach</span>
-                          </label>
-
-                          <FigmaPromptButton
-                            onAdd={appendToPrompt}
-                            hasText={firstPrompt.trim().length > 0}
-                            onConnect={() => setFigmaModalOpen(true)}
-                            connected={!!figmaToken}
-                            onDisconnect={() => {
-                              setFigmaToken(null);
-                              toast.success(t("workspace.figma.pendingForgotten"));
-                            }}
-                            disconnectConfirm={t("workspace.figma.disconnectPendingConfirm")}
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => void submitLandingMessage()}
-                          disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
-                          aria-label="Send"
-                          className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                        >
-                          {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                        </button>
-                      </div>
                     </div>
-                  </BorderBeam>
+
+                    <button
+                      type="button"
+                      onClick={() => void submitLandingMessage()}
+                      disabled={(!firstPrompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
+                      aria-label="Send"
+                      className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1156,6 +1097,5 @@ export function DashboardContent() {
         onCloned={fetchData}
       />
     </div>
-    </PortalZoomContainer>
   );
 }

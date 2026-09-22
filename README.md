@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🪄 bigbaggy
+# 🪄 bigbag-vibe-coding
 
 ### Type a prompt, get a working full-stack **Next.js** app — hosted, with a database, auth, a visual editor, GitHub sync, Figma and custom domains already built in.
 
@@ -16,7 +16,7 @@ Run it for yourself, or put an AI app builder inside your own product.
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#-license)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#-contributing)
 
-[**🚀 Quick Start**](#-quick-start) · [**🧩 Put it in your product**](#-put-it-inside-your-own-product) · [**☁️ Deploy**](#️-deploy-it) · [**📚 Docs**](https://github.com/shreelaxmiats-art/bigbaggy) · [**⭐ Star this repo**](https://github.com/shreelaxmiats-art/bigbaggy)
+[**🚀 Quick Start**](#-quick-start) · [**🧩 Put it in your product**](#-put-it-inside-your-own-product) · [**☁️ Deploy**](#️-deploy-it) · [**📚 Docs**](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [**⭐ Star this repo**](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding)
 
 <br/>
 
@@ -389,8 +389,8 @@ Released under the **MIT License**. Free for personal and commercial use. See [`
 
 **Open-source AI app builder** · self-hosted **v0 / Lovable / Bolt / Replit alternative** · prompt-to-app · full-stack Next.js · multi-tenant · embeddable AI app builder for your SaaS.
 
-Built with ❤️ on the [BigBag AI Engine](https://github.com/shreelaxmiats-art/bigbaggy/api) · [Docs](https://github.com/shreelaxmiats-art/bigbaggy) · [Get your free API key](https://github.com/shreelaxmiats-art/bigbaggy/api)
+Built with ❤️ on the [BigBag AI Engine](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api) · [Docs](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding) · [Get your free API key](https://github.com/codewithumesh00-sketch/bigbag-vibe-coding/api)
 
 </div>
 
-# bigbaggy
+# bigbag

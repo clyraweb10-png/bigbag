@@ -117,15 +117,6 @@ export default function GeneratePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, plannerRunning, suggestions]);
 
-  /* ── Auto-resize prompt textarea ── */
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const nextHeight = Math.min(Math.max(el.scrollHeight, 48), 180);
-    el.style.height = `${nextHeight}px`;
-  }, [prompt]);
-
   /* ── Initialize from URL prompt ── */
   const sendToPlanner = useCallback(async (
     message: string,
@@ -398,33 +389,26 @@ export default function GeneratePage() {
       </div>
 
       {/* ── Composer ── */}
-      <div className="shrink-0 border-t border-border bg-background px-3 py-2.5 sm:px-6 sm:py-3.5 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
+      <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden shadow-xs focus-within:ring-2 focus-within:ring-ring/30 focus-within:border-primary/50 transition-all flex flex-col justify-between">
+          <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden focus-within:ring-2 focus-within:ring-ring/25 transition-all">
             <textarea
               ref={textareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Ask a question, or describe what to build…"
-              rows={1}
-              className="w-full resize-none bg-transparent px-3.5 pt-3 pb-2 sm:px-5 sm:pt-4 sm:pb-3 text-sm sm:text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground min-h-[48px] sm:min-h-[56px] max-h-[180px] overflow-y-auto"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  if (typeof window !== "undefined" && window.innerWidth < 640) return;
-                  e.preventDefault();
-                  void handleSubmit();
-                }
-              }}
+              className="w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground min-h-[82px] max-h-40"
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSubmit(); } }}
               onPaste={(e) => { const f = filesFromClipboard(e.clipboardData); if (f.length) { e.preventDefault(); attachLocalFiles(f); } }}
             />
             <AttachmentPreviews
-              className="px-3.5 pb-2 sm:px-5"
+              className="px-5 pb-2"
               items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
               onRemove={(i) => setAttachedFiles((p) => p.filter((_, j) => j !== i))}
             />
-            <div className="flex items-center justify-between px-2.5 py-2 sm:px-4 sm:py-2.5 gap-2 min-w-0 bg-transparent">
-              <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
-                <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 shrink-0">
+            <div className="flex items-center justify-between px-3 py-3 sm:px-4">
+              <div className="flex items-center gap-1.5">
+                <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
                   <input type="file" multiple className="hidden" onChange={(e) => { if (e.target.files) { attachLocalFiles(Array.from(e.target.files)); e.target.value = ""; } }} accept="image/*,.pdf,.svg" />
                   {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AttachChainIcon className="w-4 h-4" />}
                   <span className="hidden sm:inline font-medium">Attach</span>
@@ -443,7 +427,7 @@ export default function GeneratePage() {
                 onClick={() => void handleSubmit()}
                 disabled={(!prompt.trim() && attachedFiles.length === 0) || plannerRunning || buildCreating}
                 aria-label="Send"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 {plannerRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
               </button>

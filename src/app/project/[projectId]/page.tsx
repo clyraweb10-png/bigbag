@@ -9,7 +9,7 @@ import {
   Server, PanelLeftClose, PanelLeft, Laptop, Smartphone,
   ExternalLink, ChevronDown, FolderOpen, Plus,
   Github, ArrowLeft, Figma, Copy,
-  RotateCw, Eye, Database as DatabaseIcon, Code2, History, KeyRound, Bot,
+  RotateCw, Eye, Database as DatabaseIcon, Code2, History, KeyRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -360,7 +360,7 @@ export default function WorkspacePage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewCached, setPreviewCached] = useState(false);
   const [previewKey, setPreviewKey] = useState(0);
-  const [chatWidth, setChatWidth] = useState(380);
+  const [chatWidth, setChatWidth] = useState(440);
   const [isResizing, setIsResizing] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [mobileTab, setMobileTab] = useState<"chat" | "panel">("panel");
@@ -458,28 +458,11 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     if (!isResizing) return;
-    const handleMove = (e: MouseEvent) => {
-      if (resizeRef.current) {
-        const maxW = typeof window !== "undefined" ? Math.min(600, Math.floor(window.innerWidth * 0.55)) : 600;
-        setChatWidth(Math.max(260, Math.min(maxW, resizeRef.current.startWidth + (e.clientX - resizeRef.current.startX))));
-      }
-    };
+    const handleMove = (e: MouseEvent) => { if (resizeRef.current) setChatWidth(Math.max(280, Math.min(600, resizeRef.current.startWidth + (e.clientX - resizeRef.current.startX)))); };
     const handleUp = () => setIsResizing(false);
     window.addEventListener("mousemove", handleMove); window.addEventListener("mouseup", handleUp);
     return () => { window.removeEventListener("mousemove", handleMove); window.removeEventListener("mouseup", handleUp); };
   }, [isResizing]);
-
-  // On tablet screens (< 1024px), clamp chat width so preview retains comfortable width
-  useEffect(() => {
-    const clampForScreen = () => {
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        setChatWidth((prev) => Math.min(prev, Math.max(280, Math.floor(window.innerWidth * 0.4))));
-      }
-    };
-    clampForScreen();
-    window.addEventListener("resize", clampForScreen);
-    return () => window.removeEventListener("resize", clampForScreen);
-  }, []);
 
   async function fetchProject(): Promise<VcaasProject | null> {
     const res = await vcaasApi.projects.get(projectId);
@@ -1232,9 +1215,6 @@ export default function WorkspacePage() {
     }
     setActiveTab("preview");
     setVisualEditorOpen(true);
-    if (typeof window !== "undefined" && window.innerWidth < 1024) {
-      setChatCollapsed(true);
-    }
   }, [visualEditorOpen, visualEditBlockedReason, blocked]);
 
   /**
@@ -1488,7 +1468,7 @@ export default function WorkspacePage() {
   const btnBorder = darkMode ? "border-[#333332]" : "border-[#e1e1e8]";
 
   if (loading) return <SkeletonWorkspace />;
-  if (!project) return <div className="h-[100dvh] max-h-[100dvh] flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
+  if (!project) return <div className="h-screen flex flex-col items-center justify-center gap-4 text-foreground bg-background"><p className="text-muted-foreground">Project not found</p><Link href="/dashboard"><Button variant="outline">{"Back"}</Button></Link></div>;
 
   // Popup menu content (shared between desktop and mobile)
   const popupMenu = menuOpen && (
@@ -1507,7 +1487,7 @@ export default function WorkspacePage() {
         </button>
       </div>
       {/* Tabs - visible on mobile only */}
-      <div className="md:hidden border-t py-1" style={{ borderColor: darkMode ? "#444" : "#eee" }}>
+      <div className="sm:hidden border-t py-1" style={{ borderColor: darkMode ? "#444" : "#eee" }}>
         {TABS.map((tab) => (
           <button key={tab.id} onClick={() => { setActiveTab(tab.id); setMobileTab("panel"); setMenuOpen(false); }}
             className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${activeTab === tab.id ? "text-gray-900 dark:text-white font-medium" : "text-gray-700 dark:text-gray-200"}`}>
@@ -1539,7 +1519,7 @@ export default function WorkspacePage() {
       <div className="border-t py-1" style={{ borderColor: darkMode ? "#444" : "#eee" }}>
         {/* Publish on mobile */}
         <button onClick={() => { handleDeploy(); setMenuOpen(false); }} disabled={deploying || isBuilding}
-          className="w-full md:hidden flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-gray-700 dark:text-gray-200">
+          className="w-full sm:hidden flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-gray-700 dark:text-gray-200">
           <Rocket className="w-4 h-4 text-gray-400" /> {deploying ? "Deploying" : "Publish"}
         </button>
       </div>
@@ -1566,18 +1546,15 @@ export default function WorkspacePage() {
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] max-h-[100dvh] w-full flex flex-col overflow-hidden text-foreground select-text overscroll-none" style={{ background: pageBg }} onClickCapture={markWorkspaceTouched}>
+    <div className="h-screen flex flex-col overflow-hidden text-foreground" style={{ background: pageBg }} onClickCapture={markWorkspaceTouched}>
       {isResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
 
-      {/* ═══ DESKTOP & TABLET LAYOUT ═══ */}
-      <div className="hidden md:flex flex-col h-full min-h-0 overflow-hidden">
+      {/* ═══ DESKTOP LAYOUT ═══ */}
+      <div className="hidden sm:flex flex-col h-full">
         {/* Desktop header 48px */}
-        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b min-w-0" style={{ height: 48, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
-          {/* LEFT: aside width - responsive on tablet */}
-          <div
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 shrink-0 max-w-[45%] xl:max-w-none xl:w-[var(--left-header-w,auto)]"
-            style={{ "--left-header-w": typeof leftHeaderWidth === "number" ? `${leftHeaderWidth}px` : "auto" } as React.CSSProperties}
-          >
+        <header data-workspace-header className="flex items-stretch shrink-0 z-10 border-b" style={{ height: 48, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
+          {/* LEFT: aside width */}
+          <div className="flex items-center gap-1.5 px-3 shrink-0" style={{ width: typeof leftHeaderWidth === "number" ? leftHeaderWidth : undefined }}>
             <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </Link>
@@ -1592,18 +1569,13 @@ export default function WorkspacePage() {
             <button onClick={() => setOpenModal("versions")} className={`h-7 w-7 flex items-center justify-center rounded-lg transition-colors shrink-0 border ${btnBorder} text-muted-foreground hover:text-foreground hover:bg-accent`} title={translate("workspace.versions.title")}>
               <History className="w-3.5 h-3.5" />
             </button>
-            <button
-              onClick={() => setChatCollapsed(!chatCollapsed)}
-              className={`h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent border ${btnBorder} transition-colors shrink-0`}
-              title={chatCollapsed ? "Expand chat" : "Collapse chat"}
-              aria-label={chatCollapsed ? "Expand chat" : "Collapse chat"}
-            >
+            <button onClick={() => setChatCollapsed(!chatCollapsed)} className={`h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent border ${btnBorder} transition-colors shrink-0`}>
               {chatCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
             </button>
           </div>
           {/* RIGHT: preview width */}
-          <div className="flex items-center flex-1 min-w-0 gap-1.5 sm:gap-2 px-2 sm:px-3">
-            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
+          <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
+            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
               {TABS.map((tab, idx) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -1619,20 +1591,20 @@ export default function WorkspacePage() {
                       onClick={() => setActiveTab(tab.id)}
                       className={
                         isActive
-                          ? "flex items-center gap-1.5 h-7 px-2.5 lg:px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
                           : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
                       }
                       title={tab.label}
                     >
                       <tab.icon className={isActive ? "w-3.5 h-3.5 shrink-0" : "w-4 h-4 shrink-0"} />
-                      <span className={isActive ? "hidden lg:inline" : "hidden"}>{tab.label}</span>
+                      {isActive && <span>{tab.label}</span>}
                     </button>
                   </div>
                 );
               })}
             </div>
             <div className="flex-1 flex items-center justify-center min-w-0">
-              <div className={`flex items-center h-8 w-full max-w-[340px] min-w-[100px] rounded-full border ${btnBorder} bg-card/80 px-2 gap-1.5 shadow-xs`}>
+              <div className={`flex items-center h-8 w-[340px] rounded-full border ${btnBorder} bg-card/80 px-2 gap-1.5 shadow-xs`}>
                 {/* ⭐ Logs open as a dialog from the address bar — the platform's placement. */}
                 <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-muted-foreground hover:text-foreground" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
                 <div className="w-px h-3.5 bg-border shrink-0" />
@@ -1768,36 +1740,24 @@ export default function WorkspacePage() {
         </div>
       </div>
 
-      {/* ═══ MOBILE LAYOUT: header → content → fixed navigation bar ═══ */}
-      <div className="flex md:hidden flex-col h-full min-h-0 overflow-hidden">
+      {/* ═══ MOBILE LAYOUT: header → content → fixed switch → fixed textarea ═══ */}
+      <div className="flex sm:hidden flex-col h-full">
         {/* Mobile header */}
-        <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b min-w-0" style={{ height: 46, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
-          <div className="flex items-center gap-1.5 min-w-0">
+        <header data-workspace-header className="flex items-center justify-between px-2.5 shrink-0 z-10 border-b" style={{ height: 44, borderColor: darkMode ? "#333332" : "#DDDDD5", background: pageBg }}>
+          <div className="flex items-center gap-1.5">
             <Link href="/dashboard" title={"Back"} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </Link>
-            <div className="relative min-w-0" ref={menuRef}>
-              <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-accent transition-colors max-w-full">
+            <div className="relative" ref={menuRef}>
+              <button onClick={() => setMenuOpen(!menuOpen)} className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-accent transition-colors">
                 <BigBagLogo size="sm" hideText />
-                <span className="text-sm font-semibold text-foreground truncate max-w-[125px] sm:max-w-[180px]">{project.label || projectId}</span>
+                <span className="text-sm font-semibold text-foreground truncate max-w-[160px]">{project.label || projectId}</span>
                 <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
               </button>
               {popupMenu}
             </div>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <DeployControl
-              projectId={projectId}
-              project={project}
-              isDeploying={deploying}
-              isRunning={isBuilding}
-              blockedReason={deploying ? null : operationBusyReason}
-              onDeploy={handleDeploy}
-              onOpenDomain={() => setOpenModal("domain")}
-            />
-            <ThemeToggle showLabel={false} />
-            <AuthUserMenu />
-          </div>
+          <div className="flex items-center gap-1"><ThemeToggle showLabel={false} /><AuthUserMenu /></div>
         </header>
 
         {/*
@@ -1813,14 +1773,14 @@ export default function WorkspacePage() {
         )}
 
         {/* Mobile content area */}
-        <div className="flex-1 min-h-0 overflow-hidden" style={{ background: cardBg }}>
+        <div className="flex-1 overflow-hidden" style={{ background: cardBg }}>
           {mobileTab === "chat" ? (
-            <div className="flex flex-col h-full min-h-0">
+            <div className="flex flex-col h-full">
               {/* ⚠️ No pencil here: the visual editor is a desktop surface (see the frame-ref note). */}
               <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} suggestions={plannerSuggestions} />
             </div>
           ) : (
-            <div className="h-full min-h-0 overflow-hidden">
+            <div className="h-full overflow-hidden">
               {activeTab === "preview" && <PreviewPanel key={previewKey} previewUrl={shownPreviewUrl} cached={previewCached} onRefresh={() => { fetchProject(); setPreviewKey((k) => k + 1); }} loading={isBuilding} mobilePreview={false} iframePath={iframePath} proxiedSrc={`/api/preview/${encodeURIComponent(projectId)}`} />}
               {activeTab === "code" && <CodePanel key={projectId} projectId={projectId} sourceRevision={project?.agentProcessStatus} darkMode={darkMode} onAskAiEdit={handleAskAiEdit} wake={serverWake} onRebuildStarted={() => operation.begin("rebuild")} onRebuildFinished={() => operation.end("rebuild")} />}
               {activeTab === "database" && <DatabasePanel projectId={projectId} />}
@@ -1828,42 +1788,11 @@ export default function WorkspacePage() {
           )}
         </div>
 
-        {/* Fixed bottom navigation bar for mobile: Chat / Preview / Database / Code */}
-        <div className="shrink-0 flex items-center justify-center py-2 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))]" style={{ background: pageBg }}>
-          <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-full p-1 w-full max-w-sm shadow-xs border border-border/40">
-            <button
-              type="button"
-              onClick={() => setMobileTab("chat")}
-              className={`flex-1 py-1.5 px-2 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                mobileTab === "chat"
-                  ? "bg-white dark:bg-gray-700 shadow-sm text-foreground font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Bot className="w-3.5 h-3.5 shrink-0" />
-              <span>{"Chat"}</span>
-            </button>
-            {TABS.map((tab) => {
-              const isPanelActive = mobileTab === "panel" && activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveTab(tab.id);
-                    setMobileTab("panel");
-                  }}
-                  className={`flex-1 py-1.5 px-2 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                    isPanelActive
-                      ? "bg-white dark:bg-gray-700 shadow-sm text-foreground font-semibold"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <tab.icon className="w-3.5 h-3.5 shrink-0" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
+        {/* Fixed switch: Preview / Chat */}
+        <div className="shrink-0 flex items-center justify-center py-2 px-4" style={{ background: pageBg }}>
+          <div className="flex bg-gray-100 dark:bg-gray-800 rounded-full p-1 w-full max-w-xs">
+            <button onClick={() => setMobileTab("panel")} className={`w-1/2 py-2 rounded-full text-sm font-medium text-center transition-colors ${mobileTab === "panel" ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white" : "text-gray-500"}`}>{"Preview"}</button>
+            <button onClick={() => setMobileTab("chat")} className={`w-1/2 py-2 rounded-full text-sm font-medium text-center transition-colors ${mobileTab === "chat" ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white" : "text-gray-500"}`}>{"Chat"}</button>
           </div>
         </div>
       </div>
