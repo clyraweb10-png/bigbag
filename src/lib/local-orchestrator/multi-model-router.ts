@@ -18,7 +18,29 @@ export interface RouterCompletionResult {
   publicModelName: string;
   providerName: string;
   providerId: string;
+  finishReason: string;
+  responseSize: number;
+  durationMs: number;
+  attempts: number;
+  continuationAttempts: number;
 }
+
+export type ProviderErrorCategory =
+  | "rate_limit"
+  | "provider_unavailable"
+  | "network_timeout"
+  | "network_error"
+  | "authentication"
+  | "invalid_image"
+  | "request_too_large"
+  | "unsupported_multimodal"
+  | "malformed_request"
+  | "context_limit"
+  | "invalid_model"
+  | "invalid_response_schema"
+  | "empty_response"
+  | "output_limit"
+  | "unknown";
 
 export type StatusCallback = (statusMessage: string) => void;
 
@@ -41,6 +63,12 @@ export interface RouterCompletionOptions {
   retryDelayMs?: number;
   /** Restrict a specialized request (for example vision analysis) to one provider. */
   onlyProviderId?: string;
+  /** Structured requests must be retried with a smaller input, not continued as fragments. */
+  maxOutputContinuations?: number;
+  /** Request provider-side JSON mode when the OpenAI-compatible endpoint supports it. */
+  responseFormat?: "json_object";
+  /** Safe diagnostic label; never include user content or credentials. */
+  requestLabel?: string;
 }
 
 /** Product policy: Gemini gets five recovery attempts before provider failover. */
@@ -93,14 +121,84 @@ export function appendContinuationChunk(current: string, next: string): string {
 }
 
 export class ProviderExhaustedError extends Error {
-  constructor() {
-    super("The generation models could not complete the response after automatic retries and continuation attempts.");
+  constructor(
+    public readonly category: ProviderErrorCategory = "unknown",
+    public readonly retryable = false,
+    public readonly partialText = "",
+    public readonly finishReason = "",
+    public readonly attempts = 0,
+    public readonly providerMessage = ""
+  ) {
+    super(`AI request failed (${category}).${providerMessage ? ` ${providerMessage}` : ""}`);
     this.name = "ProviderExhaustedError";
   }
 }
 
-class RetryableProviderError extends Error {}
-class FinalProviderError extends Error {}
+class ProviderRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly category: ProviderErrorCategory,
+    public readonly retryable: boolean,
+    public readonly partialText = "",
+    public readonly finishReason = "",
+    public readonly attempts = 0
+  ) {
+    super(message);
+    this.name = "ProviderRequestError";
+  }
+}
+
+function messageSize(messages: ModelMessage[]): { textChars: number; imageCount: number } {
+  let textChars = 0;
+  let imageCount = 0;
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      textChars += message.content.length;
+      continue;
+    }
+    for (const part of message.content) {
+      if (part.type === "text") textChars += part.text.length;
+      else imageCount += 1;
+    }
+  }
+  return { textChars, imageCount };
+}
+
+function safeProviderMessage(value: string): string {
+  return value
+    .replace(/(bearer|api[-_ ]?key|authorization)\s*[:=]?\s*[^\s,;]+/gi, "$1 [redacted]")
+    .replace(/https?:\/\/[^\s"']+/g, "[url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 320);
+}
+
+function classifyProviderFailure(status: number, message: string): {
+  category: ProviderErrorCategory;
+  retryable: boolean;
+} {
+  const normalized = message.toLowerCase();
+  if (status === 429) return { category: "rate_limit", retryable: true };
+  if (status >= 500) return { category: "provider_unavailable", retryable: true };
+  if (status === 401 || status === 403) return { category: "authentication", retryable: false };
+  if (/context(?: window| length| limit)|too many tokens|maximum context/.test(normalized)) {
+    return { category: "context_limit", retryable: false };
+  }
+  if (/payload too large|request too large|entity too large|content length|413/.test(normalized) || status === 413) {
+    return { category: "request_too_large", retryable: false };
+  }
+  if (/image/.test(normalized) && /invalid|format|decode|fetch|download|mime|content.type/.test(normalized)) {
+    return { category: "invalid_image", retryable: false };
+  }
+  if (/image_url|multimodal|vision/.test(normalized) && /unsupported|not support|invalid|unknown/.test(normalized)) {
+    return { category: "unsupported_multimodal", retryable: false };
+  }
+  if (/model/.test(normalized) && /not found|invalid|unknown|does not exist|unsupported/.test(normalized)) {
+    return { category: "invalid_model", retryable: false };
+  }
+  if (status >= 400 && status < 500) return { category: "malformed_request", retryable: false };
+  return { category: "unknown", retryable: false };
+}
 
 class MultiModelRouter {
   // Provider-level concurrency locks (mutex) to avoid concurrent calls on single keys
@@ -197,8 +295,12 @@ class MultiModelRouter {
       perProviderTimeoutMs: number;
       maxTokens?: number;
       retryDelayMs: number;
+      maxOutputContinuations: number;
+      responseFormat?: "json_object";
+      requestLabel: string;
     }
   ): Promise<RouterCompletionResult> {
+    const startedAt = Date.now();
     const configuredMaxTokens = Number.isFinite(provider.maxTokens) && provider.maxTokens > 0
       ? provider.maxTokens
       : 16_384;
@@ -210,14 +312,15 @@ class MultiModelRouter {
       ...(provider.extraHeaders || {}),
     };
 
-    let lastError = "";
+    let requestAttempts = 0;
+    let lastError = new ProviderRequestError("Provider request failed", "unknown", false);
 
     for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
       let remainingMs = options.deadlineAt === undefined
         ? undefined
         : options.deadlineAt - Date.now();
       if (remainingMs !== undefined && remainingMs <= 0) {
-        throw new Error("completion deadline exceeded");
+        throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, "", "", requestAttempts);
       }
 
       if (attempt > 0) {
@@ -229,7 +332,7 @@ class MultiModelRouter {
           ? undefined
           : options.deadlineAt - Date.now();
         if (remainingMs !== undefined && remainingMs <= 0) {
-          throw new Error("completion deadline exceeded");
+          throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, "", "", requestAttempts);
         }
       }
 
@@ -237,12 +340,19 @@ class MultiModelRouter {
         let accumulatedText = "";
         let requestMessages = messages;
 
-        for (let continuation = 0; continuation <= MAX_OUTPUT_CONTINUATIONS; continuation += 1) {
+        for (let continuation = 0; continuation <= options.maxOutputContinuations; continuation += 1) {
           remainingMs = options.deadlineAt === undefined
             ? undefined
             : options.deadlineAt - Date.now();
           if (remainingMs !== undefined && remainingMs <= 0) {
-            throw new FinalProviderError("completion deadline exceeded");
+            throw new ProviderRequestError(
+              "Completion deadline exceeded",
+              "network_timeout",
+              true,
+              accumulatedText,
+              "",
+              requestAttempts
+            );
           }
 
           const payload: Record<string, any> = {
@@ -252,13 +362,36 @@ class MultiModelRouter {
             max_tokens: maxTokens,
           };
           if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
+          if (options.responseFormat) payload.response_format = { type: options.responseFormat };
+
+          requestAttempts += 1;
+          const size = messageSize(requestMessages);
+          console.info(`[MultiModelRouter] ${JSON.stringify({
+            event: "model_request_created",
+            requestLabel: options.requestLabel,
+            model: provider.model,
+            providerId: provider.id,
+            stream: false,
+            textChars: size.textChars,
+            imageCount: size.imageCount,
+            maxTokens,
+            attempt: requestAttempts,
+            continuation,
+          })}`);
 
           const res: Response = await this.enqueue(provider.id, () => {
             const remainingAtFetchMs = options.deadlineAt === undefined
               ? undefined
               : options.deadlineAt - Date.now();
             if (remainingAtFetchMs !== undefined && remainingAtFetchMs <= 0) {
-              throw new FinalProviderError("completion deadline exceeded");
+              throw new ProviderRequestError(
+                "Completion deadline exceeded",
+                "network_timeout",
+                true,
+                accumulatedText,
+                "",
+                requestAttempts
+              );
             }
             const attemptTimeoutMs = Math.max(
               1,
@@ -275,52 +408,81 @@ class MultiModelRouter {
           if (!res.ok) {
             const rawErr = await res.text();
             let errMsg = rawErr;
-            // Upstreams and edge proxies sometimes return HTML/plain text for
-            // overload responses. Status alone must preserve retry behavior even
-            // when the body cannot be parsed as provider JSON.
-            let isRetryable = res.status === 429 || res.status === 503;
 
             try {
               const parsed = JSON.parse(rawErr);
               const code = String(parsed.error?.code || "");
               if (res.status === 503 || code === "1305") {
-                isRetryable = true;
                 errMsg = `Service unavailable/busy on ${provider.model} (503)`;
               } else if (res.status === 429 || code === "1302") {
-                isRetryable = true;
                 errMsg = `Rate limit reached on ${provider.model} (429)`;
               } else if (parsed.error?.message) {
                 errMsg = parsed.error.message;
               }
             } catch {}
 
-            const message = `HTTP ${res.status}: ${errMsg}`;
-            throw isRetryable
-              ? new RetryableProviderError(message)
-              : new FinalProviderError(message);
+            const failure = classifyProviderFailure(res.status, errMsg);
+            throw new ProviderRequestError(
+              `HTTP ${res.status}: ${safeProviderMessage(errMsg)}`,
+              failure.category,
+              failure.retryable,
+              accumulatedText,
+              "",
+              requestAttempts
+            );
           }
 
-          const json = await res.json();
+          const json = await res.json().catch(() => {
+            throw new ProviderRequestError(
+              "Provider returned malformed JSON",
+              "invalid_response_schema",
+              false,
+              accumulatedText,
+              "",
+              requestAttempts
+            );
+          });
           const choice = json.choices?.[0];
           const text = completionText(choice?.message?.content);
           if (!text || text.trim().length === 0) {
             const hasReasoning = completionText(choice?.message?.reasoning_content).trim().length > 0;
-            throw new FinalProviderError(
+            throw new ProviderRequestError(
               hasReasoning
                 ? "Provider returned reasoning without a final answer"
-                : "Received empty response body from provider"
+                : "Received empty response body from provider",
+              "empty_response",
+              false,
+              accumulatedText,
+              typeof choice?.finish_reason === "string" ? choice.finish_reason : "",
+              requestAttempts
             );
           }
 
           const previousAccumulatedText = accumulatedText;
           accumulatedText = appendContinuationChunk(accumulatedText, text);
           if (continuation > 0 && accumulatedText === previousAccumulatedText) {
-            throw new RetryableProviderError("Continuation returned no new content");
+            throw new ProviderRequestError(
+              "Continuation returned no new content",
+              "output_limit",
+              true,
+              accumulatedText,
+              "length",
+              requestAttempts
+            );
           }
           const finishReason = typeof choice?.finish_reason === "string"
             ? choice.finish_reason.toLowerCase()
             : "";
           const wasTruncated = ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
+          console.info(`[MultiModelRouter] ${JSON.stringify({
+            event: continuation === 0 ? "model_first_response" : "model_continuation_response",
+            requestLabel: options.requestLabel,
+            model: provider.model,
+            finishReason: finishReason || "unspecified",
+            responseLength: text.length,
+            accumulatedResponseLength: accumulatedText.length,
+            attempt: requestAttempts,
+          })}`);
 
           if (!wasTruncated) {
             console.log(`[MultiModelRouter] Provider [${provider.name}] succeeded! Generated ${accumulatedText.length} chars.`);
@@ -330,17 +492,29 @@ class MultiModelRouter {
               publicModelName: publicModelName(provider.id),
               providerName: provider.name,
               providerId: provider.id,
+              finishReason: finishReason || "unspecified",
+              responseSize: accumulatedText.length,
+              durationMs: Date.now() - startedAt,
+              attempts: requestAttempts,
+              continuationAttempts: continuation,
             };
           }
 
-          if (continuation === MAX_OUTPUT_CONTINUATIONS) {
-            throw new FinalProviderError(
-              `Provider output remained truncated after ${MAX_OUTPUT_CONTINUATIONS} continuation requests`
+          if (continuation === options.maxOutputContinuations) {
+            throw new ProviderRequestError(
+              options.maxOutputContinuations === 0
+                ? "Provider output reached its configured limit"
+                : `Provider output remained truncated after ${options.maxOutputContinuations} continuation requests`,
+              "output_limit",
+              false,
+              accumulatedText,
+              finishReason,
+              requestAttempts
             );
           }
 
           const continuationMsg = "Continuing generation…";
-          console.log(`[MultiModelRouter] ${provider.name} reached ${finishReason}; requesting continuation ${continuation + 1}/${MAX_OUTPUT_CONTINUATIONS}.`);
+          console.log(`[MultiModelRouter] ${provider.name} reached ${finishReason}; requesting continuation ${continuation + 1}/${options.maxOutputContinuations}.`);
           onStatus?.(continuationMsg);
           requestMessages = [
             ...messages,
@@ -353,17 +527,35 @@ class MultiModelRouter {
         }
       } catch (err: any) {
         const message = err?.message || String(err);
-        const isTimeout = err?.name === "TimeoutError" || message.includes("aborted") || message.includes("timeout");
-        const isNetworkFailure = message.includes("fetch");
-        const isRetryable = err instanceof RetryableProviderError || isTimeout || isNetworkFailure;
-        lastError = `exception: ${message}`;
-        console.warn(`[MultiModelRouter] Provider [${provider.name}] ${lastError}`);
+        const isTimeout = err?.name === "TimeoutError" || /aborted|timeout/i.test(message);
+        const isNetworkFailure = /fetch|network|socket/i.test(message);
+        lastError = err instanceof ProviderRequestError
+          ? err
+          : new ProviderRequestError(
+              safeProviderMessage(message),
+              isTimeout ? "network_timeout" : isNetworkFailure ? "network_error" : "unknown",
+              isTimeout || isNetworkFailure,
+              "",
+              "",
+              requestAttempts
+            );
+        console.warn(`[MultiModelRouter] ${JSON.stringify({
+          event: "model_request_failed",
+          requestLabel: options.requestLabel,
+          model: provider.model,
+          category: lastError.category,
+          retryable: lastError.retryable,
+          attempt: requestAttempts,
+          finishReason: lastError.finishReason || undefined,
+          partialResponseLength: lastError.partialText.length,
+          reason: safeProviderMessage(lastError.message),
+        })}`);
 
-        if (!isRetryable) break;
+        if (!lastError.retryable) break;
       }
     }
 
-    throw new Error(`Provider [${provider.name}] ${lastError}`);
+    throw lastError;
   }
 
   public async complete(
@@ -392,7 +584,7 @@ class MultiModelRouter {
           ...eligibleProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
         ]
       : eligibleProviders;
-    const errors: string[] = [];
+    const errors: ProviderRequestError[] = [];
     const startedAt = Date.now();
     const deadlineAt = options.totalTimeoutMs === undefined
       ? undefined
@@ -420,10 +612,18 @@ class MultiModelRouter {
           perProviderTimeoutMs,
           maxTokens: options.maxTokens,
           retryDelayMs: options.retryDelayMs ?? RETRY_DELAY_MS,
+          maxOutputContinuations: Math.max(
+            0,
+            Math.min(MAX_OUTPUT_CONTINUATIONS, options.maxOutputContinuations ?? MAX_OUTPUT_CONTINUATIONS)
+          ),
+          responseFormat: options.responseFormat,
+          requestLabel: options.requestLabel?.trim() || "generation",
         });
       } catch (err: any) {
-        const errMsg = err.message || String(err);
-        errors.push(errMsg);
+        const providerError = err instanceof ProviderRequestError
+          ? err
+          : new ProviderRequestError(safeProviderMessage(err?.message || String(err)), "unknown", false);
+        errors.push(providerError);
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
@@ -434,8 +634,22 @@ class MultiModelRouter {
       }
     }
 
-    console.warn(`[MultiModelRouter] All configured providers failed: ${errors.join(" | ")}`);
-    throw new ProviderExhaustedError();
+    const finalError = errors.at(-1) || new ProviderRequestError("No provider completed the request", "unknown", false);
+    console.warn(`[MultiModelRouter] ${JSON.stringify({
+      event: "all_providers_failed",
+      requestLabel: options.requestLabel?.trim() || "generation",
+      categories: errors.map((error) => error.category),
+      attempts: errors.reduce((total, error) => total + error.attempts, 0),
+      finalReason: safeProviderMessage(finalError.message),
+    })}`);
+    throw new ProviderExhaustedError(
+      finalError.category,
+      finalError.retryable,
+      finalError.partialText,
+      finalError.finishReason,
+      errors.reduce((total, error) => total + error.attempts, 0),
+      safeProviderMessage(finalError.message)
+    );
   }
 }
 

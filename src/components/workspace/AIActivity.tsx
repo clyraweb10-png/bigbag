@@ -209,7 +209,7 @@ export function activityStepsFromBuildMsgs(
   const eventTypes = new Set(buildMsgs.flatMap((message) => message.generationEvent?.type || []));
   const completionForStartedEvent: Partial<Record<GenerationEvent["type"], GenerationEvent["type"][]>> = {
     crawl_started: ["crawl_completed"],
-    visual_analysis_started: ["visual_analysis_completed"],
+    visual_analysis_started: ["visual_analysis_completed", "visual_analysis_failed"],
     file_generation_started: ["file_created", "file_updated", "generation_completed", "generation_failed"],
     build_started: ["build_completed", "generation_failed"],
     validation_started: ["validation_completed", "generation_failed"],
