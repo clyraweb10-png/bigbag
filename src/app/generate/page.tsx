@@ -337,6 +337,9 @@ export default function GeneratePage() {
       sessionStorage.setItem(`bigbag:pendingPrompt:${id2}`, buildInstruction);
       const displayPrompt = planRequest || approvedPrompt;
       sessionStorage.setItem(`bigbag:pendingDisplayPrompt:${id2}`, displayPrompt);
+      if (projectContext.referenceUrl) {
+        sessionStorage.setItem(`bigbag:pendingVisualReferenceUrl:${id2}`, projectContext.referenceUrl);
+      }
       if (upload.uploaded.length > 0) sessionStorage.setItem(`bigbag:pendingFiles:${id2}`, JSON.stringify(upload.uploaded));
     } catch { /* ok */ }
 
@@ -518,6 +521,14 @@ export default function GeneratePage() {
       {/* ── Composer ── */}
       <div className="shrink-0 border-t border-border bg-background px-3 py-2.5 sm:px-6 sm:py-3.5 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))]">
         <div className="mx-auto max-w-3xl">
+          <ProjectOnboardingDialog
+            open={onboardingOpen}
+            question={onboardingQuestion}
+            busy={onboardingRunning}
+            onOpenChange={setOnboardingOpen}
+            onSubmit={submitOnboardingAnswer}
+            onSkip={skipOnboardingQuestion}
+          />
           <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden shadow-xs focus-within:ring-2 focus-within:ring-ring/30 focus-within:border-primary/50 transition-all flex flex-col justify-between">
             <textarea
               ref={textareaRef}
@@ -614,15 +625,6 @@ export default function GeneratePage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      <ProjectOnboardingDialog
-        open={onboardingOpen}
-        question={onboardingQuestion}
-        busy={onboardingRunning}
-        onOpenChange={setOnboardingOpen}
-        onSubmit={submitOnboardingAnswer}
-        onSkip={skipOnboardingQuestion}
-      />
 
       <FigmaModal
         open={figmaModalOpen}

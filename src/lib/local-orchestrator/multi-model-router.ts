@@ -22,6 +22,16 @@ export interface RouterCompletionResult {
 
 export type StatusCallback = (statusMessage: string) => void;
 
+export type ModelMessageContent = string | Array<
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+>;
+
+export interface ModelMessage {
+  role: string;
+  content: ModelMessageContent;
+}
+
 export interface RouterCompletionOptions {
   perProviderTimeoutMs?: number;
   totalTimeoutMs?: number;
@@ -29,6 +39,8 @@ export interface RouterCompletionOptions {
   maxTokens?: number;
   /** Test/embedding override; production uses the bounded default backoff. */
   retryDelayMs?: number;
+  /** Restrict a specialized request (for example vision analysis) to one provider. */
+  onlyProviderId?: string;
 }
 
 /** Product policy: Gemini gets five recovery attempts before provider failover. */
@@ -178,7 +190,7 @@ class MultiModelRouter {
    */
   private async tryProvider(
     provider: ModelProviderConfig,
-    messages: Array<{ role: string; content: string }>,
+    messages: ModelMessage[],
     onStatus: StatusCallback | undefined,
     options: {
       deadlineAt?: number;
@@ -355,7 +367,7 @@ class MultiModelRouter {
   }
 
   public async complete(
-    messages: Array<{ role: string; content: string }>,
+    messages: ModelMessage[],
     onStatus?: StatusCallback,
     options: RouterCompletionOptions = {}
   ): Promise<RouterCompletionResult> {
@@ -367,12 +379,19 @@ class MultiModelRouter {
       );
     }
 
+    const eligibleProviders = options.onlyProviderId
+      ? configuredProviders.filter((provider) => provider.id === options.onlyProviderId)
+      : configuredProviders;
+    if (eligibleProviders.length === 0) {
+      throw new Error("The required AI capability is not configured.");
+    }
+
     const providers = options.deprioritizeProviderId
       ? [
-          ...configuredProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
-          ...configuredProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
+          ...eligibleProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
+          ...eligibleProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
         ]
-      : configuredProviders;
+      : eligibleProviders;
     const errors: string[] = [];
     const startedAt = Date.now();
     const deadlineAt = options.totalTimeoutMs === undefined

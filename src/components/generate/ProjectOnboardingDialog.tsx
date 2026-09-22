@@ -3,17 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Loader2, Palette } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
+import { FloatingOnboardingQuestionPanel } from "@/components/generate/FloatingOnboardingQuestionPanel";
 import type {
   OnboardingQuestion,
   PaletteDirection,
@@ -165,17 +158,26 @@ export function ProjectOnboardingDialog({
   const isChoiceStep = question.kind === "project_type" || question.kind === "colour_direction";
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="flex max-h-[min(88dvh,760px)] w-[calc(100%-1rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] flex-col gap-0 overflow-hidden border-border bg-card p-0 sm:w-full sm:rounded-2xl">
-        <DialogHeader className="shrink-0 border-b border-border px-4 py-4 pr-12 text-left sm:px-6 sm:py-5">
-          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-primary/12 text-primary">
-            <Palette className="h-4.5 w-4.5" />
-          </div>
-          <DialogTitle className="text-lg leading-6 sm:text-xl">{question.title}</DialogTitle>
-          <DialogDescription className="leading-5">{question.description}</DialogDescription>
-        </DialogHeader>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+    <FloatingOnboardingQuestionPanel
+      open={open}
+      title={question.title}
+      description={question.description}
+      icon={<Palette className="h-4 w-4" />}
+      busy={busy}
+      onClose={() => onOpenChange(false)}
+      footer={(
+        <div className="flex items-center justify-between gap-3">
+          <Button type="button" variant="ghost" onClick={onSkip} disabled={busy}>
+            Skip
+          </Button>
+          <Button type="button" onClick={submit} disabled={!canSubmit} className="min-w-28">
+            {busy ? <Loader2 className="animate-spin" /> : null}
+            Submit
+            {!busy ? <ArrowRight /> : null}
+          </Button>
+        </div>
+      )}
+    >
           {question.kind === "project_type" ? (
             <RadioGroup value={selection} onValueChange={setSelection} className="gap-2.5">
               {PROJECT_TYPES.map((option) => (
@@ -269,19 +271,6 @@ export function ProjectOnboardingDialog({
               onKeyDown={(event) => { if (event.key === "Enter") submit(); }}
             />
           ) : null}
-        </div>
-
-        <DialogFooter className="shrink-0 flex-row items-center justify-between border-t border-border bg-background/35 px-4 py-3 sm:px-6 sm:py-4">
-          <Button type="button" variant="ghost" onClick={onSkip} disabled={busy}>
-            Skip
-          </Button>
-          <Button type="button" onClick={submit} disabled={!canSubmit} className="min-w-28">
-            {busy ? <Loader2 className="animate-spin" /> : null}
-            Submit
-            {!busy ? <ArrowRight /> : null}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FloatingOnboardingQuestionPanel>
   );
 }

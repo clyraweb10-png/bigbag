@@ -1051,7 +1051,10 @@ export default function WorkspacePage() {
       if (raw) files = JSON.parse(raw);
     } catch { /* ignore */ }
     sessionStorage.removeItem(filesKey);
-    sendPromptText(pending, files, undefined, true, displayPrompt);
+    const referenceKey = `bigbag:pendingVisualReferenceUrl:${projectId}`;
+    const visualReferenceUrl = sessionStorage.getItem(referenceKey) || undefined;
+    sessionStorage.removeItem(referenceKey);
+    sendPromptText(pending, files, visualReferenceUrl ? { visualReferenceUrl } : undefined, true, displayPrompt);
   }, [loading, project, projectId, sendPromptText]);
   /**
    * ═══⭐⭐⭐ THE ONE PLACE A LONG OPERATION FINISHES ═════════════════════════
