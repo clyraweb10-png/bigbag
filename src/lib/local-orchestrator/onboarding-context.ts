@@ -201,6 +201,6 @@ export function projectContextForPrompt(originalPrompt: string, context: Project
   return [
     "Use the following user-approved project context as the source of truth.",
     ...fields.map(([label, value]) => `${label}: ${value}`),
-    "Do not ask for information already present above. Continue through the existing plan and confirmation flow.",
+    "Do not ask for information already present above. Start the requested build now; choose sensible defaults for any skipped optional detail.",
   ].join("\n");
 }

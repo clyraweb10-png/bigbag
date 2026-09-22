@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { t } from "@/i18n";
-import { approvedBuildInstruction, classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
+import { classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { ProjectOnboardingDialog, type OnboardingAnswer } from "@/components/generate/ProjectOnboardingDialog";
 import {
   EMPTY_PROJECT_CONTEXT,
@@ -34,6 +34,7 @@ import {
 } from "@/lib/local-orchestrator/onboarding-context";
 
 type Message = { role: "user" | "assistant"; content: string };
+type DirectBuildRequest = { instruction: string; projectId: string };
 
 const PROJECT_TYPE_QUESTION: OnboardingQuestion = {
   kind: "project_type",
@@ -112,6 +113,7 @@ export default function GeneratePage() {
   const [onboardingRunning, setOnboardingRunning] = useState(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const [sourcePrompt, setSourcePrompt] = useState("");
+  const [pendingDirectBuild, setPendingDirectBuild] = useState<DirectBuildRequest | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; imageDescription: string; file: File }[]>([]);
@@ -127,6 +129,7 @@ export default function GeneratePage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const directBuildStartedRef = useRef<DirectBuildRequest | null>(null);
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -170,9 +173,6 @@ export default function GeneratePage() {
       setTypingIndex(history.length);
       setMessages((prev) => [...prev, { role: "assistant", content: payload.data!.text! }]);
       setSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
-      if (intent === "plan" || intent === "update_plan") {
-        setStage("awaiting_confirmation");
-      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not reach the assistant");
       setMessages((prev) => [...prev, { role: "assistant", content: "I couldn't reach the assistant. Try sending your message again." }]);
@@ -181,19 +181,25 @@ export default function GeneratePage() {
     }
   }, []);
 
-  const continueToPlan = useCallback(async (
+  const continueToBuild = useCallback(async (
     originalPrompt: string,
     context: ProjectContext,
-    history: Message[]
+    _history: Message[]
   ) => {
-    const planningRequest = projectContextForPrompt(originalPrompt, context);
-    setApprovedPrompt(planningRequest);
-    setPlanRequest(originalPrompt.trim() || context.projectDescription || context.customProjectType || "Create a complete project");
+    const buildInstruction = projectContextForPrompt(originalPrompt, context);
+    const displayPrompt = originalPrompt.trim() || context.projectDescription || context.customProjectType || "Create a complete project";
+    const idSource = context.projectName || context.customProjectType || context.projectDescription || originalPrompt || "new project";
+    const normalizedProjectId = normalizeId(idSource.split(/\s+/).slice(0, 5).join("-"));
+    const projectId = normalizedProjectId.length >= 3
+      ? normalizedProjectId
+      : `app-${Math.random().toString(36).slice(2, 7)}`;
+    setApprovedPrompt(buildInstruction);
+    setPlanRequest(displayPrompt);
     setOnboardingQuestion(null);
     setOnboardingOpen(false);
-    setStage("planning");
-    await sendToPlanner(planningRequest, history, "plan");
-  }, [sendToPlanner]);
+    setStage("building");
+    setPendingDirectBuild({ instruction: buildInstruction, projectId });
+  }, []);
 
   const requestOnboarding = useCallback(async (
     originalPrompt: string,
@@ -228,7 +234,7 @@ export default function GeneratePage() {
         setOnboardingQuestion(analysis.nextQuestion);
         setOnboardingOpen(true);
       } else {
-        await continueToPlan(originalPrompt, analysis.context, history);
+        await continueToBuild(originalPrompt, analysis.context, history);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not inspect the project context";
@@ -239,7 +245,7 @@ export default function GeneratePage() {
     } finally {
       setOnboardingRunning(false);
     }
-  }, [continueToPlan]);
+  }, [continueToBuild]);
 
   useEffect(() => {
     if (status !== "authenticated" || !user || initialized) return;
@@ -281,12 +287,6 @@ export default function GeneratePage() {
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")?.content;
     const intent = classifyIntent(msg, stage, lastAssistant);
 
-    if (intent === "confirm_build") {
-      setPrompt("");
-      prepareBuildFromConversation(msg);
-      return;
-    }
-
     const next: Message[] = [...messages, { role: "user", content: msg }];
     setMessages(next);
     setPrompt("");
@@ -301,38 +301,6 @@ export default function GeneratePage() {
   };
 
   /* ── Build modal helpers ── */
-  const openBuildModal = (promptOverride?: string) => {
-    const bp = promptOverride?.trim() || approvedPrompt.trim() ||
-      messages.filter((m) => m.role === "user").map((m) => m.content).filter(Boolean).join(" ");
-    if (!bp && attachedFiles.length === 0) return;
-    const words = bp.split(/\s+/).slice(0, 4).join("-");
-    setBuildName(normalizeId(words) || `app-${Math.random().toString(36).slice(2, 7)}`);
-    setBuildError(null);
-    setNameModalOpen(true);
-  };
-
-  function prepareBuildFromConversation(fallback: string) {
-    const conversation = messages.map((message) => ({
-      author: message.role === "assistant" ? "agent" : "user",
-      message: message.content,
-    }));
-    if (approvedPrompt.trim()) {
-      conversation.unshift({ author: "user", message: approvedPrompt.trim() });
-    }
-    const buildInstruction = approvedBuildInstruction(
-      conversation,
-      fallback.trim() || "Build a complete modern web application."
-    );
-    setApprovedPrompt(buildInstruction);
-    const knownName = normalizeId(projectContext.projectName || "");
-    if (knownName.length >= 3) {
-      setBuildName(knownName);
-      void confirmBuild(knownName, buildInstruction);
-    } else {
-      openBuildModal(planRequest || buildInstruction);
-    }
-  }
-
   const confirmBuild = async (nameOverride?: string, instructionOverride?: string) => {
     const id = normalizeId(nameOverride || buildName);
     if (!id || id.length < 3) { setBuildError("Project name must be at least 3 characters"); return; }
@@ -375,6 +343,19 @@ export default function GeneratePage() {
     router.push(`/project/${id2}`);
   };
 
+  useEffect(() => {
+    if (!pendingDirectBuild || buildCreating) return;
+    const request = pendingDirectBuild;
+    if (directBuildStartedRef.current === request) return;
+    directBuildStartedRef.current = request;
+    setPendingDirectBuild(null);
+    setBuildName(request.projectId);
+    void confirmBuild(request.projectId, request.instruction);
+    // The request object is the single trigger. confirmBuild intentionally uses
+    // the latest attachments and integration state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDirectBuild]);
+
   const submitOnboardingAnswer = (answer: OnboardingAnswer) => {
     if (!onboardingQuestion || onboardingRunning) return;
     // A direct user answer is authoritative over an earlier model inference.
@@ -390,6 +371,7 @@ export default function GeneratePage() {
   const skipOnboardingQuestion = () => {
     if (!onboardingQuestion || onboardingRunning) return;
     const nextContext = mergeProjectContext(projectContext, {
+      ...(onboardingQuestion.kind === "project_type" ? { projectType: "website" as const } : {}),
       skippedQuestions: [onboardingQuestion.kind],
     });
     setProjectContext(nextContext);
@@ -482,23 +464,6 @@ export default function GeneratePage() {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {onboardingRunning ? "Understanding your project…" : "Thinking…"}
               </span>
-            </div>
-          )}
-
-          {/* Proceed to build */}
-          {stage === "awaiting_confirmation" && messages.length > 0 && !plannerRunning && (
-            <div className="pl-11">
-              <Button
-                onClick={() => prepareBuildFromConversation(approvedPrompt)}
-                className="h-10 rounded-xl px-4 bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
-              >
-                <svg className="mr-2 h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="7 8 3 12 7 16" />
-                  <line x1="14" y1="4" x2="10" y2="20" strokeWidth="2.2" />
-                  <polyline points="17 8 21 12 17 16" />
-                </svg>
-                Proceed to build
-              </Button>
             </div>
           )}
 

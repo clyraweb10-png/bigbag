@@ -197,7 +197,7 @@ export function activityStepsFromBuildMsgs(
   // not separate user tasks. Keep only the latest privacy-safe status so the UI
   // never becomes a noisy provider-by-provider timeline.
   const isModelProgress = (label: string) =>
-    /^(?:Generating with|Retrying|Continuing with|Model [AB] reached an output boundary)/.test(label);
+    /^(?:Building your project|Still working|Continuing generation)/.test(label);
   let latestModelProgress = -1;
   buildMsgs.forEach((msg, index) => {
     if (isModelProgress(msg.message)) latestModelProgress = index;

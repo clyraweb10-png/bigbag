@@ -1016,7 +1016,7 @@ test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
   }
 });
 
-test("token-limited model output continues, merges safely, and exposes only public model aliases", async () => {
+test("token-limited model output continues, merges safely, and keeps provider identity private", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
@@ -1052,12 +1052,12 @@ test("token-limited model output continues, merges safely, and exposes only publ
       { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
     );
     assert.equal(result.text, "<section>continuation-boundary-complete</section>");
-    assert.equal(result.publicModelName, "Model A");
+    assert.equal(result.publicModelName, "AI");
     assert.equal(requestCount, 2);
     assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
-    assert.ok(statuses.some((status) => status.includes("Model A")));
+    assert.ok(statuses.some((status) => status.includes("Continuing generation")));
     assert.ok(statuses.every((status) => !/Gemini|gemini-2\.5|Google/i.test(status)));
-    assert.equal(publicModelName("telnyx-glm"), "Model B");
+    assert.equal(publicModelName("telnyx-glm"), "AI");
     assert.equal(
       appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"),
       "0123456789abcdefghijkl-complete"
@@ -1075,7 +1075,7 @@ test("token-limited model output continues, merges safely, and exposes only publ
   }
 });
 
-test("provider exhaustion is privacy-safe while failover uses Model A and Model B labels", async () => {
+test("provider exhaustion and failover statuses keep provider identity private", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
@@ -1101,9 +1101,9 @@ test("provider exhaustion is privacy-safe while failover uses Model A and Model 
       }
     );
     assert.deepEqual(statuses, [
-      "Generating with Model A...",
-      "Continuing with Model B...",
-      "Generating with Model B...",
+      "Building your project…",
+      "Continuing generation…",
+      "Building your project…",
     ]);
   } finally {
     global.fetch = previousFetch;

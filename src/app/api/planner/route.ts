@@ -92,7 +92,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         data: {
           text: "",
           durationMs,
-          provider: result.provider,
+          provider: "ai",
           intent,
           suggestions: [],
           onboarding: analysis,
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       data: {
         text: normalizePlannerText(plannerIntent, plannerOutput.text),
         durationMs: result.durationMs,
-        provider: result.provider,
+        provider: "ai",
         intent,
         suggestions: plannerOutput.suggestions,
       },

@@ -731,6 +731,25 @@ export const localAgentEngine = {
           try {
             const design = await analyzeWebsiteDesign(referenceUrl);
             userPromptContent = `${userPromptContent}\n\n${design.context}`;
+            if (design.screenshotUrl) {
+              const currentAfterAnalysis = localProjectStore.getRecord(projectId);
+              localProjectStore.update(projectId, {
+                conversation: [
+                  ...(currentAfterAnalysis?.conversation || []),
+                  {
+                    author: "agent",
+                    message: "Reference website captured. I’m using its real rendered layout as design context.",
+                    messageType: "building",
+                    createdAt: new Date().toISOString(),
+                    files: [{
+                      name: "reference-website-screenshot.png",
+                      url: design.screenshotUrl,
+                      imageDescription: `Firecrawl screenshot of ${design.sourceUrl}`,
+                    }],
+                  },
+                ],
+              });
+            }
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             console.warn(`[Firecrawl] Design analysis failed for ${referenceUrl}: ${message}`);
@@ -814,7 +833,6 @@ export const localAgentEngine = {
         );
 
         const content = routerResult.text;
-        let usedPublicModelName = routerResult.publicModelName;
         let usedProviderId = routerResult.providerId;
 
         // Extract files from generated markdown, with auto-retry on failure
@@ -892,7 +910,6 @@ export const localAgentEngine = {
               ? undefined
               : existingEnvironmentExample;
             postProcessGeneratedFiles(files);
-            usedPublicModelName = retryResult.publicModelName;
             usedProviderId = retryResult.providerId;
             effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
             validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
@@ -1061,7 +1078,7 @@ export const localAgentEngine = {
 
           newMessages.push({
             author: "agent",
-            message: `Application generated successfully with ${usedPublicModelName}! Generated ${files.length || 1} files, verified the disposable build, and deployed the persistent preview.`,
+            message: `All done. Generated ${files.length || 1} files, verified the build, and deployed the live preview.`,
             messageType: "finished",
             createdAt: new Date().toISOString(),
           });
@@ -1080,7 +1097,7 @@ export const localAgentEngine = {
           if (!isSourceBuildFailure(sandboxErr)) {
             await recoverPreviewInfrastructure(
               sandboxErr,
-              `Application generated with ${usedPublicModelName}, then verified after the preview infrastructure recovered.`
+              "Application generated and verified after the preview infrastructure recovered."
             );
             return;
           }
@@ -1166,7 +1183,7 @@ export const localAgentEngine = {
               }
               newMessages.push({
                 author: "agent",
-                message: `Application generated, repaired on attempt ${attempt}, and verified in the live preview using ${repairResult.publicModelName}.`,
+                message: `All done. The application was repaired on attempt ${attempt} and verified in the live preview.`,
                 messageType: "finished",
                 createdAt: new Date().toISOString(),
               });

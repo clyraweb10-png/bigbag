@@ -1,8 +1,8 @@
 /**
- * Planner client — calls the Groq / GLM "fast interaction tier" for chat, planning,
+ * Planner client — calls the GLM / Groq / Gemini fast interaction tier for chat, planning,
  * and plan refinement. This is the server-side half; the browser calls /api/planner.
  *
- * Fallback chain: Groq (qwen/qwen3.8-27b) → GLM-4.7-Flash → glm-4.5-flash → throw.
+ * Fallback chain: GLM-4.7-Flash → Groq → Gemini → glm-4.5-flash → throw.
  *
  * ⚠️ SERVER ONLY — reads API keys from env; never import from a client component.
  */
@@ -11,7 +11,7 @@ import "server-only";
 export interface PlannerResult {
   text: string;
   durationMs: number;
-  provider: "groq" | "glm-47-flash" | "glm-45-flash";
+  provider: "glm-47-flash" | "groq" | "gemini-flash" | "glm-45-flash";
 }
 
 interface OpenAIMessage {
@@ -37,14 +37,15 @@ async function callOpenAICompat(
   model: string,
   messages: OpenAIMessage[],
   maxTokens: number,
-  timeoutMs = 15_000
+  timeoutMs = 15_000,
+  extraBody: Record<string, unknown> = {}
 ): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}/chat/completions`, {
+    res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -55,6 +56,7 @@ async function callOpenAICompat(
         messages,
         max_tokens: maxTokens,
         temperature: 0.7,
+        ...extraBody,
       }),
       signal: controller.signal,
     });
@@ -84,7 +86,7 @@ async function callOpenAICompat(
 
 /**
  * Call the planner with the given system prompt and user message.
- * Falls back through Groq → GLM-4.7-Flash → glm-4.5-flash.
+ * Falls back through GLM-4.7-Flash → Groq → Gemini → glm-4.5-flash.
  *
  * @param systemPrompt  One of CHAT_PROMPT, PLANNER_PROMPT, or REFINE_PROMPT.
  * @param messages      Full conversation history to send (system prompt prepended internally).
@@ -106,12 +108,37 @@ export async function callPlanner(
   const glmBaseUrl = process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
   const glmModel = process.env.GLM_MODEL || "GLM-4.7-Flash";
 
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const geminiBaseUrl = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai";
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const geminiMaxTokens = Math.min(
+    2_048,
+    Math.max(512, parseInt(process.env.GEMINI_MAX_TOKENS || "2048", 10) || 2_048)
+  );
+
   const fullMessages: OpenAIMessage[] = [
     { role: "system", content: systemPrompt },
     ...messages,
   ];
 
-  // --- Try Groq first ---
+  // --- Try GLM-4.7-Flash first for interactive chat and context questions ---
+  if (glmApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(
+        glmBaseUrl,
+        glmApiKey,
+        glmModel,
+        fullMessages,
+        1_500
+      );
+      return { text, durationMs: Date.now() - start, provider: "glm-47-flash" };
+    } catch (err) {
+      console.warn("[planner] Primary interaction provider failed; trying the next provider:", (err as Error).message);
+    }
+  }
+
+  // --- Then Groq ---
   if (groqApiKey) {
     try {
       const start = Date.now();
@@ -124,43 +151,41 @@ export async function callPlanner(
       );
       return { text, durationMs: Date.now() - start, provider: "groq" };
     } catch (err) {
-      console.warn("[planner] Groq failed, falling back to GLM:", (err as Error).message);
+      console.warn("[planner] Secondary interaction provider failed; trying the next provider:", (err as Error).message);
     }
   }
 
-  // --- Try GLM-4.7-Flash ---
+  // --- Then Gemini ---
+  if (geminiApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(
+        geminiBaseUrl,
+        geminiApiKey,
+        geminiModel,
+        fullMessages,
+        geminiMaxTokens,
+        15_000,
+        { reasoning_effort: "none" }
+      );
+      return { text, durationMs: Date.now() - start, provider: "gemini-flash" };
+    } catch (err) {
+      console.warn("[planner] Tertiary interaction provider failed; trying the final provider:", (err as Error).message);
+    }
+  }
+
+  // --- Finish with the non-reasoning GLM fallback when the same endpoint is available ---
   if (glmApiKey) {
     try {
       const start = Date.now();
-      const text = await callOpenAICompat(
-        glmBaseUrl,
-        glmApiKey,
-        glmModel,
-        fullMessages,
-        1500 // GLM-4.7-Flash is a reasoning model; needs 1000+ tokens minimum
-      );
-      return { text, durationMs: Date.now() - start, provider: "glm-47-flash" };
-    } catch (err) {
-      console.warn("[planner] GLM-4.7-Flash failed, falling back to glm-4.5-flash:", (err as Error).message);
-    }
-
-    // --- Try glm-4.5-flash as final fallback ---
-    try {
-      const start = Date.now();
-      const text = await callOpenAICompat(
-        glmBaseUrl,
-        glmApiKey,
-        "glm-4.5-flash",
-        fullMessages,
-        1024
-      );
+      const text = await callOpenAICompat(glmBaseUrl, glmApiKey, "glm-4.5-flash", fullMessages, 1_024);
       return { text, durationMs: Date.now() - start, provider: "glm-45-flash" };
     } catch (err) {
-      console.warn("[planner] glm-4.5-flash also failed:", (err as Error).message);
+      console.warn("[planner] Final interaction provider failed:", (err as Error).message);
     }
   }
 
   throw new Error(
-    "All planner providers failed. Set GROQ_API_KEY or GLM_API_KEY in .env.local."
+    "All planner providers failed. Configure at least one supported interaction provider."
   );
 }

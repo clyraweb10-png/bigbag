@@ -524,6 +524,7 @@ function SecretKeysForm({ secretKeysNeeded, projectId, onTellAi, projectSecrets 
 function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: MessageGroup; projectId: string; onTellAi: (count: number) => void; projectSecrets?: VcaasSecret[] }) {
   const [diffOpen, setDiffOpen] = useState(false);
   const isComplete = !!group.finishMsg;
+  const evidenceFiles = (group.buildMsgs || []).flatMap((message) => message.inputFiles || message.files || []);
 
   // Derive ActivityStep[] from the existing building messages — no engine changes needed.
   const activitySteps = activityStepsFromBuildMsgs(
@@ -540,6 +541,14 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
           steps={activitySteps}
           isBuilding={!isComplete}
         />
+      )}
+
+      {evidenceFiles.length > 0 && (
+        <div className="pt-1" aria-label="Captured reference images">
+          <AttachmentPreviews
+            items={evidenceFiles.map((file) => ({ name: file.name, url: file.url }))}
+          />
+        </div>
       )}
 
       {/* Starting spinner — shown only before the first building message arrives */}

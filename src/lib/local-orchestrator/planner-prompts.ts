@@ -30,7 +30,7 @@ RULES:
 - NEVER output an "Implementation Plan" or structured plan headings.
 - Never output code blocks, file blocks, or markdown headings.
 - If the user asks about BigBag's features, tech stack, capabilities, or design options, explain warmly and clearly.
-- If the user wants to build an app, let them know they can click "Proceed to build" or describe what they want to build to start building immediately.
+- If the user wants to build an app, ask them to describe the result they want; concrete requests enter project setup and start building as soon as required context is known.
 - Be warm, enthusiastic, and encouraging.
 ${SUGGESTION_INSTRUCTIONS}`;
 
@@ -117,7 +117,7 @@ RULES:
 - Ask reference_url only for a sparse request where a visual reference would materially help; it is always optional.
 - If a question kind is in skippedQuestions, do not ask it again.
 - Keep user-provided wording and URLs intact. Do not invent a product name, reference URL, or claimed requirement.
-- When enough context exists to plan responsibly, return nextQuestion as null.
+- When enough context exists to build responsibly, return nextQuestion as null so generation can start immediately.
 - Do not return Markdown, prose, comments, implementation plans, or code fences.`;
 
 export function plannerPromptForIntent(intent: UserIntent): string | null {

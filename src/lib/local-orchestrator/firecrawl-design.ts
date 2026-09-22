@@ -6,6 +6,8 @@ const URL_PATTERN = /https?:\/\/[^\s<>{}\[\]"']+/i;
 export interface FirecrawlDesignAnalysis {
   sourceUrl: string;
   context: string;
+  /** Real screenshot returned by Firecrawl for display in the build conversation. */
+  screenshotUrl?: string;
 }
 
 export function extractWebsiteUrl(prompt: string): string | null {
@@ -23,6 +25,21 @@ export function extractWebsiteUrl(prompt: string): string | null {
 function boundedJson(value: unknown, max = 28_000): string {
   const text = JSON.stringify(value, null, 2);
   return text.length > max ? `${text.slice(0, max)}\n…[analysis truncated]` : text;
+}
+
+function screenshotUrl(value: unknown): string | undefined {
+  const candidate = typeof value === "string"
+    ? value
+    : value && typeof value === "object" && typeof (value as { url?: unknown }).url === "string"
+      ? (value as { url: string }).url
+      : "";
+  if (!candidate) return undefined;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "https:" ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function analyzeWebsiteDesign(sourceUrl: string): Promise<FirecrawlDesignAnalysis> {
@@ -102,5 +119,5 @@ ${boundedJson(payload.data.screenshot || null)}
 [END FIRECRAWL REFERENCE DESIGN ANALYSIS]
 `.trim();
 
-  return { sourceUrl, context };
+  return { sourceUrl, context, screenshotUrl: screenshotUrl(payload.data.screenshot) };
 }
