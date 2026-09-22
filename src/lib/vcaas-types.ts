@@ -230,11 +230,14 @@ export interface AgentRunOptions {
   fastMode?: boolean;
   /** Local-orchestrator-only visual reference explicitly submitted in onboarding. */
   visualReferenceUrl?: string;
+  /** User-authored text shown when the engine prompt is enriched internally. */
+  displayPrompt?: string;
 }
 
 export type GenerationEventType =
   | "generation_started"
   | "crawl_started"
+  | "crawl_asset_received"
   | "crawl_completed"
   | "visual_analysis_started"
   | "visual_analysis_completed"
@@ -246,15 +249,25 @@ export type GenerationEventType =
   | "build_started"
   | "build_completed"
   | "preview_started"
+  | "validation_started"
+  | "validation_completed"
+  | "preview_ready"
+  | "preview_failed"
   | "generation_completed"
   | "generation_failed";
 
 export interface GenerationEvent {
+  eventId?: string;
+  generationId?: string;
   type: GenerationEventType;
   status?: "started" | "completed" | "failed";
+  occurredAt?: string;
+  durationMs?: number;
   path?: string;
   assetUrl?: string;
   sourceUrl?: string;
+  error?: string;
+  source?: "crawl" | "vision" | "generator" | "build" | "runtime" | "infrastructure";
 }
 
 export interface ConversationMessage {

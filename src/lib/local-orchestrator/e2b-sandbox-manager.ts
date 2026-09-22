@@ -5,6 +5,7 @@ import { Sandbox } from "e2b";
 import { localProjectStore, persistentPreviewPath, persistentPreviewUrl } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
+import { GENERATED_RUNTIME_CHECK_SCRIPT } from "./runtime-validator";
 import {
   durableProjectStore,
   requireDurablePersistence,
@@ -215,12 +216,35 @@ class E2BSandboxManager {
       throw commandFailure("Dependency installation failed", error);
     }
 
+    // Vite transpiles TypeScript without type-checking. An undeclared runtime
+    // symbol can therefore bundle successfully and crash only in the browser.
+    // Reject that class of failure before a preview can be marked ready.
+    try {
+      await sandbox.commands.run("npm exec tsc -- --noEmit", { timeoutMs: BUILD_TIMEOUT_MS });
+    } catch (error) {
+      throw commandFailure("Generated app failed to compile during type validation", error);
+    }
+
     // A successful HTML response from Vite does not prove imported TSX compiles.
     // Build first so broken generations never get labelled as successful.
     try {
       await sandbox.commands.run("npm run build", { timeoutMs: BUILD_TIMEOUT_MS });
     } catch (error) {
       throw commandFailure("Generated app failed to compile", error);
+    }
+
+    try {
+      // Generation and dependency installation need outbound access, but
+      // untrusted built code never does. Disable all E2B egress at the sandbox
+      // boundary before evaluating the browser bundle or serving the preview.
+      await sandbox.updateNetwork({ allowInternetAccess: false });
+      await sandbox.files.write("_bigbag-runtime-check.cjs", GENERATED_RUNTIME_CHECK_SCRIPT);
+      await sandbox.commands.run(
+        "node --experimental-vm-modules _bigbag-runtime-check.cjs dist node_modules",
+        { timeoutMs: 30_000 }
+      );
+    } catch (error) {
+      throw commandFailure("Generated app failed runtime validation", error);
     }
 
     await sandbox.commands.run(

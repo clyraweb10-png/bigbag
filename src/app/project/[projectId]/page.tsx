@@ -582,8 +582,16 @@ export default function WorkspacePage() {
       if (rt.length > 0) {
         setMessages((prev) => {
           const agentMsgs = rt.filter((m) => m.author === "agent");
-          const existingAgentKeys = new Set(prev.filter((m) => m.author === "agent").map((m) => `${m.createdAt}|${m.message?.slice(0, 60)}`));
-          const newAgentMsgs = agentMsgs.filter((m) => !existingAgentKeys.has(`${m.createdAt}|${m.message?.slice(0, 60)}`));
+          const messageKey = (message: ConversationMessage) => message.generationEvent?.eventId
+            ? `event:${message.generationEvent.eventId}`
+            : `${message.createdAt}|${message.message?.slice(0, 60)}`;
+          const existingAgentKeys = new Set(prev.filter((m) => m.author === "agent").map(messageKey));
+          const newAgentMsgs = agentMsgs.filter((message) => {
+            const key = messageKey(message);
+            if (existingAgentKeys.has(key)) return false;
+            existingAgentKeys.add(key);
+            return true;
+          });
           return newAgentMsgs.length > 0 ? [...prev, ...newAgentMsgs] : prev;
         });
       }
@@ -792,7 +800,12 @@ export default function WorkspacePage() {
      * ⚠️ ONLY WHAT THE USER CHOSE IS SENT. `options` is `{}` unless the run-options menu
      * was touched, so Totalum's own model/effort routing stays in charge by default.
      */
-    const res = await vcaasApi.agent.start(projectId, { prompt: enginePrompt, inputFiles: files || [], ...(options || {}) });
+    const res = await vcaasApi.agent.start(projectId, {
+      prompt: enginePrompt,
+      inputFiles: files || [],
+      ...(options || {}),
+      ...(visiblePrompt !== enginePrompt ? { displayPrompt: visiblePrompt } : {}),
+    });
     if (res.ok) {
       failedBuildRetryRef.current = null;
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
@@ -1037,7 +1050,13 @@ export default function WorkspacePage() {
     const referenceKey = `bigbag:pendingVisualReferenceUrl:${projectId}`;
     const visualReferenceUrl = sessionStorage.getItem(referenceKey) || undefined;
     sessionStorage.removeItem(referenceKey);
-    sendPromptText(pending, files, visualReferenceUrl ? { visualReferenceUrl } : undefined, true, displayPrompt);
+    sendPromptText(
+      pending,
+      files,
+      { ...(visualReferenceUrl ? { visualReferenceUrl } : {}), displayPrompt },
+      true,
+      displayPrompt
+    );
   }, [loading, project, projectId, sendPromptText]);
   /**
    * ═══⭐⭐⭐ THE ONE PLACE A LONG OPERATION FINISHES ═════════════════════════

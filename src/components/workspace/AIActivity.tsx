@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Loader2, Check, CheckCircle2, ChevronDown, ChevronRight, AlertCircle, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { GenerationEvent } from "@/lib/vcaas-types";
 
 /**
  * A single step in the AI activity log.
@@ -189,7 +190,7 @@ export function AIActivity({ steps, isBuilding, className }: AIActivityProps) {
  * @param startTime   The ISO string `createdAt` from the `starting` message.
  */
 export function activityStepsFromBuildMsgs(
-  buildMsgs: Array<{ message: string; createdAt?: string }>,
+  buildMsgs: Array<{ message: string; createdAt?: string; generationEvent?: GenerationEvent }>,
   isComplete: boolean,
   startTime?: string
 ): ActivityStep[] {
@@ -205,11 +206,30 @@ export function activityStepsFromBuildMsgs(
   const visibleMessages = buildMsgs.filter(
     (msg, index) => !isModelProgress(msg.message) || index === latestModelProgress
   );
+  const eventTypes = new Set(buildMsgs.flatMap((message) => message.generationEvent?.type || []));
+  const completionForStartedEvent: Partial<Record<GenerationEvent["type"], GenerationEvent["type"][]>> = {
+    crawl_started: ["crawl_completed"],
+    visual_analysis_started: ["visual_analysis_completed"],
+    file_generation_started: ["file_created", "file_updated", "generation_completed", "generation_failed"],
+    build_started: ["build_completed", "generation_failed"],
+    validation_started: ["validation_completed", "generation_failed"],
+    preview_started: ["preview_ready", "preview_failed", "generation_failed"],
+  };
 
   return visibleMessages.map((msg, i) => {
     const originalIndex = buildMsgs.indexOf(msg);
-    const isLast = i === visibleMessages.length - 1;
-    const isRunning = !isComplete && isLast;
+    const event = msg.generationEvent;
+    const completionEvents = event ? completionForStartedEvent[event.type] : undefined;
+    const hasRealCompletion = completionEvents?.some((type) => eventTypes.has(type)) || false;
+    const status: ActivityStep["status"] = event?.status === "failed"
+      ? "failed"
+      : event?.status === "completed" || hasRealCompletion
+        ? "completed"
+        : event?.status === "started"
+          ? "running"
+          : isComplete || i < visibleMessages.length - 1
+            ? "completed"
+            : "running";
 
     // Duration: diff between this message's timestamp and the previous one.
     let duration: string | undefined;
@@ -223,10 +243,12 @@ export function activityStepsFromBuildMsgs(
     }
 
     return {
-      id: `${originalIndex}-${msg.message.slice(0, 20)}`,
+      id: event?.eventId || `${originalIndex}-${msg.message.slice(0, 20)}`,
       label: msg.message,
-      status: isRunning ? "running" : "completed",
-      duration: isRunning ? undefined : duration, // don't show duration while still running
+      status,
+      duration: status === "running" ? undefined : event?.durationMs
+        ? `${(event.durationMs / 1000).toFixed(1)}s`
+        : duration,
     };
   });
 }

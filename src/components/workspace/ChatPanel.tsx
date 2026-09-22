@@ -490,7 +490,8 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
     (message) => message.generationEvent?.type === "visual_analysis_completed"
   );
   const evidenceMessages = buildMessages.filter(
-    (message) => message.generationEvent?.type === "asset_fetched"
+    (message) => message.generationEvent?.type === "crawl_asset_received" ||
+      message.generationEvent?.type === "asset_fetched"
   );
   const evidenceFiles = evidenceMessages.flatMap((message) => message.inputFiles || message.files || []);
   const fileEvents = buildMessages.filter((message) =>
@@ -499,7 +500,7 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
   );
   const timelineMessages = buildMessages.filter((message) => {
     const type = message.generationEvent?.type;
-    return type !== "visual_analysis_completed" && type !== "asset_fetched" &&
+    return type !== "visual_analysis_completed" && type !== "crawl_asset_received" && type !== "asset_fetched" &&
       type !== "file_created" && type !== "file_updated";
   });
 
@@ -512,7 +513,7 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
   return (
     <div className="space-y-3">
       {analysisMessages.map((message) => (
-        <div key={`${message.createdAt}-${message.message.slice(0, 24)}`} className="rounded-xl border border-border bg-card/70 p-3.5">
+        <div key={message.generationEvent?.eventId || `${message.createdAt}-${message.message.slice(0, 24)}`} className="rounded-xl border border-border bg-card/70 p-3.5">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
             <Lightbulb className="h-3.5 w-3.5 text-primary" />
             Visual analysis
@@ -544,7 +545,7 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
           <div className="max-h-52 overflow-y-auto p-2">
             {fileEvents.map((message, eventIndex) => (
               <div
-                key={`${message.createdAt}-${message.generationEvent?.path || eventIndex}`}
+                key={message.generationEvent?.eventId || `${message.createdAt}-${message.generationEvent?.path || eventIndex}`}
                 className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs"
               >
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />

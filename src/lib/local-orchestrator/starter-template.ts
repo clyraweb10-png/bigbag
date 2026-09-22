@@ -28,6 +28,7 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
   sonner: "^2.0.7",
+  jsdom: "^26.1.0",
 };
 
 export const PREINSTALLED_DEV_DEPENDENCIES: Record<string, string> = {

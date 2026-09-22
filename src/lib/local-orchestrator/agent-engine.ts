@@ -585,17 +585,18 @@ export const localAgentEngine = {
   async runPrompt(
     projectId: string,
     prompt: string,
-    options: { visualReferenceUrl?: string } = {}
+    options: { visualReferenceUrl?: string; displayPrompt?: string } = {}
   ): Promise<void> {
     const record = localProjectStore.getRecord(projectId);
     if (!record) throw new Error(`Project ${projectId} not found`);
 
     const now = new Date().toISOString();
+    const priorMessages = record.conversation || [];
 
     // 1. Add user message
     const userMsg: ConversationMessage = {
       author: "user",
-      message: prompt,
+      message: options.displayPrompt?.trim() || prompt,
       messageType: "regular",
       createdAt: now,
     };
@@ -608,7 +609,7 @@ export const localAgentEngine = {
       generationEvent: { type: "generation_started", status: "started" },
     };
 
-    const conversation = [...(record.conversation || []), userMsg, startMsg];
+    const conversation = [...priorMessages, userMsg, startMsg];
     localProjectStore.update(projectId, {
       status: "init",
       agentStartedAt: now,
@@ -726,6 +727,7 @@ export const localAgentEngine = {
           throw new Error("The submitted visual reference URL is invalid.");
         }
         if (referenceUrl) {
+          const crawlStartedAt = Date.now();
           const current = localProjectStore.getRecord(projectId);
           localProjectStore.update(projectId, {
             conversation: [
@@ -743,9 +745,28 @@ export const localAgentEngine = {
               },
             ],
           });
+          let referenceFailurePhase: "crawl" | "vision" = "crawl";
           try {
             const design = await analyzeWebsiteDesign(referenceUrl);
             const afterCrawl = localProjectStore.getRecord(projectId);
+            const crawlAssetMessages: ConversationMessage[] = design.imageUrls.map((url, imageIndex) => ({
+              author: "agent" as const,
+              message: `Fetched visual reference ${imageIndex + 1}.`,
+              messageType: "building" as const,
+              createdAt: new Date().toISOString(),
+              files: [{
+                name: imageIndex === 0 ? "reference-page-screenshot.png" : `reference-asset-${imageIndex + 1}`,
+                url,
+                imageDescription: `Firecrawl visual reference ${imageIndex + 1} from ${design.sourceUrl}`,
+              }],
+              generationEvent: {
+                type: "crawl_asset_received" as const,
+                status: "completed" as const,
+                assetUrl: url,
+                sourceUrl: design.sourceUrl,
+                source: "crawl" as const,
+              },
+            }));
             localProjectStore.update(projectId, {
               conversation: [
                 ...(afterCrawl?.conversation || []),
@@ -758,17 +779,21 @@ export const localAgentEngine = {
                     type: "crawl_completed",
                     status: "completed",
                     sourceUrl: design.sourceUrl,
+                    durationMs: Date.now() - crawlStartedAt,
+                    source: "crawl",
                   },
                 },
+                ...crawlAssetMessages,
                 {
                   author: "agent",
                   message: "Analyzing the crawled layout, typography, hierarchy, and responsive design...",
                   messageType: "building",
                   createdAt: new Date().toISOString(),
-                  generationEvent: { type: "visual_analysis_started", status: "started" },
+                  generationEvent: { type: "visual_analysis_started", status: "started", source: "vision" },
                 },
               ],
             });
+            referenceFailurePhase = "vision";
 
             const visualAnalysis = await multiModelRouter.complete(
               [{
@@ -794,32 +819,13 @@ export const localAgentEngine = {
             );
 
             const afterVision = localProjectStore.getRecord(projectId);
-            const visualMessages: ConversationMessage[] = [
-              {
-                author: "agent",
-                message: visualAnalysis.text,
-                messageType: "building",
-                createdAt: new Date().toISOString(),
-                generationEvent: { type: "visual_analysis_completed", status: "completed" },
-              },
-              ...design.imageUrls.map((url, imageIndex) => ({
-                author: "agent" as const,
-                message: `Fetched visual reference ${imageIndex + 1}.`,
-                messageType: "building" as const,
-                createdAt: new Date().toISOString(),
-                files: [{
-                  name: imageIndex === 0 ? "reference-page-screenshot.png" : `reference-asset-${imageIndex + 1}`,
-                  url,
-                  imageDescription: `Firecrawl visual reference ${imageIndex + 1} from ${design.sourceUrl}`,
-                }],
-                generationEvent: {
-                  type: "asset_fetched" as const,
-                  status: "completed" as const,
-                  assetUrl: url,
-                  sourceUrl: design.sourceUrl,
-                },
-              })),
-            ];
+            const visualMessages: ConversationMessage[] = [{
+              author: "agent",
+              message: visualAnalysis.text,
+              messageType: "building",
+              createdAt: new Date().toISOString(),
+              generationEvent: { type: "visual_analysis_completed", status: "completed", source: "vision" },
+            }];
             localProjectStore.update(projectId, {
               conversation: [...(afterVision?.conversation || []), ...visualMessages],
             });
@@ -827,6 +833,26 @@ export const localAgentEngine = {
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             console.warn(`[Firecrawl] Reference pipeline failed for ${referenceUrl}: ${message}`);
+            const afterReferenceFailure = localProjectStore.getRecord(projectId);
+            localProjectStore.update(projectId, {
+              conversation: [
+                ...(afterReferenceFailure?.conversation || []),
+                {
+                  author: "agent",
+                  message: `Reference website analysis failed: ${message}`,
+                  messageType: "building",
+                  createdAt: new Date().toISOString(),
+                  generationEvent: {
+                    type: referenceFailurePhase === "crawl" ? "crawl_completed" : "visual_analysis_completed",
+                    status: "failed",
+                    sourceUrl: referenceUrl,
+                    ...(referenceFailurePhase === "crawl" ? { durationMs: Date.now() - crawlStartedAt } : {}),
+                    source: referenceFailurePhase,
+                    error: message,
+                  },
+                },
+              ],
+            });
             throw new Error(`Reference website analysis failed: ${message}`);
           }
         }
@@ -855,10 +881,9 @@ export const localAgentEngine = {
         // as a brand-new project and the AI generates from scratch.
         const conversationHistory: Array<{ role: string; content: string }> = [];
         if (isFollowUp) {
-          const priorConversation = localProjectStore.getRecord(projectId)?.conversation || [];
-          for (const msg of priorConversation) {
-            // Include previous user prompts (but not the current one — it's in userPromptContent)
-            if (msg.author === "user" && msg.message !== prompt) {
+          for (const msg of priorMessages) {
+            // The current message is not part of this immutable pre-run snapshot.
+            if (msg.author === "user") {
               conversationHistory.push({ role: "user", content: msg.message });
             }
             // Include agent "finished" summaries so the AI knows what it produced
@@ -1038,6 +1063,7 @@ export const localAgentEngine = {
               type: existedBeforeWrite ? "file_updated" : "file_created",
               status: "completed",
               path: file.path,
+              source: "generator",
             },
           });
           localProjectStore.update(projectId, { conversation: newMessages });
@@ -1098,6 +1124,20 @@ export const localAgentEngine = {
           createdAt: new Date().toISOString(),
           generationEvent: { type: "build_started", status: "started" },
         });
+        newMessages.push({
+          author: "agent",
+          message: "Running generated-source, type, and production build validation...",
+          messageType: "building",
+          createdAt: new Date().toISOString(),
+          generationEvent: { type: "validation_started", status: "started", source: "build" },
+        });
+        newMessages.push({
+          author: "agent",
+          message: "Starting the preview only after validation succeeds...",
+          messageType: "building",
+          createdAt: new Date().toISOString(),
+          generationEvent: { type: "preview_started", status: "started", source: "runtime" },
+        });
         localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
 
         const recoverPreviewInfrastructure = async (
@@ -1115,6 +1155,20 @@ export const localAgentEngine = {
             localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
             try {
               const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+              newMessages.push({
+                author: "agent",
+                message: "Validation and preview startup succeeded after infrastructure recovery.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "validation_completed", status: "completed", source: "infrastructure" },
+              });
+              newMessages.push({
+                author: "agent",
+                message: "Live preview is ready.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "preview_ready", status: "completed", source: "runtime" },
+              });
               newMessages.push({
                 author: "agent",
                 message: recoveredMessage,
@@ -1149,7 +1203,12 @@ export const localAgentEngine = {
               : `Preview infrastructure remained unavailable and the previous preview could not be restored: ${infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError)}`,
             messageType: "error",
             createdAt: new Date().toISOString(),
-            generationEvent: { type: "generation_failed", status: "failed" },
+            generationEvent: {
+              type: "preview_failed",
+              status: "failed",
+              source: "infrastructure",
+              error: infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError),
+            },
           });
           localProjectStore.update(projectId, {
             status: "done",
@@ -1174,10 +1233,17 @@ export const localAgentEngine = {
           });
           newMessages.push({
             author: "agent",
+            message: "Generated source, TypeScript, production build, and preview server validation passed.",
+            messageType: "building",
+            createdAt: new Date().toISOString(),
+            generationEvent: { type: "validation_completed", status: "completed", source: "build" },
+          });
+          newMessages.push({
+            author: "agent",
             message: "Live preview is ready.",
             messageType: "building",
             createdAt: new Date().toISOString(),
-            generationEvent: { type: "preview_started", status: "completed" },
+            generationEvent: { type: "preview_ready", status: "completed", source: "runtime" },
           });
 
           newMessages.push({
@@ -1260,12 +1326,26 @@ export const localAgentEngine = {
               );
 
               for (const file of repairFiles) {
+                const existedBeforeRepair = Boolean(localFileManager.getContent(projectId, file.path));
                 let fileContent = file.content;
                 if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
                 if (file.path.endsWith("globals.css") || file.path.endsWith("global.css")) {
                   fileContent = fixCssImportOrder(fileContent);
                 }
                 localFileManager.writeContent(projectId, file.path, fileContent, "utf8");
+                newMessages.push({
+                  author: "agent",
+                  message: `${existedBeforeRepair ? "Updated" : "Created"} file \`${file.path}\` during repair`,
+                  messageType: "building",
+                  createdAt: new Date().toISOString(),
+                  generationEvent: {
+                    type: existedBeforeRepair ? "file_updated" : "file_created",
+                    status: "completed",
+                    path: file.path,
+                    source: "generator",
+                  },
+                });
+                localProjectStore.update(projectId, { conversation: newMessages });
               }
               for (const deletedPath of repairDeletions) {
                 localFileManager.deleteFile(projectId, deletedPath);
@@ -1286,6 +1366,20 @@ export const localAgentEngine = {
                 repaired = true;
                 break;
               }
+              newMessages.push({
+                author: "agent",
+                message: "Production validation completed successfully after repair.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "validation_completed", status: "completed", source: "build" },
+              });
+              newMessages.push({
+                author: "agent",
+                message: "Live preview is ready.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "preview_ready", status: "completed", source: "runtime" },
+              });
               newMessages.push({
                 author: "agent",
                 message: `All done. The application was repaired on attempt ${attempt} and verified in the live preview.`,
@@ -1324,7 +1418,12 @@ export const localAgentEngine = {
                 : `Generation failed validation and the preview could not be restored: ${repairError instanceof Error ? repairError.message : String(repairError)}`,
               messageType: "error",
               createdAt: new Date().toISOString(),
-              generationEvent: { type: "generation_failed", status: "failed" },
+              generationEvent: {
+                type: "generation_failed",
+                status: "failed",
+                source: "build",
+                error: repairError instanceof Error ? repairError.message : String(repairError),
+              },
             });
             localProjectStore.update(projectId, {
               status: "done",
@@ -1349,7 +1448,12 @@ export const localAgentEngine = {
           message: `Generation encountered an issue: ${err.message || String(err)}`,
           messageType: "error",
           createdAt: new Date().toISOString(),
-          generationEvent: { type: "generation_failed", status: "failed" },
+          generationEvent: {
+            type: "generation_failed",
+            status: "failed",
+            error: err.message || String(err),
+            source: "generator",
+          },
         };
         localProjectStore.update(projectId, {
           status: "done",
