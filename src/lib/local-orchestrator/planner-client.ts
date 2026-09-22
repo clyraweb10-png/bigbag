@@ -91,11 +91,16 @@ async function callOpenAICompat(
  */
 export async function callPlanner(
   systemPrompt: string,
-  messages: OpenAIMessage[]
+  messages: OpenAIMessage[],
+  options: { groqMaxTokens?: number } = {}
 ): Promise<PlannerResult> {
   const groqApiKey = process.env.GROQ_API_KEY;
   const groqBaseUrl = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
   const groqModel = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+  const groqMaxTokens = Math.min(
+    950,
+    Math.max(256, parseInt(process.env.GROQ_MAX_TOKENS || "950", 10) || 950)
+  );
 
   const glmApiKey = process.env.GLM_API_KEY;
   const glmBaseUrl = process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
@@ -115,7 +120,7 @@ export async function callPlanner(
         groqApiKey,
         groqModel,
         fullMessages,
-        1024
+        Math.min(groqMaxTokens, options.groqMaxTokens ?? groqMaxTokens)
       );
       return { text, durationMs: Date.now() - start, provider: "groq" };
     } catch (err) {

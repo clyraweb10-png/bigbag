@@ -1,23 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callPlanner } from "@/lib/local-orchestrator/planner-client";
 import { plannerPromptForIntent } from "@/lib/local-orchestrator/planner-prompts";
+import { ONBOARDING_PROMPT } from "@/lib/local-orchestrator/planner-prompts";
 import { normalizePlannerText, parsePlannerOutput } from "@/lib/local-orchestrator/planner-output";
 import type { UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
+import { DESIGN_SYSTEM_PROMPT } from "@/lib/design-system-prompt";
+import {
+  EMPTY_PROJECT_CONTEXT,
+  parseOnboardingOutput,
+  questionAlreadyAnswered,
+  type OnboardingAnalysis,
+  type ProjectContext,
+} from "@/lib/local-orchestrator/onboarding-context";
+
+const ONBOARDING_DESIGN_CONTEXT =
+  DESIGN_SYSTEM_PROMPT.match(/## 2\. Semantic design tokens[\s\S]*?(?=## 6\. Page composition)/)?.[0] ||
+  DESIGN_SYSTEM_PROMPT;
 
 export interface PlannerRequestBody {
-  intent: UserIntent;
+  intent: UserIntent | "onboard";
   message: string;
   /** Trimmed conversation history — up to last 10 messages for context. */
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  context?: ProjectContext;
 }
 
 export interface PlannerResponseData {
   text: string;
   durationMs: number;
   provider: string;
-  intent: UserIntent;
+  intent: UserIntent | "onboard";
   suggestions: string[];
+  onboarding?: OnboardingAnalysis;
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
@@ -31,7 +46,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { intent, message, history = [] } = body;
+  const { intent, message, history = [], context = EMPTY_PROJECT_CONTEXT } = body;
 
   if (!message?.trim()) {
     return NextResponse.json({ ok: false, error: "message is required" }, { status: 400 });
@@ -40,9 +55,57 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const plannerIntent = intent === "chat" || intent === "plan" || intent === "update_plan"
     ? intent
     : null;
+  if (intent === "onboard") {
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = [{
+      role: "user",
+      content: [
+        "Conversation:",
+        ...history.slice(-10).map((entry) => `${entry.role}: ${entry.content}`),
+        `user: ${message}`,
+        `Current structured context: ${JSON.stringify(context)}`,
+        "Existing BigBag design-system source of truth:",
+        ONBOARDING_DESIGN_CONTEXT,
+      ].join("\n\n"),
+    }];
+    try {
+      let result = await callPlanner(ONBOARDING_PROMPT, messages, { groqMaxTokens: 600 });
+      let durationMs = result.durationMs;
+      let analysis = parseOnboardingOutput(result.text, context, { allowAnsweredQuestion: true });
+      if (
+        analysis.nextQuestion &&
+        questionAlreadyAnswered(analysis.context, analysis.nextQuestion.kind)
+      ) {
+        const answeredKind = analysis.nextQuestion.kind;
+        messages.push(
+          { role: "assistant", content: result.text },
+          {
+            role: "user",
+            content: `${answeredKind} is already answered in the structured context. Return corrected JSON that preserves every known fact and either asks one genuinely missing question or returns nextQuestion as null.`,
+          }
+        );
+        result = await callPlanner(ONBOARDING_PROMPT, messages, { groqMaxTokens: 600 });
+        durationMs += result.durationMs;
+        analysis = parseOnboardingOutput(result.text, analysis.context);
+      }
+      return NextResponse.json({
+        ok: true,
+        data: {
+          text: "",
+          durationMs,
+          provider: result.provider,
+          intent,
+          suggestions: [],
+          onboarding: analysis,
+        } satisfies PlannerResponseData,
+      });
+    } catch (err) {
+      console.error("[/api/planner] Onboarding error:", err);
+      return NextResponse.json({ ok: false, error: "I couldn't inspect the project context. Please try again." });
+    }
+  }
   if (!plannerIntent) {
     return NextResponse.json(
-      { ok: false, error: "intent must be chat, plan, or update_plan" },
+      { ok: false, error: "intent must be onboard, chat, plan, or update_plan" },
       { status: 400 }
     );
   }
