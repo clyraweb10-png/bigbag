@@ -476,6 +476,9 @@ export function generationValidationIssues(
     if (!file.content.trim()) issues.push(`empty generated file: ${file.path}`);
     if (isRuntimeOwnedGeneratedPath(file.path, file.content)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
+    if (/\b__BIGBAG_DB__\b/.test(file.content)) {
+      issues.push(`${file.path} references unsupported runtime global __BIGBAG_DB__; use the browser-safe @/lib/db client`);
+    }
     const characterIssue = forbiddenCharacterIssue(file.path, file.content);
     if (characterIssue) issues.push(characterIssue);
     const structuredIssue = structuredFileIssue(file.path, file.content);

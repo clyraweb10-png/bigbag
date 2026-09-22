@@ -5,6 +5,7 @@ import http from "http";
 import { spawn, ChildProcess } from "child_process";
 import { localProjectStore } from "./project-store";
 import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
+import { validateGeneratedRuntime } from "./runtime-validator";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
@@ -112,8 +113,24 @@ async function findFreePort(preferred: number): Promise<number> {
 }
 
 async function buildWorkspace(dir: string, viteBin: string, projectId: string): Promise<void> {
+  const tscSegments = ["node_modules", "typescript", "bin", "tsc"];
+  const workspaceTsc = path.join(dir, ...tscSegments);
+  const rootTsc = path.join(/* turbopackIgnore: true */ process.cwd(), ...tscSegments);
+  const tscBin = fs.existsSync(workspaceTsc) ? workspaceTsc : rootTsc;
+  if (!fs.existsSync(tscBin)) throw new Error("TypeScript compiler is unavailable for generated-app validation");
+  await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation");
+  await runBuildCommand(dir, [viteBin, "build"], projectId, "production build");
+  await validateGeneratedRuntime(dir);
+}
+
+async function runBuildCommand(
+  dir: string,
+  args: string[],
+  projectId: string,
+  label: string
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const build = spawn(process.execPath, [viteBin, "build"], {
+    const build = spawn(process.execPath, args, {
       cwd: dir,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -127,7 +144,7 @@ async function buildWorkspace(dir: string, viteBin: string, projectId: string): 
     build.stderr?.on("data", collect);
     const timer = setTimeout(() => {
       killProcessTree(build);
-      reject(new Error(`Generated app build timed out after ${LOCAL_BUILD_TIMEOUT_MS / 1000}s`));
+      reject(new Error(`Generated app ${label} timed out after ${LOCAL_BUILD_TIMEOUT_MS / 1000}s`));
     }, LOCAL_BUILD_TIMEOUT_MS);
     build.on("error", (error) => {
       clearTimeout(timer);
@@ -136,7 +153,7 @@ async function buildWorkspace(dir: string, viteBin: string, projectId: string): 
     build.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        console.log(`[local-sandbox] Production build completed for ${projectId}`);
+        console.log(`[local-sandbox] ${label} completed for ${projectId}`);
         resolve();
       } else {
         reject(new Error(`Generated app failed to compile${output.trim() ? `:\n${output.trim()}` : ""}`));

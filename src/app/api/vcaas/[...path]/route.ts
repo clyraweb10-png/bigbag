@@ -339,6 +339,9 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       const visualReferenceUrl = rawVisualReference
         ? extractWebsiteUrl(rawVisualReference)
         : undefined;
+      const displayPrompt = typeof body.displayPrompt === "string"
+        ? body.displayPrompt.trim().slice(0, 20_000)
+        : undefined;
       if (rawVisualReference && !visualReferenceUrl) {
         return NextResponse.json(
           { ok: false, error: "The submitted visual reference URL is invalid" },
@@ -349,8 +352,8 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
         .runPrompt(
           projectId,
           promptWithAssets(body.prompt || "", body.inputFiles || body.files),
-          visualReferenceUrl
-            ? { visualReferenceUrl }
+          visualReferenceUrl || displayPrompt
+            ? { visualReferenceUrl, displayPrompt }
             : undefined
         )
         .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
