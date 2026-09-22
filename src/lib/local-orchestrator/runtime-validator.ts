@@ -15,7 +15,9 @@ async function main() {
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   const errors = [];
   const dom = new JSDOM(html, {
-    url: "http://preview.invalid/",
+    // Match the same-origin route contract used by real generated previews so
+    // the browser-safe project database client can initialize during validation.
+    url: "http://preview.invalid/api/preview/runtime-validation/",
     runScripts: "outside-only",
     pretendToBeVisual: true,
   });
@@ -70,7 +72,20 @@ async function main() {
     'globalThis.Headers = ValidatorHeaders;',
     'globalThis.Response = ValidatorResponse;',
     'globalThis.Request = ValidatorRequest;',
-    'globalThis.fetch = async () => new ValidatorResponse(JSON.stringify({ records: [] }), { status: 200, headers: { "content-type": "application/json" } });',
+    'globalThis.__BIGBAG_WRITE_CAPABILITY__ = "runtime-validation-capability";',
+    'globalThis.fetch = async (input, init = {}) => {',
+    '  const url = new URL(String(input), globalThis.location.href);',
+    '  const prefix = "/api/preview/runtime-validation/__bigbag/data/";',
+    '  if (url.origin !== globalThis.location.origin || !url.pathname.startsWith(prefix)) throw new Error("Runtime validation blocked a non-platform network request");',
+    '  const method = String(init.method || "GET").toUpperCase();',
+    '  const headers = new ValidatorHeaders(init.headers || {});',
+    '  if (["POST", "PATCH", "DELETE"].includes(method) && headers.get("X-BigBag-Capability") !== globalThis.__BIGBAG_WRITE_CAPABILITY__) {',
+    '    return new ValidatorResponse(JSON.stringify({ error: "Missing or invalid preview write capability" }), { status: 401, headers: { "content-type": "application/json" } });',
+    '  }',
+    '  const suffix = url.pathname.slice(prefix.length).split("/").filter(Boolean);',
+    '  const data = method === "DELETE" ? { deleted: true } : method === "GET" && suffix.length === 1 ? { records: [], total: 0 } : { _id: suffix[1] || "runtime-validation-record", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };',
+    '  return new ValidatorResponse(JSON.stringify({ data }), { status: 200, headers: { "content-type": "application/json" } });',
+    '};',
   ].join("\n"), context);
   const modules = new Map();
   const safeModulePath = (specifier, parentIdentifier) => {

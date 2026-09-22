@@ -106,6 +106,9 @@ export function isRuntimeOwnedGeneratedPath(value: string, content?: string): bo
   const normalized = normalizeGeneratedPath(value);
   if (normalized === "package-lock.json") return true;
   if (normalized === "index.html") return true;
+  // The platform injects a browser-safe, project-scoped database client here.
+  // Model replacements can bypass capability routing or invent dependencies.
+  if (/^src\/lib\/db\.[cm]?[jt]sx?$/.test(normalized)) return true;
   if (/^src\/(?:main|index)\.[cm]?[jt]sx?$/.test(normalized) && content?.includes("@bigbag-runtime-entry")) {
     return true;
   }

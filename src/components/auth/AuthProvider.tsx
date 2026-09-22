@@ -72,6 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    let serverBootstrapComplete = false;
 
     void (async () => {
       const sessionResponse = await fetch("/api/auth/session", { cache: "no-store" }).catch(() => null);
@@ -80,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         data?: {
           authenticated?: boolean;
           configured?: boolean;
+          user?: AuthUser | null;
           supabase?: {
             url?: string;
             anonKey?: string;
@@ -125,12 +127,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (active) setStatus("authenticated");
         } else {
           const signingOut = localStorage.getItem(SIGNING_OUT_KEY) !== null;
-          setStatus(hasServerSession && !signingOut ? "authenticated" : "unauthenticated");
+          if (hasServerSession && !signingOut && sessionPayload?.data?.user) {
+            setUser(sessionPayload.data.user);
+            setStatus("authenticated");
+          } else {
+            setStatus("unauthenticated");
+          }
         }
       } catch (err) {
         if (!active) return;
         console.error("Failed to load Supabase auth session:", err);
         setStatus("unauthenticated");
+      } finally {
+        serverBootstrapComplete = true;
       }
     })();
 
@@ -139,6 +148,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!active) return;
+
+      // Supabase emits INITIAL_SESSION immediately. An empty browser session
+      // must not override a still-loading, verified HttpOnly server session.
+      if (event === "INITIAL_SESSION" && !session?.user && !serverBootstrapComplete) return;
 
       if (event === "SIGNED_OUT" || !session?.user) {
         setUser(null);

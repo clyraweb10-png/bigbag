@@ -29,6 +29,7 @@ const testDatabase = new PgClient({
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractFirecrawlImageUrls, extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
+const { parseReferenceDesignSpecification, runReferenceAnalysis } = require("../src/lib/local-orchestrator/reference-analysis") as typeof import("../src/lib/local-orchestrator/reference-analysis");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
 const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
 const { EMPTY_PROJECT_CONTEXT, mergeProjectContext, parseOnboardingOutput, projectContextForPrompt, questionAlreadyAnswered } = require("../src/lib/local-orchestrator/onboarding-context") as typeof import("../src/lib/local-orchestrator/onboarding-context");
@@ -53,6 +54,7 @@ const {
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
 const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
+const { GENERATED_RUNTIME_CHECK_SCRIPT } = require("../src/lib/local-orchestrator/runtime-validator") as typeof import("../src/lib/local-orchestrator/runtime-validator");
 const { buildPexelsSearchPlan, resolvePexelsImagery } = require("../src/lib/local-orchestrator/pexels-imagery") as typeof import("../src/lib/local-orchestrator/pexels-imagery");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
 const { isProtectedPagePath, safeAuthReturnPath } = require("../src/lib/auth-redirect") as typeof import("../src/lib/auth-redirect");
@@ -410,12 +412,20 @@ test("runtime-owned model output is discarded without poisoning a valid page", (
       path: "src/app/layout.jsx",
       content: "export default function Layout({ children }) { return children; }",
     },
+    {
+      path: "src/lib/db.ts",
+      content: "export { db } from '@invented/database-client';",
+    },
   ];
 
   postProcessGeneratedFiles(files);
 
   assert.deepEqual(files.map((file) => file.path), ["src/app/page.tsx"]);
   assert.deepEqual(generationValidationIssues(files), []);
+  assert.deepEqual(generationValidationIssues([{
+    path: "src/App.tsx",
+    content: 'import db from "@/lib/db"; export default function App() { void db; return <main>Complete app</main>; }',
+  }], ["src/lib/db.ts"]), []);
 });
 
 test("fresh runtime scaffolding is not misclassified as a follow-up project", () => {
@@ -1183,6 +1193,86 @@ test("specialized vision requests stay on the required provider and preserve ima
   }
 });
 
+test("reference analysis falls back to metadata without retrying non-retryable multimodal requests", async () => {
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  delete process.env.GEMINI_API_KEY;
+  const requestImageCounts: number[] = [];
+  const validSpecification = {
+    reference_url: "https://example.test/",
+    design_summary: "A restrained editorial landing page with a centered content column.",
+    layout: { header: "Compact horizontal nav", hero: "Centered headline", sections: "Stacked content bands", footer: "Minimal link row" },
+    colors: { primary: "#111111", secondary: "#555555", background: "#ffffff", text: "#111111", accent: "#3366ff" },
+    typography: { heading_style: "Bold sans serif", body_style: "Readable system sans", scale: "Large display with compact body" },
+    spacing: { section_spacing: "64px", container_width: "1120px", grid_gap: "24px" },
+    components: ["navigation", "hero"],
+    images: ["full-page screenshot"],
+    responsive_behavior: ["Collapse navigation on small screens"],
+    implementation_notes: ["Preserve generous whitespace"],
+  };
+
+  global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}"));
+    const content = body.messages?.[0]?.content || [];
+    const imageCount = Array.isArray(content)
+      ? content.filter((part: { type?: string }) => part.type === "image_url").length
+      : 0;
+    requestImageCounts.push(imageCount);
+    if (imageCount > 0) {
+      return Response.json({ error: { message: "multimodal image_url input is unsupported" } }, { status: 400 });
+    }
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: JSON.stringify(validSpecification) } }],
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await runReferenceAnalysis({
+      sourceUrl: "https://example.test/",
+      context: "compact context",
+      referencePackage: {
+        referenceUrl: "https://example.test/",
+        metadata: { title: "Example" },
+        relevantText: "A small amount of relevant copy.",
+        branding: "{}",
+        designInformation: "{}",
+        assets: [
+          { url: "https://assets.example.test/page.png", role: "screenshot", selected: true },
+          { url: "https://assets.example.test/hero.jpg", role: "hero", selected: true },
+        ],
+      },
+      screenshotUrl: "https://assets.example.test/page.png",
+      imageUrls: ["https://assets.example.test/page.png", "https://assets.example.test/hero.jpg"],
+      selectedImages: [
+        { url: "https://assets.example.test/page.png", role: "screenshot", contentType: "image/png", sizeBytes: 1_000 },
+        { url: "https://assets.example.test/hero.jpg", role: "hero", contentType: "image/jpeg", sizeBytes: 2_000 },
+      ],
+      assetUrls: ["https://assets.example.test/page.png", "https://assets.example.test/hero.jpg"],
+      rawImageCount: 2,
+      approximateCrawlPayloadSize: 4_000,
+    });
+    assert.deepEqual(requestImageCounts, [2, 1, 0]);
+    assert.equal(result.diagnostics.fallbackMode, "metadata_only");
+    assert.equal(result.specification.reference_url, "https://example.test/");
+    assert.match(result.implementationContext, /VALIDATED REFERENCE DESIGN SPECIFICATION/);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+  }
+});
+
+test("reference design schema rejects incomplete output", () => {
+  assert.throws(
+    () => parseReferenceDesignSpecification('{"design_summary":"too small"}', "https://example.test/"),
+    /missing required/
+  );
+});
+
 test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
@@ -1230,6 +1320,10 @@ test("generated apps use a browser-safe durable data client", async () => {
   assert.match(GENERATED_DB_CLIENT_SOURCE, /\/__bigbag\/data\//);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /X-BigBag-Capability/);
   assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /@libsql|node:|process\.env|process\.cwd|from ["'](?:fs|path)["']/);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /\/api\/preview\/runtime-validation\//);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__BIGBAG_WRITE_CAPABILITY__/);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /Missing or invalid preview write capability/);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /blocked a non-platform network request/);
 
   const tenantId = "11111111-1111-4111-8111-111111111111";
   const projectId = `data-${randomUUID()}`;

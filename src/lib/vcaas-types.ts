@@ -241,6 +241,7 @@ export type GenerationEventType =
   | "crawl_completed"
   | "visual_analysis_started"
   | "visual_analysis_completed"
+  | "visual_analysis_failed"
   | "asset_fetched"
   | "planning_started"
   | "file_generation_started"
@@ -268,6 +269,19 @@ export interface GenerationEvent {
   sourceUrl?: string;
   error?: string;
   source?: "crawl" | "vision" | "generator" | "build" | "runtime" | "infrastructure";
+  referenceAnalysis?: {
+    model: string;
+    imageCount: number;
+    selectedImageCount: number;
+    approximateInputSize: number;
+    responseSize: number;
+    durationMs: number;
+    attempts: number;
+    finishReason: string;
+    status: "completed" | "failed";
+    errorCategory?: string;
+    fallbackMode?: "full_visual" | "screenshot_only" | "metadata_only";
+  };
 }
 
 export interface ConversationMessage {

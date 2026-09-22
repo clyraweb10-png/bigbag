@@ -65,6 +65,7 @@ export function GET(request: NextRequest) {
     ok: true,
     data: {
       authenticated: Boolean(session),
+      user: session ? { id: session.sub, uid: session.sub } : null,
       configured: isConfigured,
       supabase: isConfigured ? { url, anonKey } : null,
     },
