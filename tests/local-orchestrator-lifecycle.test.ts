@@ -31,6 +31,7 @@ const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-
 const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
 const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
+const { EMPTY_PROJECT_CONTEXT, mergeProjectContext, parseOnboardingOutput, projectContextForPrompt, questionAlreadyAnswered } = require("../src/lib/local-orchestrator/onboarding-context") as typeof import("../src/lib/local-orchestrator/onboarding-context");
 const { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT, plannerPromptForIntent } = require("../src/lib/local-orchestrator/planner-prompts") as typeof import("../src/lib/local-orchestrator/planner-prompts");
 const {
   createPreviewWriteCapability,
@@ -252,6 +253,110 @@ test("planner output keeps generated suggestions separate from visible chat", ()
     normalizePlannerText("update_plan", "## Implementation Plan\n\nUpdated.\n\nReady to build?"),
     "## Implementation Plan\n\nUpdated.\n\nReady to build?"
   );
+});
+
+test("onboarding preserves known facts and accepts model-supplied palette directions", () => {
+  const current = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+    projectType: "web-app",
+    projectName: "TaskFlow",
+    projectDescription: "A project management SaaS for small teams",
+  });
+  const analysis = parseOnboardingOutput(JSON.stringify({
+    context: {
+      projectType: "website",
+      projectName: "Invented replacement",
+      colourDirection: null,
+    },
+    nextQuestion: {
+      kind: "colour_direction",
+      title: "Which colour family feels right for TaskFlow?",
+      description: "Choose a focused product direction.",
+      placeholder: "Describe another direction",
+      optional: false,
+      requestProjectName: false,
+      paletteChoices: [{
+        id: "clear-focus",
+        label: "Clear focus",
+        description: "Calm product surfaces with a confident action colour",
+        colours: ["#0F172A", "#F8FAFC", "#4F46E5"],
+      }],
+    },
+  }), current);
+
+  assert.equal(analysis.context.projectType, "web-app");
+  assert.equal(analysis.context.projectName, "TaskFlow");
+  assert.equal(analysis.nextQuestion?.title, "Which colour family feels right for your brand?");
+  assert.equal(analysis.nextQuestion?.paletteChoices[0].colours[2], "#4F46E5");
+  assert.match(projectContextForPrompt("Build TaskFlow", analysis.context), /Project name: TaskFlow/);
+});
+
+test("onboarding never repeats a skipped question and rejects unsafe swatch values", () => {
+  const current = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+    skippedQuestions: ["colour_direction"],
+  });
+  const analysis = parseOnboardingOutput(JSON.stringify({
+    context: {},
+    nextQuestion: {
+      kind: "colour_direction",
+      title: "Which colour family feels right?",
+      description: "Choose one",
+      placeholder: "Custom",
+      optional: true,
+      requestProjectName: false,
+      paletteChoices: [{
+        id: "unsafe",
+        label: "Unsafe",
+        description: "Should not render",
+        colours: ["url(javascript:alert(1))", "#FFFFFF", "#000000"],
+      }],
+    },
+  }), current);
+  assert.equal(analysis.nextQuestion, null);
+});
+
+test("onboarding identifies questions already answered by structured context", () => {
+  const context = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+    projectType: "web-app",
+    projectName: "TaskFlow",
+    projectDescription: "A project manager for design teams",
+    colourDirection: "Dark navy and electric violet",
+    referenceUrl: "https://example.com/reference",
+  });
+  assert.equal(questionAlreadyAnswered(context, "project_type"), true);
+  assert.equal(questionAlreadyAnswered(context, "project_details"), true);
+  assert.equal(questionAlreadyAnswered(context, "colour_direction"), true);
+  assert.equal(questionAlreadyAnswered(context, "reference_url"), true);
+  const repeated = parseOnboardingOutput(JSON.stringify({
+    context: {},
+    nextQuestion: {
+      kind: "project_type",
+      title: "What kind of project?",
+      description: "Choose one",
+      placeholder: "Custom",
+      optional: false,
+      requestProjectName: false,
+      paletteChoices: [],
+    },
+  }), context);
+  assert.equal(repeated.nextQuestion, null);
+
+  const selected = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+    paletteSelection: {
+      id: "focus",
+      label: "Focused blue",
+      description: "Clear product surfaces",
+      colours: ["#0F172A", "#F8FAFC", "#4F46E5"],
+    },
+  });
+  assert.match(projectContextForPrompt("Build it", selected), /#0F172A, #F8FAFC, #4F46E5/);
+
+  const incompleteCustom = mergeProjectContext(EMPTY_PROJECT_CONTEXT, { projectType: "custom" });
+  assert.equal(questionAlreadyAnswered(incompleteCustom, "project_type"), false);
+  const standard = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+    projectType: "website",
+    customProjectType: "Desktop game",
+  });
+  assert.equal(standard.customProjectType, null);
 });
 
 test("generated Tailwind CSS cannot break previews with unsupported apply utilities", () => {
@@ -911,7 +1016,7 @@ test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
   }
 });
 
-test("token-limited model output continues, merges safely, and exposes only public model aliases", async () => {
+test("token-limited model output continues, merges safely, and keeps provider identity private", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
@@ -947,12 +1052,12 @@ test("token-limited model output continues, merges safely, and exposes only publ
       { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
     );
     assert.equal(result.text, "<section>continuation-boundary-complete</section>");
-    assert.equal(result.publicModelName, "Model A");
+    assert.equal(result.publicModelName, "AI");
     assert.equal(requestCount, 2);
     assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
-    assert.ok(statuses.some((status) => status.includes("Model A")));
+    assert.ok(statuses.some((status) => status.includes("Continuing generation")));
     assert.ok(statuses.every((status) => !/Gemini|gemini-2\.5|Google/i.test(status)));
-    assert.equal(publicModelName("telnyx-glm"), "Model B");
+    assert.equal(publicModelName("telnyx-glm"), "AI");
     assert.equal(
       appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"),
       "0123456789abcdefghijkl-complete"
@@ -970,7 +1075,7 @@ test("token-limited model output continues, merges safely, and exposes only publ
   }
 });
 
-test("provider exhaustion is privacy-safe while failover uses Model A and Model B labels", async () => {
+test("provider exhaustion and failover statuses keep provider identity private", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
@@ -996,9 +1101,9 @@ test("provider exhaustion is privacy-safe while failover uses Model A and Model 
       }
     );
     assert.deepEqual(statuses, [
-      "Generating with Model A...",
-      "Continuing with Model B...",
-      "Generating with Model B...",
+      "Building your project…",
+      "Continuing generation…",
+      "Building your project…",
     ]);
   } finally {
     global.fetch = previousFetch;

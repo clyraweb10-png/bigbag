@@ -58,9 +58,8 @@ function completionText(content: unknown): string {
 }
 
 export function publicModelName(providerId: string): string {
-  if (providerId === "gemini-flash") return "Model A";
-  if (providerId === "telnyx-glm") return "Model B";
-  return "AI model";
+  void providerId;
+  return "AI";
 }
 
 /**
@@ -210,7 +209,7 @@ class MultiModelRouter {
       }
 
       if (attempt > 0) {
-        const retryMsg = `Retrying ${publicModelName(provider.id)} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`;
+        const retryMsg = `Still working… (attempt ${attempt + 1}/${provider.maxRetries + 1})`;
         console.log(`[MultiModelRouter] Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`);
         onStatus?.(retryMsg);
         await sleep(options.retryDelayMs);
@@ -328,8 +327,7 @@ class MultiModelRouter {
             );
           }
 
-          const alias = publicModelName(provider.id);
-          const continuationMsg = `${alias} reached an output boundary; continuing automatically...`;
+          const continuationMsg = "Continuing generation…";
           console.log(`[MultiModelRouter] ${provider.name} reached ${finishReason}; requesting continuation ${continuation + 1}/${MAX_OUTPUT_CONTINUATIONS}.`);
           onStatus?.(continuationMsg);
           requestMessages = [
@@ -395,7 +393,7 @@ class MultiModelRouter {
         : Date.now() + Math.max(1, Math.floor(remainingTotalMs / providersRemaining));
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
-      onStatus?.(`Generating with ${publicModelName(provider.id)}...`);
+      onStatus?.("Building your project…");
 
       try {
         return await this.tryProvider(provider, messages, onStatus, {
@@ -410,7 +408,7 @@ class MultiModelRouter {
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
-          const failoverMsg = `Continuing with ${publicModelName(nextProvider.id)}...`;
+          const failoverMsg = "Continuing generation…";
           console.log(`[MultiModelRouter] Switching to ${nextProvider.name} after ${provider.name} failed.`);
           onStatus?.(failoverMsg);
         }
