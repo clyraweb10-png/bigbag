@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "crypto";
 import type { VcaasProject, VcaasProjectSummary } from "@/lib/vcaas-types";
 import type { LocalProjectRecord } from "./types";
 import { durableProjectStore, durablePersistenceConfigured } from "./durable-project-store";
@@ -130,6 +131,20 @@ function modifiedTime(record: LocalProjectRecord): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function identifyGenerationEvents(conversation: LocalProjectRecord["conversation"]): void {
+  let generationId: string | undefined;
+  for (const message of conversation || []) {
+    const event = message.generationEvent;
+    if (!event) continue;
+    if (event.type === "generation_started") {
+      generationId = event.generationId || randomUUID();
+    }
+    event.eventId ||= randomUUID();
+    event.generationId ||= generationId;
+    event.occurredAt ||= message.createdAt;
+  }
+}
+
 export const localProjectStore = {
   getWorkspaceDir(projectId: string): string {
     if (!/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(projectId)) {
@@ -211,6 +226,7 @@ export const localProjectStore = {
     const record = projects[projectId];
     if (!record) return null;
 
+    if (patch.conversation) identifyGenerationEvents(patch.conversation);
     Object.assign(record, patch, { lastModifiedAt: new Date().toISOString() });
     projects[projectId] = record;
     saveProjects(projects);

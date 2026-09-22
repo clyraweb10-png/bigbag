@@ -856,6 +856,12 @@ test("generation validation enforces entrypoint, encoding, JSON, CSS, and env co
   ]);
   assert.ok(unexposedViteVariable.some((issue) => issue.includes("use a VITE_ prefix")));
 
+  const unsupportedBigBagGlobal = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `export default function App(){ return <main>{__BIGBAG_DB__.items.length}</main>; }`,
+  }]);
+  assert.ok(unsupportedBigBagGlobal.some((issue) => issue.includes("unsupported runtime global __BIGBAG_DB__")));
+
   function* oneShotPaths() {
     yield "src/lib/db.ts";
   }
