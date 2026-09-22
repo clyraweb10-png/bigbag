@@ -28,7 +28,7 @@ const testDatabase = new PgClient({
 
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
-const { extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
+const { extractFirecrawlImageUrls, extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
 const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-orchestrator/planner-output") as typeof import("../src/lib/local-orchestrator/planner-output");
 const { EMPTY_PROJECT_CONTEXT, mergeProjectContext, parseOnboardingOutput, projectContextForPrompt, questionAlreadyAnswered } = require("../src/lib/local-orchestrator/onboarding-context") as typeof import("../src/lib/local-orchestrator/onboarding-context");
@@ -189,6 +189,25 @@ test("website URL detection is explicit and strips chat punctuation", () => {
   );
   assert.equal(extractWebsiteUrl("Build a portfolio without a reference URL"), null);
   assert.equal(extractWebsiteUrl("use javascript:alert(1)"), null);
+});
+
+test("Firecrawl visual assets are real HTTPS results, deduplicated, and screenshot-first", () => {
+  assert.deepEqual(
+    extractFirecrawlImageUrls(
+      [
+        "https://assets.example.test/hero.webp",
+        { src: "https://assets.example.test/logo.svg" },
+        { url: "javascript:alert(1)" },
+        "https://assets.example.test/hero.webp",
+      ],
+      { url: "https://crawl.example.test/page.png" }
+    ),
+    [
+      "https://crawl.example.test/page.png",
+      "https://assets.example.test/hero.webp",
+      "https://assets.example.test/logo.svg",
+    ]
+  );
 });
 
 test("intent routing keeps conversation separate from planning and code edits", () => {
@@ -1104,6 +1123,50 @@ test("provider exhaustion and failover statuses keep provider identity private",
       "Building your project…",
       "Continuing generation…",
       "Building your project…",
+    ]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+  }
+});
+
+test("specialized vision requests stay on the required provider and preserve image inputs", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  const requestedUrls: string[] = [];
+  let requestBody: { messages?: Array<{ content?: unknown }> } = {};
+
+  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requestedUrls.push(String(input));
+    requestBody = JSON.parse(String(init?.body || "{}"));
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: "Observed a structured hero and compact navigation." } }],
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await multiModelRouter.complete(
+      [{
+        role: "user",
+        content: [
+          { type: "text", text: "Analyze this real reference." },
+          { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
+        ],
+      }],
+      undefined,
+      { onlyProviderId: "telnyx-glm", perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+    );
+    assert.equal(result.providerId, "telnyx-glm");
+    assert.equal(requestedUrls.length, 1);
+    assert.deepEqual(requestBody.messages?.[0]?.content, [
+      { type: "text", text: "Analyze this real reference." },
+      { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
     ]);
   } finally {
     global.fetch = previousFetch;

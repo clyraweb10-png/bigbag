@@ -4,6 +4,7 @@ import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { localFileManager } from "@/lib/local-orchestrator/file-manager";
 import { e2bSandboxManager } from "@/lib/local-orchestrator/e2b-sandbox-manager";
 import { localAgentEngine } from "@/lib/local-orchestrator/agent-engine";
+import { extractWebsiteUrl } from "@/lib/local-orchestrator/firecrawl-design";
 import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
 import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
 import { isPromptEndpoint, injectDesignPrompt } from "@/lib/design-system-prompt";
@@ -332,8 +333,26 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       if (!localProjectStore.getRecord(projectId)) {
         return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
       }
+      const rawVisualReference = typeof body.visualReferenceUrl === "string"
+        ? body.visualReferenceUrl.trim()
+        : "";
+      const visualReferenceUrl = rawVisualReference
+        ? extractWebsiteUrl(rawVisualReference)
+        : undefined;
+      if (rawVisualReference && !visualReferenceUrl) {
+        return NextResponse.json(
+          { ok: false, error: "The submitted visual reference URL is invalid" },
+          { status: 400 }
+        );
+      }
       void localAgentEngine
-        .runPrompt(projectId, promptWithAssets(body.prompt || "", body.inputFiles || body.files))
+        .runPrompt(
+          projectId,
+          promptWithAssets(body.prompt || "", body.inputFiles || body.files),
+          visualReferenceUrl
+            ? { visualReferenceUrl }
+            : undefined
+        )
         .catch((error) => console.error(`[vcaas] Failed to start agent for ${projectId}:`, error));
       return NextResponse.json({ ok: true, data: { started: true } }, { status: 200 });
     }

@@ -181,45 +181,6 @@ function FormattedText({ text }: { text: string }) {
   );
 }
 
-function TypingFormattedText({ text, active, onComplete }: { text: string; active: boolean; onComplete: () => void }) {
-  const [visibleLength, setVisibleLength] = useState(active ? 0 : text.length);
-  const onCompleteRef = useRef(onComplete);
-
-  useEffect(() => {
-    onCompleteRef.current = onComplete;
-  }, [onComplete]);
-
-  useEffect(() => {
-    if (!active || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setVisibleLength(text.length);
-      return;
-    }
-    setVisibleLength(0);
-    const timer = window.setInterval(() => {
-      setVisibleLength((current) => Math.min(text.length, current + Math.max(2, Math.ceil(text.length / 180))));
-    }, 18);
-    return () => window.clearInterval(timer);
-  }, [active, text]);
-
-  useEffect(() => {
-    if (!active || visibleLength < text.length) return;
-    const completionTimer = window.setTimeout(() => onCompleteRef.current(), 180);
-    return () => window.clearTimeout(completionTimer);
-  }, [active, text.length, visibleLength]);
-
-  return (
-    <>
-      <div aria-hidden="true">
-        <FormattedText text={text.slice(0, visibleLength)} />
-        {active && visibleLength < text.length && <span className="assistant-cursor" aria-hidden="true" />}
-      </div>
-      <p className="sr-only" aria-live="polite" aria-atomic="true">
-        {active && visibleLength < text.length ? "" : text}
-      </p>
-    </>
-  );
-}
-
 // --- User Message (with large-text preview + "See all") ---
 // When a user pastes/uploads a very large block of text, we don't want the chat
 // bubble to become a giant wall. Instead we show a generous preview (not too
@@ -524,35 +485,83 @@ function SecretKeysForm({ secretKeysNeeded, projectId, onTellAi, projectSecrets 
 function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: MessageGroup; projectId: string; onTellAi: (count: number) => void; projectSecrets?: VcaasSecret[] }) {
   const [diffOpen, setDiffOpen] = useState(false);
   const isComplete = !!group.finishMsg;
-  const evidenceFiles = (group.buildMsgs || []).flatMap((message) => message.inputFiles || message.files || []);
+  const buildMessages = group.buildMsgs || [];
+  const analysisMessages = buildMessages.filter(
+    (message) => message.generationEvent?.type === "visual_analysis_completed"
+  );
+  const evidenceMessages = buildMessages.filter(
+    (message) => message.generationEvent?.type === "asset_fetched"
+  );
+  const evidenceFiles = evidenceMessages.flatMap((message) => message.inputFiles || message.files || []);
+  const fileEvents = buildMessages.filter((message) =>
+    message.generationEvent?.type === "file_created" ||
+    message.generationEvent?.type === "file_updated"
+  );
+  const timelineMessages = buildMessages.filter((message) => {
+    const type = message.generationEvent?.type;
+    return type !== "visual_analysis_completed" && type !== "asset_fetched" &&
+      type !== "file_created" && type !== "file_updated";
+  });
 
-  // Derive ActivityStep[] from the existing building messages — no engine changes needed.
   const activitySteps = activityStepsFromBuildMsgs(
-    group.buildMsgs ?? [],
+    timelineMessages,
     isComplete,
     group.startMsg?.createdAt
   );
 
   return (
-    <div className="space-y-1.5">
-      {/* ── AIActivity widget (replaces old collapse toggle + live step text) ── */}
-      {((group.buildMsgs?.length ?? 0) > 0 || !isComplete) && (
-        <AIActivity
-          steps={activitySteps}
-          isBuilding={!isComplete}
-        />
-      )}
+    <div className="space-y-3">
+      {analysisMessages.map((message) => (
+        <div key={`${message.createdAt}-${message.message.slice(0, 24)}`} className="rounded-xl border border-border bg-card/70 p-3.5">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+            <Lightbulb className="h-3.5 w-3.5 text-primary" />
+            Visual analysis
+          </div>
+          <FormattedText text={message.message} />
+        </div>
+      ))}
 
       {evidenceFiles.length > 0 && (
-        <div className="pt-1" aria-label="Captured reference images">
+        <div className="rounded-xl border border-border bg-card/55 p-3" aria-label="Crawled visual references">
+          <p className="mb-2 text-xs font-semibold text-foreground">Crawled visual references</p>
           <AttachmentPreviews
             items={evidenceFiles.map((file) => ({ name: file.name, url: file.url }))}
           />
+          <p className="mt-2 text-[11px] text-muted-foreground">Assets returned by the submitted reference URL.</p>
         </div>
       )}
 
+      {(timelineMessages.length > 0 || !isComplete) && (
+        <AIActivity steps={activitySteps} isBuilding={!isComplete} />
+      )}
+
+      {fileEvents.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-border bg-card/70" aria-label="Live AI coding">
+          <div className="flex items-center gap-2 border-b border-border px-3.5 py-2.5 text-xs font-semibold text-foreground">
+            <CodeXml className="h-3.5 w-3.5 text-primary" />
+            Live AI coding
+          </div>
+          <div className="max-h-52 overflow-y-auto p-2">
+            {fileEvents.map((message, eventIndex) => (
+              <div
+                key={`${message.createdAt}-${message.generationEvent?.path || eventIndex}`}
+                className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-xs"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                <code className="min-w-0 flex-1 truncate text-foreground/85">
+                  {message.generationEvent?.path}
+                </code>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {message.generationEvent?.type === "file_updated" ? "Updated" : "Created"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Starting spinner — shown only before the first building message arrives */}
-      {!isComplete && (group.buildMsgs?.length ?? 0) === 0 && group.startMsg && (
+      {!isComplete && buildMessages.length === 0 && group.startMsg && (
         <div className="flex items-center gap-2 text-[15px] text-gray-500 py-1">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span>{group.startMsg.message}</span>
@@ -641,18 +650,6 @@ export function ChatPanel({
    * has already been paid for and cannot be resumed — only started again.
    */
   const [confirmingStop, setConfirmingStop] = useState(false);
-  const knownMessageCount = useRef(messages.length);
-  const [typingMessageKey, setTypingMessageKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (messages.length > knownMessageCount.current) {
-      const latest = messages[messages.length - 1];
-      if (latest?.author === "agent" && latest.messageType === "regular") {
-        setTypingMessageKey(latest.createdAt || `${messages.length - 1}`);
-      }
-    }
-    knownMessageCount.current = messages.length;
-  }, [messages]);
 
   // --- Load-on-demand for long conversations ---
   // Rather than rendering every message group (which gets heavy on long chats),
@@ -802,11 +799,7 @@ export function ChatPanel({
             <div key={gi} className="flex max-w-full items-start gap-3">
               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"><span className="font-mono text-[10px] font-bold">&lt;/&gt;</span></div>
               <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-background/55 px-4 py-3">
-                <TypingFormattedText
-                  text={msg.message}
-                  active={typingMessageKey === (msg.createdAt || `${gi}`)}
-                  onComplete={() => setTypingMessageKey(null)}
-                />
+                <FormattedText text={msg.message} />
               </div>
             </div>
           );

@@ -228,6 +228,33 @@ export interface AgentRunOptions {
   effort?: AgentEffort;
   /** Claude Code fast mode — Opus only, ignored with `sonnet`. */
   fastMode?: boolean;
+  /** Local-orchestrator-only visual reference explicitly submitted in onboarding. */
+  visualReferenceUrl?: string;
+}
+
+export type GenerationEventType =
+  | "generation_started"
+  | "crawl_started"
+  | "crawl_completed"
+  | "visual_analysis_started"
+  | "visual_analysis_completed"
+  | "asset_fetched"
+  | "planning_started"
+  | "file_generation_started"
+  | "file_created"
+  | "file_updated"
+  | "build_started"
+  | "build_completed"
+  | "preview_started"
+  | "generation_completed"
+  | "generation_failed";
+
+export interface GenerationEvent {
+  type: GenerationEventType;
+  status?: "started" | "completed" | "failed";
+  path?: string;
+  assetUrl?: string;
+  sourceUrl?: string;
 }
 
 export interface ConversationMessage {
@@ -268,6 +295,8 @@ export interface ConversationMessage {
    * This is what the chat bubble reads.
    */
   inputFiles?: AgentInputFile[];
+  /** Real orchestration event that produced this message. Never synthesized by the UI. */
+  generationEvent?: GenerationEvent;
 }
 
 /**
