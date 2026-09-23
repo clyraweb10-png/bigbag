@@ -35,8 +35,11 @@ const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-o
 const { EMPTY_PROJECT_CONTEXT, mergeProjectContext, parseOnboardingOutput, projectContextForPrompt, questionAlreadyAnswered } = require("../src/lib/local-orchestrator/onboarding-context") as typeof import("../src/lib/local-orchestrator/onboarding-context");
 const { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT, plannerPromptForIntent } = require("../src/lib/local-orchestrator/planner-prompts") as typeof import("../src/lib/local-orchestrator/planner-prompts");
 const {
+  consumePreviewGuestMutationBudget,
   createPreviewWriteCapability,
   isPreviewInitiatedRequest,
+  openPreviewAuthStorage,
+  sealPreviewAuthStorage,
   verifyPreviewWriteCapability,
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const {
@@ -45,8 +48,10 @@ const {
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { generatedSourcesRequireEndUserAuth, hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, localAgentEngine, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
+  GENERATED_AUTH_BRIDGE_SOURCE,
+  GENERATED_AUTH_CLIENT_SOURCE,
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
   legacyStarterLayoutSource,
@@ -283,6 +288,68 @@ test("a cancelled generation rejects late worker events but keeps ordinary chat 
   }
 });
 
+test("Stop aborts the active provider request and remains terminal", async () => {
+  const originalComplete = multiModelRouter.complete;
+  const originalGetProviders = multiModelRouter.getProviders;
+  const tenantId = randomUUID();
+  const created = localProjectStore.create({
+    tenantId,
+    projectId: `cancel-live-${randomUUID().slice(0, 8)}`,
+    description: "Cancellation provider-abort regression",
+  });
+  const id = created.projectId;
+  let providerAborted = false;
+
+  (multiModelRouter as any).getProviders = () => [{
+    id: "telnyx-glm",
+    name: "Cancellation test provider",
+    model: "zai-org/GLM-5.3-Flash",
+  }];
+  (multiModelRouter as any).complete = async (
+    _messages: unknown,
+    _status: unknown,
+    options: { signal?: AbortSignal } = {}
+  ) => new Promise((_resolve, reject) => {
+    const abort = () => {
+      providerAborted = true;
+      reject(options.signal?.reason || new Error("aborted"));
+    };
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener("abort", abort, { once: true });
+  });
+
+  try {
+    await localAgentEngine.runPrompt(id, "Build an authenticated task app");
+    const deadline = Date.now() + 5_000;
+    while (
+      Date.now() < deadline &&
+      !localProjectStore.getRecord(id)?.conversation.some((message) =>
+        message.generationEvent?.type === "file_generation_started"
+      )
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const generationId = localProjectStore.getRecord(id)?.activeGenerationId;
+    assert.ok(generationId, "generation did not become active");
+    assert.equal(await localAgentEngine.cancelPrompt(id, generationId), true);
+    assert.equal(providerAborted, true, "provider request was not aborted");
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const record = localProjectStore.getRecord(id);
+    const events = record?.conversation.flatMap((message) => message.generationEvent || []) || [];
+    assert.equal(record?.status, "done");
+    assert.equal(events.filter((event) => event.type === "generation_cancelled").length, 1);
+    assert.equal(events.some((event) => event.type === "generation_completed"), false);
+    assert.equal(events.some((event) => event.type === "preview_ready"), false);
+    assert.equal(await localAgentEngine.cancelPrompt(id, generationId), false);
+  } finally {
+    (multiModelRouter as any).complete = originalComplete;
+    (multiModelRouter as any).getProviders = originalGetProviders;
+    localProjectStore.remove(id);
+    await durableProjectStore.remove(id, tenantId).catch(() => undefined);
+  }
+});
+
 test("planner output keeps generated suggestions separate from visible chat", () => {
   const raw = `A concise response.\n\n<!-- next-prompts\n["Make it calmer", "Add mobile navigation", "Use editorial typography", "Show a pricing view", "Add keyboard shortcuts", "Refine the color palette", "Plan the empty state", "Improve the onboarding", "Add a search flow", "Define the data model"]\n-->`;
   const output = parsePlannerOutput(raw);
@@ -423,7 +490,7 @@ test("generated Tailwind CSS cannot break previews with unsupported apply utilit
 test("only proven source compilation failures can trigger model-based repair", () => {
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: unexpected token")), true);
   assert.equal(isBuildResourceFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
-  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), false);
+  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
   assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
   assert.equal(isSourceBuildFailure(new Error("Project persistence is temporarily unavailable")), false);
@@ -509,6 +576,20 @@ test("generation retries keep only the latest file or deletion action per path",
     },
   ]);
   assert.deepEqual([...secondRetry.deletions], ["src/components/Legacy.tsx"]);
+
+  const reorderedRetry = mergeGeneratedActions(
+    [
+      { path: "src/App.tsx", content: "old app" },
+      { path: "src/components/Table.tsx", content: "old table" },
+    ],
+    [],
+    [
+      { path: "src/components/Table.tsx", content: "fixed table" },
+      { path: "src/App.tsx", content: "fixed app" },
+    ],
+    []
+  );
+  assert.equal(reorderedRetry.files[0].path, "src/App.tsx");
 });
 
 test("React browser entrypoints retain or recover the createRoot import", () => {
@@ -530,6 +611,63 @@ test("React browser entrypoints retain or recover the createRoot import", () => 
   assert.doesNotMatch(files[1].content, /react-dom\/client/);
 });
 
+test("post-processing places the application entrypoint before secondary files", () => {
+  const files = [
+    { path: "src/components/Card.tsx", content: `export function Card(){ return <div>Card</div>; }` },
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
+  ];
+  postProcessGeneratedFiles(files);
+  assert.equal(files[0].path, "src/App.tsx");
+  assert.equal(generationValidationIssues(files, [], { requireEntrypointFirst: true }).some((issue) => issue.includes("first generated")), false);
+
+  const duplicateEntrypoints = [
+    { path: "src/app/page.tsx", content: `export default function Page(){ return <main>Page</main>; }` },
+    { path: "src/App.tsx", content: `export default function App(){ return <main>App</main>; }` },
+  ];
+  postProcessGeneratedFiles(duplicateEntrypoints);
+  assert.deepEqual(duplicateEntrypoints.map((file) => file.path), ["src/App.tsx"]);
+});
+
+test("generated typographic punctuation is normalized before source validation", () => {
+  const files = [{
+    path: "src/App.tsx",
+    content: `export default function App(){ return <main>“Ready” — loading…</main>; }`,
+  }];
+  postProcessGeneratedFiles(files);
+  assert.match(files[0].content, />Ready - loading\.\.\.<\/main>/);
+  assert.equal(generationValidationIssues(files).some((issue) => issue.includes("forbidden Unicode")), false);
+});
+
+test("generated apps must use the injected auth client contract", () => {
+  const incompatible = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth";
+export default async function App(){
+  const { data } = await auth.getSession();
+  const { error } = await auth.signIn("person@example.test", "not-a-secret");
+  return <main>{data?.session?.user.email}{error?.message}</main>;
+}`,
+  }]);
+  assert.ok(incompatible.some((issue) => issue.includes("destructures auth.getSession")));
+  assert.ok(incompatible.some((issue) => issue.includes("destructures error from auth.signIn")));
+  const aliasedError = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; export async function login(){ const { error: signInError } = await auth.signIn("person@example.test", "not-a-secret"); return signInError; }`,
+  }]);
+  assert.ok(aliasedError.some((issue) => issue.includes("destructures error from auth.signIn")));
+
+  const compatible = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth";
+export default async function App(){
+  const current = await auth.getSession();
+  try { await auth.signIn("person@example.test", "not-a-secret"); } catch (error) { void error; }
+  return <main>{current?.user.email}</main>;
+}`,
+  }]);
+  assert.equal(compatible.some((issue) => issue.includes("BigBag auth")), false);
+});
+
 test("starter runtime removes the hardcoded page and mounts generated source", () => {
   const workspace = path.join(tempRoot, `runtime-entry-${randomUUID()}`);
   writeStarterTemplate(workspace, "runtime-entry-test");
@@ -543,6 +681,43 @@ test("starter runtime removes the hardcoded page and mounts generated source", (
   const index = fs.readFileSync(path.join(workspace, "index.html"), "utf8");
   assert.match(index, /<div id="root"><\/div>/);
   assert.match(index, /src="\/src\/main\.tsx"/);
+  const viteConfig = fs.readFileSync(path.join(workspace, "vite.config.ts"), "utf8");
+  assert.match(viteConfig, /bigbag-direct-lucide-imports/);
+  assert.match(viteConfig, /__bigbagLucideExistsSync\(modulePath\)/);
+  assert.match(viteConfig, /retainedBindings\.push\(binding\)/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /@bigbag-managed-auth-client/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /clientPromise = null/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /authUnavailable = true/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /registerAuthTokenProvider\(getAuthAccessToken\)/);
+  assert.match(GENERATED_AUTH_BRIDGE_SOURCE, /getPlatformAuthAccessToken/);
+  assert.equal(
+    fs.readFileSync(path.join(workspace, "src/lib/auth-bridge.ts"), "utf8"),
+    GENERATED_AUTH_BRIDGE_SOURCE
+  );
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /AuthChangeEvent/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /callback\.length >= 2/);
+
+  const customAuthWorkspace = path.join(tempRoot, `runtime-custom-auth-${randomUUID()}`);
+  writeStarterTemplate(customAuthWorkspace, "runtime-custom-auth-test");
+  const customAuth = `export const auth = { getSession: async () => null };\n`;
+  fs.writeFileSync(path.join(customAuthWorkspace, "src/lib/auth.ts"), customAuth);
+  writeStarterTemplate(customAuthWorkspace, "runtime-custom-auth-test");
+  assert.equal(fs.readFileSync(path.join(customAuthWorkspace, "src/lib/auth.ts"), "utf8"), customAuth);
+
+  const migratedWorkspace = path.join(tempRoot, `runtime-vite-migration-${randomUUID()}`);
+  writeStarterTemplate(migratedWorkspace, "runtime-vite-migration-test");
+  fs.writeFileSync(
+    path.join(migratedWorkspace, "vite.config.ts"),
+    `import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+const configDir = path.dirname(fileURLToPath(import.meta.url));
+export default defineConfig({ plugins: [react()], resolve: { alias: { "@": path.resolve(configDir, "./src") } } });`
+  );
+  writeStarterTemplate(migratedWorkspace, "runtime-vite-migration-test");
+  const migratedViteConfig = fs.readFileSync(path.join(migratedWorkspace, "vite.config.ts"), "utf8");
+  assert.match(migratedViteConfig, /plugins: \[directLucideImports\(\), react\(\)\],\n\s*build: \{ minify: false }/);
 
   fs.writeFileSync(
     path.join(workspace, "src/App.tsx"),
@@ -766,6 +941,148 @@ test("generation validation rejects invented durable database methods", () => {
     content: `import db from "@/lib/db"; function run(db: { query: () => void }) { db.query(); } export default function Page(){ return <main />; }`,
   }], ["src/lib/db.ts"]);
   assert.equal(shadowedIssues.some((issue) => issue.includes("invents a database method")), false);
+});
+
+test("generation validation rejects fake browser authentication and exposed server secrets", () => {
+  const clientAuthIssues = generationValidationIssues([
+    {
+      path: "src/App.tsx",
+      content: `export default function App(){ return <main>Sign in</main>; }`,
+    },
+    {
+      path: "src/lib/auth.ts",
+      content: `import db from "@/lib/db";
+const users = db.collection("users");
+async function hashPassword(password: string) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(password)); }
+export async function signIn(password: string) { const passwordHash = await hashPassword(password); return users.list().then(({ records }) => records.find((user) => user.passwordHash === passwordHash)); }`,
+    },
+    {
+      path: "src/store/session.ts",
+      content: `export const loadSession = () => localStorage.getItem("auth.session.token");`,
+    },
+  ], ["src/lib/db.ts"]);
+  assert.ok(clientAuthIssues.some((issue) => issue.includes("password hashing or comparison")));
+  assert.ok(clientAuthIssues.some((issue) => issue.includes("project CRUD datastore as an authentication system")));
+  assert.ok(clientAuthIssues.some((issue) => issue.includes("browser storage as an authentication authority")));
+
+  const secretIssues = generationValidationIssues([
+    {
+      path: "src/App.tsx",
+      content: `export default function App(){ return <main>{import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY}</main>; }`,
+    },
+    { path: ".env.example", content: "VITE_SUPABASE_SERVICE_ROLE_KEY=" },
+  ]);
+  assert.ok(secretIssues.some((issue) => issue.includes("server-only secret")));
+
+  const ordinaryStorage = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `export default function App(){ localStorage.setItem("theme", "dark"); return <main>Ready</main>; }`,
+  }]);
+  assert.equal(ordinaryStorage.some((issue) => issue.includes("authentication authority")), false);
+  const themeStorageWithAuth = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; localStorage.setItem("theme", "dark"); export const login = () => auth.signIn("person@example.test", "password");`,
+  }]);
+  assert.equal(themeStorageWithAuth.some((issue) => issue.includes("authentication authority")), false);
+
+  const runtimeAuthImport = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; export default function App(){ return <button onClick={() => auth.signOut()}>Sign out</button>; }`,
+  }], ["src/lib/auth.ts"]);
+  assert.equal(runtimeAuthImport.some((issue) => issue.includes("missing local module")), false);
+  assert.ok(generationValidationIssues([{
+    path: "src/lib/auth.ts",
+    content: `export const auth = {};`,
+  }]).some((issue) => issue.includes("runtime-owned file")));
+
+  const narrowEditIssues = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `export default function App(){ return <main className="bg-slate-950">Updated header</main>; }`,
+  }], ["src/lib/auth.ts"], {
+    existingSources: [{
+      path: "src/lib/auth.ts",
+      content: `export const restore = () => sessionStorage.getItem("access_token");`,
+    }],
+  });
+  assert.ok(narrowEditIssues.some((issue) => issue.includes("browser storage as an authentication authority")));
+
+  const inMemoryAuthIssues = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Sign in</main>; }` },
+    {
+      path: "src/lib/auth.ts",
+      content: `const profiles = new Map<string, { email: string }>(); export async function signUp(email: string) { profiles.set(email, { email }); } export async function signIn(email: string) { return profiles.get(email); }`,
+    },
+  ]);
+  assert.ok(inMemoryAuthIssues.some((issue) => issue.includes("in-memory demo authentication")));
+  const javascriptMapAuthIssues = generationValidationIssues([{
+    path: "src/auth.js",
+    content: `const users = new Map(); export function signIn(email) { return users.get(email); }`,
+  }]);
+  assert.ok(javascriptMapAuthIssues.some((issue) => issue.includes("in-memory demo authentication")));
+  const providerWithUnrelatedMap = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; const filters = new Map(); export const login = () => auth.signIn("person@example.test", "password");`,
+  }]);
+  assert.equal(providerWithUnrelatedMap.some((issue) => issue.includes("in-memory demo authentication")), false);
+
+  const relativeDbCredentialIssues = generationValidationIssues([{
+    path: "src/lib/login.ts",
+    content: `import db from "./db"; const users = db.collection("users"); export const signUp = (password: string) => users.create({ password });`,
+  }]);
+  assert.ok(relativeDbCredentialIssues.some((issue) => issue.includes("CRUD datastore as an authentication system")));
+  const legitimateDbAndAuth = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import db from "@/lib/db"; import { auth } from "@/lib/auth"; const tasks = db.collection("tasks"); export async function login(password: string) { await auth.signIn("person@example.test", password); await tasks.create({ title: "Ready" }); }`,
+  }]);
+  assert.equal(legitimateDbAndAuth.some((issue) => issue.includes("CRUD datastore as an authentication system")), false);
+
+  const demoIdentityIssues = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Jobs</main>; }` },
+    {
+      path: "src/components/IdentityPicker.tsx",
+      content: `import { useState } from "react"; export function IdentityPicker({ onSelect }: { onSelect: (role: string) => void }) { const [role, setRole] = useState("candidate"); return <button onClick={() => { setRole("company"); onSelect(role); }}>Switch identity for this local demo; ownership is client-side</button>; }`,
+    },
+  ]);
+  assert.ok(demoIdentityIssues.some((issue) => issue.includes("local demo identity or role switcher")));
+});
+
+test("generation validation rejects unrequested seed data but permits explicit seed requests", () => {
+  const files = [
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Courses</main>; }` },
+    { path: "src/lib/seed.ts", content: `export const courses = [{ title: "Demo course" }];` },
+  ];
+  assert.ok(generationValidationIssues(files).some((issue) => issue.includes("without an explicit user request")));
+  assert.equal(generationValidationIssues(files, [], { allowSeedData: true }).some((issue) => issue.includes("seed or fixture data")), false);
+  assert.ok(generationValidationIssues([{ path: "src/fixtures.json", content: "[]" }])
+    .some((issue) => issue.includes("without an explicit user request")));
+});
+
+test("generation validation keeps authentication controlled by user intent", () => {
+  const files = [{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; export default function App(){ return <button onClick={() => auth.signOut()}>Sign out</button>; }`,
+  }];
+  assert.ok(generationValidationIssues(files, ["src/lib/auth.ts"], { allowAuthentication: false })
+    .some((issue) => issue.includes("did not request accounts")));
+  assert.equal(generationValidationIssues(files, ["src/lib/auth.ts"], { allowAuthentication: true })
+    .some((issue) => issue.includes("did not request accounts")), false);
+  const relativeImport = [{
+    path: "src/components/Login.tsx",
+    content: `const auth = require("../lib/auth"); export const Login = () => auth.signIn();`,
+  }];
+  assert.ok(generationValidationIssues(relativeImport, ["src/lib/auth.ts"], { allowAuthentication: false })
+    .some((issue) => issue.includes("did not request accounts")));
+});
+
+test("end-user auth state follows committed generated source and can be cleared", () => {
+  assert.equal(generatedSourcesRequireEndUserAuth([{
+    path: "src/App.tsx",
+    content: `import { auth } from "@/lib/auth"; export default () => auth.getSession();`,
+  }]), true);
+  assert.equal(generatedSourcesRequireEndUserAuth([{
+    path: "src/App.tsx",
+    content: `export default function App(){ return <main>Public app</main>; }`,
+  }]), false);
 });
 
 test("generation validation rejects broken imagery and fixed mobile shells", () => {
@@ -1020,6 +1337,19 @@ test("signed auth sessions protect provider-backed APIs", async () => {
   assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "test-user");
   assert.equal(verifyAuthSession(`${session}x`, 1_000_000), null);
   assert.equal(verifyAuthSession(session, 1_000_000 + 8 * 24 * 60 * 60_000), null);
+
+  const priorNodeEnv = process.env.NODE_ENV;
+  const priorTenantSecret = process.env.TENANT_COOKIE_SECRET;
+  try {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    delete process.env.TENANT_COOKIE_SECRET;
+    assert.throws(() => createAuthSession("test-user"), /TENANT_COOKIE_SECRET is required/);
+  } finally {
+    if (priorNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+    else Reflect.set(process.env, "NODE_ENV", priorNodeEnv);
+    if (priorTenantSecret === undefined) delete process.env.TENANT_COOKIE_SECRET;
+    else process.env.TENANT_COOKIE_SECRET = priorTenantSecret;
+  }
 
   const blocked = await proxy(new NextRequest("https://builder.example.test/api/planner"));
   assert.equal(blocked.status, 401);
@@ -1353,9 +1683,23 @@ test("plain-text overloads retry and repeated continuations cannot produce false
 
 test("generated apps use a browser-safe durable data client", async () => {
   assert.match(GENERATED_DB_CLIENT_SOURCE, /\/__bigbag\/data\//);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /collection<T extends object = DbRecord>/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /Promise<\{ records: T\[\]; total: number \}>/);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /X-BigBag-Capability/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /Authorization/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /getPlatformAuthAccessToken/);
+  assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /from "@\/lib\/auth"/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /signInWithPassword/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /signUp/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /onAuthStateChange/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /__bigbag\/auth\/storage/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /storage: previewAuthStorage/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /bigbag-preview-/);
+  assert.doesNotMatch(GENERATED_AUTH_CLIENT_SOURCE, /service.role|SERVICE_ROLE|passwordHash/);
   assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /@libsql|node:|process\.env|process\.cwd|from ["'](?:fs|path)["']/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /\/api\/preview\/runtime-validation\//);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__bigbag\/auth\/config/);
+  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__bigbag\/auth\/storage/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__BIGBAG_WRITE_CAPABILITY__/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /Missing or invalid preview write capability/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /blocked a non-platform network request/);
@@ -1392,8 +1736,49 @@ test("generated apps use a browser-safe durable data client", async () => {
     assert.deepEqual(collections, [{ name: "tasks", count: 106 }]);
     assert.equal(await durableProjectStore.deleteAppRecord(projectId, "tasks", created._id), true);
     assert.equal((await durableProjectStore.listAppRecords(projectId, "tasks")).total, 105);
+
+    const userA = "auth-user-a";
+    const userB = "auth-user-b";
+    const ownedA = await durableProjectStore.createAppRecord(projectId, "private_tasks", { title: "A" }, userA);
+    const ownedB = await durableProjectStore.createAppRecord(projectId, "private_tasks", { title: "B" }, userB);
+    assert.deepEqual((await durableProjectStore.listAppRecords(projectId, "private_tasks", { ownerId: userA })).records.map((row) => row.title), ["A"]);
+    assert.deepEqual((await durableProjectStore.listAppRecords(projectId, "private_tasks", { ownerId: userB })).records.map((row) => row.title), ["B"]);
+    assert.equal(await durableProjectStore.getAppRecord(projectId, "private_tasks", ownedB._id, userA), null);
+    assert.equal(await durableProjectStore.updateAppRecord(projectId, "private_tasks", ownedB._id, { title: "stolen" }, userA), null);
+    assert.equal(await durableProjectStore.deleteAppRecord(projectId, "private_tasks", ownedB._id, userA), false);
+    assert.equal((await durableProjectStore.getAppRecord(projectId, "private_tasks", ownedA._id, userA))?.title, "A");
   } finally {
     assert.equal(await durableProjectStore.remove(projectId, tenantId), true);
+  }
+});
+
+test("preview auth storage is encrypted and bound to project, guest, key, and expiry", () => {
+  const guestId = randomUUID();
+  const issuedAt = Date.now();
+  const sealed = sealPreviewAuthStorage("project-a", guestId, "session-key", '{"access_token":"private"}', issuedAt);
+  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "session-key", issuedAt), '{"access_token":"private"}');
+  assert.equal(sealed.includes("private"), false);
+  assert.equal(openPreviewAuthStorage(sealed, "project-b", guestId, "session-key", issuedAt), null);
+  assert.equal(openPreviewAuthStorage(sealed, "project-a", randomUUID(), "session-key", issuedAt), null);
+  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "other-key", issuedAt), null);
+  const tampered = `${sealed[0] === "A" ? "B" : "A"}${sealed.slice(1)}`;
+  assert.equal(openPreviewAuthStorage(tampered, "project-a", guestId, "session-key", issuedAt), null);
+  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "session-key", issuedAt + 31 * 24 * 60 * 60_000), null);
+
+  const priorNodeEnv = process.env.NODE_ENV;
+  const priorTenantSecret = process.env.TENANT_COOKIE_SECRET;
+  try {
+    Reflect.set(process.env, "NODE_ENV", "production");
+    delete process.env.TENANT_COOKIE_SECRET;
+    assert.throws(
+      () => sealPreviewAuthStorage("project-a", guestId, "session-key", "value"),
+      /TENANT_COOKIE_SECRET is required/
+    );
+  } finally {
+    if (priorNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
+    else Reflect.set(process.env, "NODE_ENV", priorNodeEnv);
+    if (priorTenantSecret === undefined) delete process.env.TENANT_COOKIE_SECRET;
+    else process.env.TENANT_COOKIE_SECRET = priorTenantSecret;
   }
 });
 
@@ -1410,9 +1795,24 @@ test("preview write capabilities are project-scoped, signed, and expiring", () =
   );
 });
 
+test("guest mutation limits are project-scoped rather than identity-scoped", () => {
+  const projectId = `guest-budget-${randomUUID()}`;
+  const startedAt = 1_000_000;
+  for (let index = 0; index < 60; index += 1) {
+    assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + index), true);
+  }
+  assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + 59_999), false);
+  assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + 60_000), true);
+});
+
 test("restored workspaces preserve package mode and customized database clients", () => {
   const workspace = path.join(tempRoot, "custom-restored-workspace");
-  const customDbClient = `import { createClient } from "@libsql/client";\nexport const customized = true;\n`;
+  const customDbClient = `import { createClient } from "@libsql/client";
+type DbRecord = { _id: string };
+function collectionPath(name: string): string { return name; }
+export function collection<T extends DbRecord = DbRecord>(name: string) { return { name: collectionPath(name), update: (_id: string, data: Partial<T>) => data, client: createClient }; }
+export const customized = true;
+`;
   fs.mkdirSync(path.join(workspace, "src", "lib"), { recursive: true });
   fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({
     name: "custom-restored-workspace",

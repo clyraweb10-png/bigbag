@@ -1,18 +1,32 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import type { NextRequest, NextResponse } from "next/server";
 
 export const TENANT_COOKIE = "bigbag_tenant";
+export const PREVIEW_GUEST_COOKIE = "bigbag_preview_guest";
 const TENANT_ID = /^[a-f0-9-]{36}$/;
 const PREVIEW_WRITE_TTL_MS = 15 * 60_000;
+const PREVIEW_GUEST_TTL_MS = 24 * 60 * 60_000;
+const PREVIEW_AUTH_STORAGE_TTL_MS = 30 * 24 * 60 * 60_000;
+const PREVIEW_GUEST_MUTATION_WINDOW_MS = 60_000;
+const PREVIEW_GUEST_MUTATION_LIMIT = 60;
+const guestMutationBudgets = new Map<string, { windowStartedAt: number; count: number }>();
 
 function signingSecret(): string {
   const secret = process.env.TENANT_COOKIE_SECRET?.trim();
   if (secret) return secret;
-  return (
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ||
-    "bigbag-production-tenant-secret-fallback"
-  );
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("TENANT_COOKIE_SECRET is required in production");
+  }
+  return "bigbag-development-only-tenant-secret";
 }
 
 function signature(tenantId: string): string {
@@ -23,6 +37,132 @@ function previewWriteSignature(payload: string): string {
   return createHmac("sha256", signingSecret())
     .update(`preview-write:${payload}`)
     .digest("base64url");
+}
+
+function previewGuestSignature(payload: string): string {
+  return createHmac("sha256", signingSecret())
+    .update(`preview-guest:${payload}`)
+    .digest("base64url");
+}
+
+function previewAuthStorageKey(): Buffer {
+  return createHash("sha256").update(`preview-auth-storage:${signingSecret()}`).digest();
+}
+
+export function sealPreviewAuthStorage(
+  projectId: string,
+  guestId: string,
+  key: string,
+  value: string,
+  now = Date.now()
+): string {
+  if (!projectId || !TENANT_ID.test(guestId) || !key || value.length > 12_000) {
+    throw new Error("Invalid preview auth storage value");
+  }
+  const plaintext = deflateRawSync(Buffer.from(JSON.stringify({
+    projectId,
+    guestId,
+    key,
+    value,
+    expiresAt: now + PREVIEW_AUTH_STORAGE_TTL_MS,
+  }), "utf8"));
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", previewAuthStorageKey(), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString("base64url");
+}
+
+export function openPreviewAuthStorage(
+  token: string | undefined,
+  projectId: string,
+  guestId: string,
+  key: string,
+  now = Date.now()
+): string | null {
+  if (!token || token.length > 4_000 || !projectId || !TENANT_ID.test(guestId) || !key) return null;
+  try {
+    const sealed = Buffer.from(token, "base64url");
+    if (sealed.length < 29) return null;
+    const decipher = createDecipheriv("aes-256-gcm", previewAuthStorageKey(), sealed.subarray(0, 12));
+    decipher.setAuthTag(sealed.subarray(12, 28));
+    const plaintext = Buffer.concat([
+      decipher.update(sealed.subarray(28)),
+      decipher.final(),
+    ]);
+    const payload = JSON.parse(inflateRawSync(plaintext).toString("utf8")) as Record<string, unknown>;
+    if (
+      payload.projectId !== projectId ||
+      payload.guestId !== guestId ||
+      payload.key !== key ||
+      typeof payload.value !== "string" ||
+      typeof payload.expiresAt !== "number" ||
+      payload.expiresAt < now ||
+      payload.expiresAt > now + PREVIEW_AUTH_STORAGE_TTL_MS + 60_000
+    ) return null;
+    return payload.value;
+  } catch {
+    return null;
+  }
+}
+
+export function resolvePreviewGuest(request: NextRequest): { guestId: string; cookieValue?: string } {
+  const value = request.cookies.get(PREVIEW_GUEST_COOKIE)?.value;
+  if (value) {
+    const separator = value.lastIndexOf(".");
+    const guestId = separator > 0 ? value.slice(0, separator) : "";
+    const received = separator > 0 ? value.slice(separator + 1) : "";
+    const expected = previewGuestSignature(guestId);
+    const a = Buffer.from(received);
+    const b = Buffer.from(expected);
+    if (TENANT_ID.test(guestId) && a.length === b.length && timingSafeEqual(a, b)) return { guestId };
+  }
+  const guestId = randomUUID();
+  return { guestId, cookieValue: `${guestId}.${previewGuestSignature(guestId)}` };
+}
+
+export function createPreviewGuestCapability(projectId: string, guestId: string, now = Date.now()): string {
+  if (!TENANT_ID.test(guestId)) throw new Error("Invalid preview guest id");
+  const expiresAt = Math.floor((now + PREVIEW_GUEST_TTL_MS) / 1000);
+  const payload = `${projectId}.${guestId}.${expiresAt}`;
+  return `${payload}.${previewGuestSignature(payload)}`;
+}
+
+export function verifyPreviewGuestCapability(token: string | null, projectId: string, now = Date.now()): string | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 4) return null;
+  const [tokenProjectId, guestId, rawExpiry, received] = parts;
+  const expiresAt = Number(rawExpiry);
+  if (
+    tokenProjectId !== projectId ||
+    !TENANT_ID.test(guestId) ||
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt * 1000 < now ||
+    expiresAt * 1000 > now + PREVIEW_GUEST_TTL_MS + 60_000
+  ) return null;
+  const payload = `${tokenProjectId}.${guestId}.${rawExpiry}`;
+  const expected = previewGuestSignature(payload);
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b) ? guestId : null;
+}
+
+/** Project-scoped so rotating guest identities cannot bypass the mutation limit. */
+export function consumePreviewGuestMutationBudget(projectId: string, now = Date.now()): boolean {
+  if (!projectId) return false;
+  const current = guestMutationBudgets.get(projectId);
+  if (!current || now - current.windowStartedAt >= PREVIEW_GUEST_MUTATION_WINDOW_MS) {
+    guestMutationBudgets.set(projectId, { windowStartedAt: now, count: 1 });
+    if (guestMutationBudgets.size > 1_000) {
+      for (const [key, budget] of guestMutationBudgets) {
+        if (now - budget.windowStartedAt >= PREVIEW_GUEST_MUTATION_WINDOW_MS) guestMutationBudgets.delete(key);
+      }
+    }
+    return true;
+  }
+  if (current.count >= PREVIEW_GUEST_MUTATION_LIMIT) return false;
+  current.count += 1;
+  return true;
 }
 
 export function createPreviewWriteCapability(

@@ -4,17 +4,21 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-// Load .env.local for Supabase connection
-const envFile = fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8");
-envFile.split("\n").forEach((line) => {
-  const trimmed = line.trim();
-  if (trimmed && !trimmed.startsWith("#")) {
-    const idx = trimmed.indexOf("=");
-    if (idx !== -1) {
-      process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+// Prefer an explicit process environment (CI/production-like verification),
+// while still supporting the local developer convenience file when present.
+const envPath = path.join(process.cwd(), ".env.local");
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, "utf8").split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const idx = trimmed.indexOf("=");
+      const name = trimmed.slice(0, idx).trim();
+      if (idx !== -1 && process.env[name] === undefined) {
+        process.env[name] = trimmed.slice(idx + 1).trim();
+      }
     }
-  }
-});
+  });
+}
 
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 type LocalProjectRecord = import("../src/lib/local-orchestrator/types").LocalProjectRecord;

@@ -27,6 +27,7 @@ export const PREINSTALLED_DEPENDENCIES: Record<string, string> = {
   "embla-carousel-react": "^8.6.0",
   "@radix-ui/react-slot": "^1.2.3",
   "react-hook-form": "^7.62.0",
+  "@supabase/supabase-js": "^2.116.0",
   sonner: "^2.0.7",
   jsdom: "^26.1.0",
 };
@@ -48,12 +49,219 @@ export const ALWAYS_AVAILABLE_PACKAGES = new Set([
   ...Object.keys(PREINSTALLED_DEV_DEPENDENCIES),
 ]);
 
+const VITE_LUCIDE_PLUGIN_SOURCE = `function directLucideImports() {
+  return {
+    name: "bigbag-direct-lucide-imports",
+    enforce: "pre" as const,
+    transform(code: string, id: string) {
+      if (!/\\.[cm]?[jt]sx?$/.test(id) || !code.includes("lucide-react")) return null;
+      const transformed = code.replace(
+        /import\\s*\\{([^}]+)\\}\\s*from\\s*["']lucide-react["'];?/g,
+        (_statement, rawBindings: string) => {
+          const directImports: string[] = [];
+          const retainedBindings: string[] = [];
+          for (const raw of rawBindings.split(",")) {
+            const binding = raw.trim();
+            if (!binding || binding.startsWith("type ")) {
+              if (binding) retainedBindings.push(binding);
+              continue;
+            }
+            const parts = binding.split(/\\s+as\\s+/);
+            const imported = parts[0];
+            const local = parts[1] || imported;
+            const fileName = imported
+              .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+              .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+              .replace(/([A-Za-z])([0-9])/g, "$1-$2")
+              .toLowerCase();
+            const modulePath = __bigbagLucidePath.resolve(process.cwd(), "node_modules/lucide-react/dist/esm/icons/" + fileName + ".js");
+            if (__bigbagLucideExistsSync(modulePath)) {
+              directImports.push("import " + local + " from \\"lucide-react/dist/esm/icons/" + fileName + ".js\\";");
+            } else {
+              retainedBindings.push(binding);
+            }
+          }
+          const retainedImport = retainedBindings.length
+            ? "import { " + retainedBindings.join(", ") + " } from \\"lucide-react\\";"
+            : "";
+          return [retainedImport, ...directImports].filter(Boolean).join("\\n");
+        }
+      );
+      return transformed === code ? null : { code: transformed, map: null };
+    },
+  };
+}`;
+
 /**
  * Browser-only client for the platform's project-scoped durable datastore.
  * Provider/database credentials stay in the builder server; generated bundles
  * contain only same-origin HTTP calls.
  */
-export const GENERATED_DB_CLIENT_SOURCE = `export type DbRecord = Record<string, unknown> & {
+const GENERATED_AUTH_CLIENT_MARKER = "// @bigbag-managed-auth-client";
+
+export const GENERATED_AUTH_BRIDGE_SOURCE = `// @bigbag-managed-auth-bridge
+type AuthTokenProvider = () => Promise<string | null>;
+
+let tokenProvider: AuthTokenProvider | null = null;
+
+export function registerAuthTokenProvider(provider: AuthTokenProvider): void {
+  tokenProvider = provider;
+}
+
+export async function getPlatformAuthAccessToken(): Promise<string | null> {
+  return tokenProvider ? tokenProvider() : null;
+}
+`;
+
+export const GENERATED_AUTH_CLIENT_SOURCE = `${GENERATED_AUTH_CLIENT_MARKER}
+import { createClient, type AuthChangeEvent, type Session, type User } from "@supabase/supabase-js";
+import { registerAuthTokenProvider } from "@/lib/auth-bridge";
+
+type AuthConfig = { url: string; anonKey: string };
+type AuthUnsubscribe = (() => void) & { data: { subscription: { unsubscribe: () => void } } };
+let clientPromise: ReturnType<typeof createClientPromise> | null = null;
+let authUnavailable = false;
+
+function previewBase(): string {
+  const match = window.location.pathname.match(/^\\/api\\/preview\\/[^/]+/);
+  if (!match) throw new Error("Authentication must run inside a BigBag preview");
+  return match[0];
+}
+
+async function authStorageRequest(key: string, method: "GET" | "POST" | "DELETE", value?: string) {
+  const capability = (window as Window & { __BIGBAG_GUEST_CAPABILITY__?: string })
+    .__BIGBAG_GUEST_CAPABILITY__;
+  if (!capability) throw new Error("Preview session authorization is unavailable");
+  const response = await fetch(previewBase() + "/__bigbag/auth/storage?key=" + encodeURIComponent(key), {
+    method,
+    credentials: "include",
+    headers: {
+      "X-BigBag-Guest": capability,
+      ...(value !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    body: value !== undefined ? JSON.stringify({ value }) : undefined,
+  });
+  const payload = await response.json().catch(() => null) as { value?: string | null; error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error || "Secure session storage failed");
+  return payload?.value ?? null;
+}
+
+const previewAuthStorage = {
+  getItem(key: string) {
+    return authStorageRequest(key, "GET");
+  },
+  async setItem(key: string, value: string) {
+    await authStorageRequest(key, "POST", value);
+  },
+  async removeItem(key: string) {
+    await authStorageRequest(key, "DELETE");
+  },
+};
+
+async function createClientPromise() {
+  const response = await fetch(previewBase() + "/__bigbag/auth/config", { cache: "no-store" });
+  const payload = await response.json().catch(() => null) as { data?: AuthConfig; error?: string } | null;
+  if (response.status === 503) authUnavailable = true;
+  if (!response.ok || !payload?.data) throw new Error(payload?.error || "Authentication is not configured");
+  return createClient(payload.data.url, payload.data.anonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: previewAuthStorage,
+      storageKey: "bigbag-preview-" + previewBase().split("/").at(-1) + "-auth",
+    },
+  });
+}
+
+export function getAuthClient() {
+  if (authUnavailable) return Promise.reject(new Error("Authentication is not configured"));
+  clientPromise ||= createClientPromise().catch((error) => {
+    clientPromise = null;
+    throw error;
+  });
+  return clientPromise;
+}
+
+export async function getAuthAccessToken(): Promise<string | null> {
+  try {
+    const client = await getAuthClient();
+    const { data, error } = await client.auth.getSession();
+    if (error) return null;
+    return data.session?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+registerAuthTokenProvider(getAuthAccessToken);
+
+function onAuthStateChange(
+  callback:
+    | ((session: Session | null) => void)
+    | ((event: AuthChangeEvent, session: Session | null) => void)
+): AuthUnsubscribe {
+  let active = true;
+  let unsubscribe: (() => void) | undefined;
+  void getAuthClient().then((client) => {
+    if (!active) return;
+    const { data } = client.auth.onAuthStateChange((event, session) => {
+      if (callback.length >= 2) {
+        (callback as (event: AuthChangeEvent, session: Session | null) => void)(event, session);
+      } else {
+        (callback as (session: Session | null) => void)(session);
+      }
+    });
+    unsubscribe = () => data.subscription.unsubscribe();
+  }).catch(() => undefined);
+  const stop = (() => {
+    active = false;
+    unsubscribe?.();
+  }) as AuthUnsubscribe;
+  stop.data = { subscription: { unsubscribe: stop } };
+  return stop;
+}
+
+export const auth = {
+  async signUp(email: string, password: string) {
+    const client = await getAuthClient();
+    const { data, error } = await client.auth.signUp({ email, password });
+    if (error) throw error;
+    return { ...data, data, error: null };
+  },
+  async signIn(email: string, password: string) {
+    const client = await getAuthClient();
+    const { data, error } = await client.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    return { ...data, data, error: null };
+  },
+  async signOut() {
+    const client = await getAuthClient();
+    const { error } = await client.auth.signOut();
+    if (error) throw error;
+  },
+  async getSession(): Promise<Session | null> {
+    const client = await getAuthClient();
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    return data.session;
+  },
+  async getUser(): Promise<User | null> {
+    const client = await getAuthClient();
+    const { data, error } = await client.auth.getUser();
+    if (error) throw error;
+    return data.user;
+  },
+  onAuthStateChange,
+};
+`;
+
+const GENERATED_DB_CLIENT_MARKER = "// @bigbag-managed-db-client";
+
+export const GENERATED_DB_CLIENT_SOURCE = `${GENERATED_DB_CLIENT_MARKER}
+import { getPlatformAuthAccessToken } from "@/lib/auth-bridge";
+
+export type DbRecord = Record<string, unknown> & {
   _id: string;
   createdAt: string;
   updatedAt: string;
@@ -74,13 +282,18 @@ function collectionPath(name: string): string {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const accessToken = await getPlatformAuthAccessToken().catch(() => null);
   const capability = (window as Window & { __BIGBAG_WRITE_CAPABILITY__?: string })
     .__BIGBAG_WRITE_CAPABILITY__;
+  const guestCapability = (window as Window & { __BIGBAG_GUEST_CAPABILITY__?: string })
+    .__BIGBAG_GUEST_CAPABILITY__;
   const response = await fetch(url, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...(capability ? { "X-BigBag-Capability": capability } : {}),
+      ...(guestCapability ? { "X-BigBag-Guest": guestCapability } : {}),
+      ...(accessToken ? { "Authorization": "Bearer " + accessToken } : {}),
       ...(init?.headers || {}),
     },
   });
@@ -91,22 +304,22 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
-export function collection(name: string) {
+export function collection<T extends object = DbRecord>(name: string) {
   const url = collectionPath(name);
   return {
-    async list(options: ListOptions = {}): Promise<{ records: DbRecord[]; total: number }> {
+    async list(options: ListOptions = {}): Promise<{ records: T[]; total: number }> {
       const query = new URLSearchParams();
       if (options.limit !== undefined) query.set("limit", String(options.limit));
       if (options.offset !== undefined) query.set("offset", String(options.offset));
       return request(url + (query.size ? "?" + query.toString() : ""));
     },
-    async get(id: string): Promise<DbRecord> {
+    async get(id: string): Promise<T> {
       return request(url + "/" + encodeURIComponent(id));
     },
-    async create(data: Record<string, unknown>): Promise<DbRecord> {
+    async create(data: object): Promise<T> {
       return request(url, { method: "POST", body: JSON.stringify({ data }) });
     },
-    async update(id: string, data: Record<string, unknown>): Promise<DbRecord> {
+    async update(id: string, data: object): Promise<T> {
       return request(url + "/" + encodeURIComponent(id), {
         method: "PATCH",
         body: JSON.stringify({ data }),
@@ -767,12 +980,26 @@ function readLayoutMetadata(
  * page. Vite mounts the existing `src/app/page.tsx` directly and uses a fraction
  * of the memory required by `next dev` in the small E2B VM.
  */
+function ensureGeneratedAuthClient(dir: string): void {
+  const authClientPath = path.join(dir, "src/lib/auth.ts");
+  const current = fs.existsSync(authClientPath)
+    ? fs.readFileSync(authClientPath, "utf8")
+    : null;
+  if (current === null || current.includes(GENERATED_AUTH_CLIENT_MARKER)) {
+    write(dir, "src/lib/auth.ts", GENERATED_AUTH_CLIENT_SOURCE);
+  }
+}
+
 function ensureViteRuntime(dir: string, projectId: string): void {
   const pkgPath = path.join(dir, "package.json");
   const dbClientPath = path.join(dir, "src/lib/db.ts");
   const currentDbClient = fs.existsSync(dbClientPath)
     ? fs.readFileSync(dbClientPath, "utf-8")
     : null;
+  const migrateManagedGeneratedDbClient = Boolean(
+    currentDbClient?.includes(GENERATED_DB_CLIENT_MARKER) &&
+    currentDbClient !== GENERATED_DB_CLIENT_SOURCE
+  );
   const legacyReferences = workspaceLegacyDatabaseReferences(dir, dbClientPath);
   if (
     currentDbClient === LEGACY_GENERATED_DB_CLIENT_SOURCE &&
@@ -863,9 +1090,14 @@ export default {
 
   if (!fs.existsSync(dbClientPath)) {
     write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
-  } else if (migrateLegacyDbClient) {
+  } else if (
+    migrateLegacyDbClient ||
+    migrateManagedGeneratedDbClient
+  ) {
     write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
   }
+  write(dir, "src/lib/auth-bridge.ts", GENERATED_AUTH_BRIDGE_SOURCE);
+  ensureGeneratedAuthClient(dir);
 
   const runtimeIndex = `<!doctype html>
 <html lang="en">
@@ -896,15 +1128,19 @@ export default {
   writeIfMissing(
     dir,
     "vite.config.ts",
-    `import path from "node:path";
+    `import { existsSync as __bigbagLucideExistsSync } from "node:fs";
+import __bigbagLucidePath from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
+${VITE_LUCIDE_PLUGIN_SOURCE}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [directLucideImports(), react()],
   build: { minify: false },
   server: { allowedHosts: [".e2b.app"], hmr: false },
   resolve: {
@@ -956,6 +1192,32 @@ export default defineConfig({
       );
     }
   }
+  updatedViteConfig = updatedViteConfig.replace(
+    /^\s*["']lucide-react["']:\s*path\.resolve\([^\n]+lucide-react\.js["']\),?\s*$/m,
+    ""
+  );
+  let hasLucidePluginDefinition = /function\s+directLucideImports\s*\(\s*\)/.test(updatedViteConfig);
+  if (!hasLucidePluginDefinition) {
+    updatedViteConfig = updatedViteConfig.replace(
+      /export default defineConfig/,
+      `${VITE_LUCIDE_PLUGIN_SOURCE}\n\nexport default defineConfig`
+    );
+    hasLucidePluginDefinition = /function\s+directLucideImports\s*\(\s*\)/.test(updatedViteConfig);
+  }
+  if (hasLucidePluginDefinition) {
+    if (!/import\s*\{[^}]*\bexistsSync\s+as\s+__bigbagLucideExistsSync\b[^}]*}\s*from\s*["']node:fs["']/.test(updatedViteConfig)) {
+      updatedViteConfig = `import { existsSync as __bigbagLucideExistsSync } from "node:fs";\n${updatedViteConfig}`;
+    }
+    if (!/import\s+__bigbagLucidePath\s+from\s*["']node:path["']/.test(updatedViteConfig)) {
+      updatedViteConfig = `import __bigbagLucidePath from "node:path";\n${updatedViteConfig}`;
+    }
+  }
+  if (hasLucidePluginDefinition && !/plugins:\s*\[[^\]]*\bdirectLucideImports\(\)/.test(updatedViteConfig)) {
+    updatedViteConfig = updatedViteConfig.replace(
+      /plugins:\s*\[react\(\)\]/,
+      "plugins: [directLucideImports(), react()]"
+    );
+  }
   const templateServerConfig = 'server: { allowedHosts: [".e2b.app"] },';
   if (updatedViteConfig.includes(templateServerConfig)) {
     updatedViteConfig = updatedViteConfig.replace(
@@ -965,8 +1227,8 @@ export default defineConfig({
   }
   if (!/\bbuild\s*:/.test(updatedViteConfig)) {
     updatedViteConfig = updatedViteConfig.replace(
-      /plugins:\s*\[react\(\)\],/,
-      'plugins: [react()],\n  build: { minify: false },'
+      /(plugins:\s*\[(?:directLucideImports\(\),\s*)?react\(\)\],)/,
+      '$1\n  build: { minify: false },'
     );
   }
   if (updatedViteConfig !== currentViteConfig) {
@@ -1097,6 +1359,14 @@ export function cn(...inputs: ClassValue[]) {
     "src/lib/db.ts",
     GENERATED_DB_CLIENT_SOURCE
   );
+
+  write(
+    dir,
+    "src/lib/auth-bridge.ts",
+    GENERATED_AUTH_BRIDGE_SOURCE
+  );
+
+  ensureGeneratedAuthClient(dir);
 
   write(
     dir,

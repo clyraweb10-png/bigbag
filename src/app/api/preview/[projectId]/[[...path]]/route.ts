@@ -17,9 +17,17 @@ import { durableProjectStore } from "@/lib/local-orchestrator/durable-project-st
 import { localSandboxManager } from "@/lib/local-orchestrator/sandbox-manager";
 import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
+import { getSupabaseAdminClient, getSupabaseAnonKey, getSupabaseClient, getSupabaseUrl } from "@/lib/supabase";
 import {
+    createPreviewGuestCapability,
     createPreviewWriteCapability,
+    consumePreviewGuestMutationBudget,
+    openPreviewAuthStorage,
+    PREVIEW_GUEST_COOKIE,
+    resolvePreviewGuest,
+    sealPreviewAuthStorage,
     tenantContextForIdentity,
+    verifyPreviewGuestCapability,
     verifyPreviewWriteCapability,
 } from "@/lib/local-orchestrator/tenant-context";
 
@@ -106,12 +114,14 @@ function previewBootPage(): NextResponse {
 
 const APP_DATA_PATH = "__bigbag";
 const APP_DATA_MAX_BODY_BYTES = 64 * 1024;
+const PREVIEW_GUEST_PROJECT_RECORD_LIMIT = 500;
+const PREVIEW_AUTH_STORAGE_COOKIE = "bigbag_preview_auth";
 
 function appDataHeaders(): HeadersInit {
     return {
         "access-control-allow-origin": "*",
         "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
-        "access-control-allow-headers": "content-type, x-bigbag-capability",
+        "access-control-allow-headers": "content-type, authorization, x-bigbag-capability, x-bigbag-guest",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
     };
@@ -122,6 +132,92 @@ function appDataJson(
     status = 200
 ): NextResponse {
     return NextResponse.json(body, { status, headers: appDataHeaders() });
+}
+
+function previewAuthStorageHeaders(request: NextRequest): HeadersInit {
+    const origin = request.headers.get("origin");
+    return {
+        "access-control-allow-origin": origin === "null" || origin === request.nextUrl.origin ? origin : "null",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+        "access-control-allow-headers": "content-type, x-bigbag-guest",
+        "cache-control": "no-store",
+        "vary": "origin",
+        "x-content-type-options": "nosniff",
+    };
+}
+
+async function servePreviewAuthStorage(request: NextRequest, projectId: string): Promise<NextResponse> {
+    const headers = previewAuthStorageHeaders(request);
+    if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers });
+    const guestId = verifyPreviewGuestCapability(request.headers.get("x-bigbag-guest"), projectId);
+    if (!guestId) return NextResponse.json({ error: "Preview session authorization required" }, { status: 401, headers });
+    const key = request.nextUrl.searchParams.get("key")?.trim() || "";
+    if (!key || key.length > 256) return NextResponse.json({ error: "Invalid storage key" }, { status: 400, headers });
+
+    if (request.method === "GET") {
+        const value = openPreviewAuthStorage(
+            request.cookies.get(PREVIEW_AUTH_STORAGE_COOKIE)?.value,
+            projectId,
+            guestId,
+            key
+        );
+        return NextResponse.json({ value }, { headers });
+    }
+    if (request.method === "DELETE") {
+        const response = NextResponse.json({ ok: true }, { headers });
+        const storedValue = openPreviewAuthStorage(
+            request.cookies.get(PREVIEW_AUTH_STORAGE_COOKIE)?.value,
+            projectId,
+            guestId,
+            key
+        );
+        if (storedValue === null) return response;
+        response.cookies.set(PREVIEW_AUTH_STORAGE_COOKIE, "", {
+            httpOnly: true,
+            sameSite: "none",
+            secure: true,
+            path: `/api/preview/${encodeURIComponent(projectId)}`,
+            maxAge: 0,
+        });
+        return response;
+    }
+    if (request.method === "POST") {
+        const raw = await request.text();
+        if (Buffer.byteLength(raw, "utf8") > 16_000) {
+            return NextResponse.json({ error: "Session value is too large" }, { status: 413, headers });
+        }
+        let value: unknown;
+        try {
+            value = (JSON.parse(raw || "{}") as { value?: unknown }).value;
+        } catch {
+            return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers });
+        }
+        if (typeof value !== "string") {
+            return NextResponse.json({ error: "Session value must be a string" }, { status: 400, headers });
+        }
+        let sealed: string;
+        try {
+            sealed = sealPreviewAuthStorage(projectId, guestId, key, value);
+        } catch {
+            return NextResponse.json({ error: "Session value is invalid" }, { status: 400, headers });
+        }
+        if (sealed.length > 3_800) {
+            return NextResponse.json({ error: "Session value exceeds secure cookie capacity" }, { status: 413, headers });
+        }
+        const response = NextResponse.json({ ok: true }, { headers });
+        response.cookies.set(PREVIEW_AUTH_STORAGE_COOKIE, sealed, {
+            httpOnly: true,
+            // The preview document intentionally has an opaque origin, so this
+            // same-host fetch is a third-party context from the browser's view.
+            sameSite: "none",
+            secure: true,
+            path: `/api/preview/${encodeURIComponent(projectId)}`,
+            maxAge: 60 * 60 * 24 * 30,
+        });
+        return response;
+    }
+    return NextResponse.json({ error: "Method not allowed" }, { status: 405, headers });
 }
 
 async function readAppDataBody(request: NextRequest): Promise<Record<string, unknown>> {
@@ -138,9 +234,10 @@ async function readAppDataBody(request: NextRequest): Promise<Record<string, unk
 }
 
 /**
- * Project-scoped CRUD used by generated apps in authenticated owner previews.
- * A project-wide capability is not a substitute for end-user identity: public
- * viewers cannot read private records or acquire this capability from HTML.
+ * Project-scoped CRUD used by generated apps. Auth-required projects accept
+ * only a verified end-user bearer token. Public projects may use signed,
+ * owner-scoped guest access, bounded by a project-wide mutation rate and a
+ * durable project record quota so rotating guest identities cannot evade it.
  */
 async function serveAppData(
     request: NextRequest,
@@ -154,17 +251,61 @@ async function serveAppData(
     }
 
     try {
-        const tenantId = verifyPreviewWriteCapability(
-            request.headers.get("x-bigbag-capability"),
-            projectId
-        );
-        if (!tenantId) return appDataJson({ ok: false, error: "Project data authorization required" }, 401);
-        if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
-            return appDataJson({ ok: false, error: "Project not found" }, 404);
+        const authorization = request.headers.get("authorization") || "";
+        const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+        let ownerId: string | undefined;
+        let hasAuthenticatedUser = false;
+        let isGuestAccess = false;
+        let projectRecord = localProjectStore.getRecord(projectId);
+        if (bearer) {
+            const supabase = getSupabaseAdminClient() || getSupabaseClient();
+            if (!supabase) return appDataJson({ ok: false, error: "Authentication is not configured" }, 503);
+            const { data, error } = await supabase.auth.getUser(bearer);
+            if (error || !data.user) return appDataJson({ ok: false, error: "A valid user session is required" }, 401);
+            ownerId = data.user.id;
+            hasAuthenticatedUser = true;
+            projectRecord ||= await durableProjectStore.loadRecordByProjectId(projectId);
+            if (!projectRecord) return appDataJson({ ok: false, error: "Project not found" }, 404);
+        } else {
+            const tenantId = verifyPreviewWriteCapability(
+                request.headers.get("x-bigbag-capability"),
+                projectId
+            );
+            if (tenantId) {
+                if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
+                    return appDataJson({ ok: false, error: "Project not found" }, 404);
+                }
+                projectRecord = localProjectStore.getRecord(projectId);
+            } else {
+                const guestId = verifyPreviewGuestCapability(
+                    request.headers.get("x-bigbag-guest"),
+                    projectId
+                );
+                if (!guestId) return appDataJson({ ok: false, error: "Project data authorization required" }, 401);
+                projectRecord ||= await durableProjectStore.loadRecordByProjectId(projectId);
+                if (!projectRecord) return appDataJson({ ok: false, error: "Project not found" }, 404);
+                ownerId = `guest:${guestId}`;
+                isGuestAccess = true;
+            }
+        }
+        if (projectRecord?.requiresEndUserAuth && !hasAuthenticatedUser) {
+            return appDataJson({ ok: false, error: "A signed-in user session is required" }, 401);
+        }
+        if (isGuestAccess && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
+            if (!consumePreviewGuestMutationBudget(projectId)) {
+                return appDataJson({ ok: false, error: "Guest write rate limit exceeded" }, 429);
+            }
+            if (request.method === "POST" && !recordId) {
+                const totalRecords = (await durableProjectStore.listAppCollections(projectId))
+                    .reduce((total, entry) => total + entry.count, 0);
+                if (totalRecords >= PREVIEW_GUEST_PROJECT_RECORD_LIMIT) {
+                    return appDataJson({ ok: false, error: "Guest project record quota exceeded" }, 429);
+                }
+            }
         }
         if (request.method === "GET") {
             if (recordId) {
-                const record = await durableProjectStore.getAppRecord(projectId, collection, recordId);
+                const record = await durableProjectStore.getAppRecord(projectId, collection, recordId, ownerId);
                 return record
                     ? appDataJson({ ok: true, data: record })
                     : appDataJson({ ok: false, error: "Record not found" }, 404);
@@ -177,14 +318,15 @@ async function serveAppData(
             const offset = Number.isInteger(requestedOffset)
                 ? Math.max(0, requestedOffset)
                 : 0;
-            const data = await durableProjectStore.listAppRecords(projectId, collection, { limit, offset });
+            const data = await durableProjectStore.listAppRecords(projectId, collection, { limit, offset, ownerId });
             return appDataJson({ ok: true, data });
         }
         if (request.method === "POST" && !recordId) {
             const data = await durableProjectStore.createAppRecord(
                 projectId,
                 collection,
-                await readAppDataBody(request)
+                await readAppDataBody(request),
+                ownerId
             );
             return appDataJson({ ok: true, data }, 201);
         }
@@ -193,14 +335,15 @@ async function serveAppData(
                 projectId,
                 collection,
                 recordId,
-                await readAppDataBody(request)
+                await readAppDataBody(request),
+                ownerId
             );
             return data
                 ? appDataJson({ ok: true, data })
                 : appDataJson({ ok: false, error: "Record not found" }, 404);
         }
         if (request.method === "DELETE" && recordId) {
-            const deleted = await durableProjectStore.deleteAppRecord(projectId, collection, recordId);
+            const deleted = await durableProjectStore.deleteAppRecord(projectId, collection, recordId, ownerId);
             return deleted
                 ? appDataJson({ ok: true, data: { deleted: true } })
                 : appDataJson({ ok: false, error: "Record not found" }, 404);
@@ -213,6 +356,13 @@ async function serveAppData(
         console.error("[preview-data] Request failed", error);
         return appDataJson({ ok: false, error: "Database request failed" }, 500);
     }
+}
+
+function serveAppAuthConfig(): NextResponse {
+    const url = getSupabaseUrl();
+    const anonKey = getSupabaseAnonKey();
+    if (!url || !anonKey) return appDataJson({ ok: false, error: "Authentication is not configured" }, 503);
+    return appDataJson({ ok: true, data: { url, anonKey } });
 }
 
 const STATIC_CONTENT_TYPES: Record<string, string> = {
@@ -236,7 +386,8 @@ async function servePersistentDeployment(
     request: NextRequest,
     projectId: string,
     segments: string[],
-    writeCapability?: string
+    writeCapability?: string,
+    guestCapability?: string
 ): Promise<NextResponse> {
     const requestedPath = segments.length > 0 ? segments.join("/") : "index.html";
     let file = await durableProjectStore.readDeploymentFile(projectId, requestedPath);
@@ -283,7 +434,7 @@ async function servePersistentDeployment(
     if (isHtml) {
         const html = Buffer.from(file.content).toString("utf8");
         return new NextResponse(
-            injectWriteCapability(injectAgent(rewriteHtml(html, base), base), writeCapability),
+            injectWriteCapability(injectAgent(rewriteHtml(html, base), base), writeCapability, guestCapability),
             { status: 200, headers }
         );
     }
@@ -301,7 +452,8 @@ async function proxyLocalDevelopment(
     projectId: string,
     segments: string[],
     origin: string,
-    writeCapability?: string
+    writeCapability?: string,
+    guestCapability?: string
 ): Promise<NextResponse> {
     const target = new URL(origin);
     target.pathname = `/${segments.join("/")}`;
@@ -374,7 +526,8 @@ async function proxyLocalDevelopment(
         return new NextResponse(
             injectWriteCapability(
                 injectAgent(rewriteHtml(new TextDecoder().decode(bytes), base), base),
-                writeCapability
+                writeCapability,
+                guestCapability
             ),
             { status: upstream.status, headers }
         );
@@ -388,9 +541,9 @@ async function proxyLocalDevelopment(
     return new NextResponse(bytes, { status: upstream.status, headers });
 }
 
-function injectWriteCapability(html: string, capability?: string): string {
-    if (!capability) return html;
-    const script = `<script>window.__BIGBAG_WRITE_CAPABILITY__=${JSON.stringify(capability)};</script>`;
+function injectWriteCapability(html: string, capability?: string, guestCapability?: string): string {
+    if (!capability && !guestCapability) return html;
+    const script = `<script>${capability ? `window.__BIGBAG_WRITE_CAPABILITY__=${JSON.stringify(capability)};` : ""}${guestCapability ? `window.__BIGBAG_GUEST_CAPABILITY__=${JSON.stringify(guestCapability)};` : ""}</script>`;
     return /<head(?:\s[^>]*)?>/i.test(html)
         ? html.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}${script}`)
         : `${script}${html}`;
@@ -595,6 +748,10 @@ async function handle(
             (request.headers.get("accept")?.includes("text/html") &&
                 !targetSegments.at(-1)?.includes("."))
         );
+        const guestContext = documentRequest ? resolvePreviewGuest(request) : null;
+        const guestCapability = guestContext
+            ? createPreviewGuestCapability(projectId, guestContext.guestId)
+            : undefined;
         if (ownerSession && (trustedEditor || documentRequest)) {
             const ownerTenant = tenantContextForIdentity(ownerSession.sub);
             if (await localProjectStore.hydrateProject(projectId, ownerTenant.tenantId)) {
@@ -604,6 +761,14 @@ async function handle(
             }
         }
         if (targetSegments[0] === APP_DATA_PATH) {
+            if (targetSegments[1] === "auth" && targetSegments[2] === "storage" && targetSegments.length === 3) {
+                return servePreviewAuthStorage(request, projectId);
+            }
+            if (targetSegments[1] === "auth" && targetSegments[2] === "config" && targetSegments.length === 3) {
+                return request.method === "GET"
+                    ? serveAppAuthConfig()
+                    : appDataJson({ ok: false, error: "Method not allowed" }, 405);
+            }
             return serveAppData(request, projectId, targetSegments);
         }
         const localRecord = localProjectStore.getRecord(projectId);
@@ -614,10 +779,19 @@ async function handle(
             (!usesDisposableE2b && localRecord?.serverStatus === "Active"
                 ? `http://127.0.0.1:${localRecord.port}`
                 : null);
-        if (runningOrigin) {
-            return proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability);
+        const response = runningOrigin
+            ? await proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability, guestCapability)
+            : await servePersistentDeployment(request, projectId, targetSegments, writeCapability, guestCapability);
+        if (guestContext?.cookieValue) {
+            response.cookies.set(PREVIEW_GUEST_COOKIE, guestContext.cookieValue, {
+                httpOnly: true,
+                sameSite: "lax",
+                secure: process.env.NODE_ENV === "production",
+                path: `/api/preview/${encodeURIComponent(projectId)}`,
+                maxAge: 60 * 60 * 24 * 365,
+            });
         }
-        return servePersistentDeployment(request, projectId, targetSegments, writeCapability);
+        return response;
     }
 
     const resolved = await resolvePreviewOrigin(projectId, auth?.ctx);

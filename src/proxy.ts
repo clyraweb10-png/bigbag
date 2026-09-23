@@ -12,7 +12,7 @@ const appOrigin = appUrl ? new URL(appUrl).origin : "";
 const extraAllowedOrigins = new Set(
   (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean)
 );
-const CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Requested-With, X-BigBag-Capability";
+const CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Requested-With, X-BigBag-Capability, X-BigBag-Guest";
 
 /**
  * Check if an origin is allowed for CORS.
@@ -40,9 +40,15 @@ function addCorsHeaders(response: NextResponse, request: NextRequest) {
 
   // Always enable CORS for sandboxed preview iframe assets
   if (request.nextUrl.pathname.startsWith("/api/preview/")) {
-    response.headers.set("Access-Control-Allow-Origin", origin === "null" ? "*" : (origin || "*"));
+    // Sandboxed iframes have an opaque `null` origin. Echo it exactly when
+    // credentials are in use: browsers reject the wildcard + credentials pair.
+    response.headers.set("Access-Control-Allow-Origin", origin || "*");
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
     response.headers.set("Access-Control-Allow-Headers", CORS_ALLOWED_HEADERS);
+    if (origin) {
+      response.headers.set("Access-Control-Allow-Credentials", "true");
+      response.headers.set("Vary", "Origin");
+    }
     response.headers.set("Access-Control-Max-Age", "86400");
     return response;
   }

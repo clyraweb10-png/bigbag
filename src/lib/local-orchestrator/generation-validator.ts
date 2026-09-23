@@ -109,6 +109,8 @@ export function isRuntimeOwnedGeneratedPath(value: string, content?: string): bo
   // The platform injects a browser-safe, project-scoped database client here.
   // Model replacements can bypass capability routing or invent dependencies.
   if (/^src\/lib\/db\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  if (/^src\/lib\/auth\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  if (/^src\/lib\/auth-bridge\.[cm]?[jt]sx?$/.test(normalized)) return true;
   if (/^src\/(?:main|index)\.[cm]?[jt]sx?$/.test(normalized) && content?.includes("@bigbag-runtime-entry")) {
     return true;
   }
@@ -288,6 +290,137 @@ function visualQualityIssues(filePath: string, content: string): string[] {
   return issues;
 }
 
+function resolvesLocalRuntimeModule(filePath: string, specifier: string, target: "auth" | "db"): boolean {
+  if (specifier === `@/lib/${target}`) return true;
+  if (!specifier.startsWith(".")) return false;
+  const resolved = normalizeGeneratedPath(path.posix.join(path.posix.dirname(filePath), specifier))
+    .replace(/\.(?:[cm]?[jt]sx?)$/, "")
+    .replace(/\/index$/, "");
+  return resolved === `src/lib/${target}` || resolved === `lib/${target}`;
+}
+
+function hasInMemoryAuthenticationMap(filePath: string, content: string): boolean {
+  const sourceFile = sourceFileFor(filePath, content);
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isNewExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      node.initializer.expression.text === "Map"
+    ) {
+      const purpose = `${node.name.getText(sourceFile)} ${node.initializer.typeArguments?.map((entry) => entry.getText(sourceFile)).join(" ") || ""}`;
+      if (/\b(?:users?|profiles?|accounts?|credentials?|sessions?|passwords?|identities|auth)\b/i.test(purpose)) found = true;
+    }
+    if (!found) ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function projectDatabaseHandlesCredentials(content: string): boolean {
+  return (
+    /\.(?:create|update)\s*\([\s\S]{0,400}\b(?:password(?:Hash|_hash)?|accessToken|refreshToken|sessionToken|credential)\b/i.test(content) ||
+    (/\.(?:list|get)\s*\(/.test(content) && /\b(?:passwordHash|password_hash|accessToken|refreshToken|sessionToken)\b/.test(content))
+  );
+}
+
+function usesBrowserStorageAsAuthAuthority(content: string): boolean {
+  return /\b(?:localStorage|sessionStorage)\s*(?:\.\s*(?:getItem|setItem|removeItem)\s*\(\s*["'`][^"'`]*(?:auth|session|access[_-]?token|refresh[_-]?token|bearer|jwt)[^"'`]*["'`]|\[\s*["'`][^"'`]*(?:auth|session|token|bearer|jwt)[^"'`]*["'`]\s*])/i.test(content);
+}
+
+function generatedSecurityIssues(filePath: string, content: string): string[] {
+  if (!/\.(?:tsx?|jsx?)$/.test(filePath)) return [];
+
+  const issues: string[] = [];
+  const usesProjectDatabase = importSpecifiers(filePath, content)
+    .some((specifier) => resolvesLocalRuntimeModule(filePath, specifier, "db"));
+  const handlesPasswords = /\bpasswords?\b/i.test(content);
+  const implementsClientPasswordAuth =
+    /\bpassword_?hash\b|\bhashPassword\b/i.test(content) ||
+    (/crypto\.subtle\.digest\s*\(/.test(content) && handlesPasswords) ||
+    /\b(?:password|candidate)\s*(?:===|!==|==|!=)\s*(?:\w+\.)?(?:password|passwordHash|password_hash)\b/i.test(content);
+  if (implementsClientPasswordAuth) {
+    issues.push(`${filePath} implements password hashing or comparison in browser code; use a real server-verified authentication provider`);
+  }
+
+  if (usesProjectDatabase && projectDatabaseHandlesCredentials(content)) {
+    issues.push(`${filePath} uses the project CRUD datastore as an authentication system; it is not an end-user identity or authorization boundary`);
+  }
+
+  if (
+    /\b(?:signIn|signUp|login)\b/.test(content) &&
+    hasInMemoryAuthenticationMap(filePath, content) &&
+    !importsAuthentication(filePath, content) &&
+    !/\b(?:fetch|axios)\s*\(/.test(content)
+  ) {
+    issues.push(`${filePath} implements in-memory demo authentication without a real provider or server boundary`);
+  }
+
+  if (
+    /\b(?:local\s+demo|demo\s+(?:identity|account|role)|switch\s+identity|acting\s+as)\b/i.test(content) &&
+    /\b(?:identity|authentication|authorization|ownership|role|account)\b/i.test(content) &&
+    /\b(?:client[- ]side|onSelect|setIdentity|setRole|useState)\b/i.test(content) &&
+    !/\b(?:fetch|axios)\s*\(|@supabase\/supabase-js|@auth0\/|firebase\/auth/.test(content)
+  ) {
+    issues.push(`${filePath} uses a local demo identity or role switcher as an authorization boundary; use real server-verified authentication and ownership`);
+  }
+
+  if (
+    usesBrowserStorageAsAuthAuthority(content)
+  ) {
+    issues.push(`${filePath} uses browser storage as an authentication authority; sessions must be verified by a supported server-side authentication boundary`);
+  }
+
+  if (/\b(?:VITE_|NEXT_PUBLIC_)?(?:SUPABASE_SERVICE_ROLE_KEY|STRIPE_SECRET_KEY|AWS_SECRET_ACCESS_KEY)\b/.test(content)) {
+    issues.push(`${filePath} references a server-only secret from generated browser source`);
+  }
+
+  return issues;
+}
+
+function generatedAuthContractIssues(filePath: string, content: string): string[] {
+  if (!/\.(?:tsx?|jsx?)$/.test(filePath) || !/\bauth\.(?:getSession|signIn|signUp)\s*\(/.test(content)) return [];
+
+  const issues: string[] = [];
+  const sourceFile = sourceFileFor(filePath, content);
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      ts.isAwaitExpression(node.initializer) &&
+      ts.isCallExpression(node.initializer.expression) &&
+      ts.isPropertyAccessExpression(node.initializer.expression.expression)
+    ) {
+      const receiver = node.initializer.expression.expression.expression;
+      const method = node.initializer.expression.expression.name.text;
+      if (ts.isIdentifier(receiver) && receiver.text === "auth") {
+        if (method === "getSession") {
+          issues.push(
+            `${filePath} destructures auth.getSession(); the BigBag auth client returns Session | null directly, so assign the return value without a data wrapper`
+          );
+        }
+        if (
+          (method === "signIn" || method === "signUp") &&
+          node.name.elements.some((element) => {
+            const property = element.propertyName || element.name;
+            return (ts.isIdentifier(property) || ts.isStringLiteralLike(property)) && property.text === "error";
+          })
+        ) {
+          issues.push(
+            `${filePath} destructures error from auth.${method}(); BigBag auth methods throw provider errors, so use try/catch and read the returned { user, session } data`
+          );
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return issues;
+}
+
 const UNSUPPORTED_DIRECT_DATABASE_METHODS = new Set([
   "list", "get", "create", "update", "remove", "putMany", "query", "insert", "delete",
 ]);
@@ -396,6 +529,19 @@ function importSpecifiers(filePath: string, content: string): string[] {
   return [...specifiers];
 }
 
+function importsAuthentication(filePath: string, content: string): boolean {
+  return importSpecifiers(filePath, content).some((specifier) => {
+    if (
+      specifier === "@/lib/auth" ||
+      specifier === "@supabase/supabase-js" ||
+      specifier === "firebase/auth" ||
+      specifier === "@auth0/auth0-react" ||
+      specifier.startsWith("@auth0/")
+    ) return true;
+    return resolvesLocalRuntimeModule(filePath, specifier, "auth");
+  });
+}
+
 function hasDefaultExport(filePath: string, content: string): boolean {
   const sourceFile = sourceFileFor(filePath, content);
   return sourceFile.statements.some((statement) => {
@@ -450,6 +596,12 @@ export function generationValidationIssues(
     requireEntrypoint?: boolean;
     requireEntrypointFirst?: boolean;
     existingEnvironmentExample?: string;
+    /** Seed/demo records are allowed only when the user's initial request explicitly asks for them. */
+    allowSeedData?: boolean;
+    /** Generated auth UI is allowed only when the user's request needs accounts or protected data. */
+    allowAuthentication?: boolean;
+    /** Existing source is security-scanned so a narrow edit cannot preserve a critical violation. */
+    existingSources?: GeneratedSourceFile[];
   } = {}
 ): string[] {
   const issues: string[] = [];
@@ -479,6 +631,18 @@ export function generationValidationIssues(
     if (!file.content.trim()) issues.push(`empty generated file: ${file.path}`);
     if (isRuntimeOwnedGeneratedPath(file.path, file.content)) issues.push(`runtime-owned file must not be generated: ${file.path}`);
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
+    if (
+      options.allowSeedData !== true &&
+      /(?:^|\/)(?:seed|seeds|fixtures?)(?:\.(?:[cm]?[jt]sx?|json)|\/)/i.test(file.path)
+    ) {
+      issues.push(`${file.path} adds seed or fixture data without an explicit user request for demo/seed data`);
+    }
+    if (
+      options.allowAuthentication === false &&
+      importsAuthentication(file.path, file.content)
+    ) {
+      issues.push(`${file.path} adds authentication even though the user did not request accounts or protected data`);
+    }
     if (/\b__BIGBAG_DB__\b/.test(file.content)) {
       issues.push(`${file.path} references unsupported runtime global __BIGBAG_DB__; use the browser-safe @/lib/db client`);
     }
@@ -487,6 +651,8 @@ export function generationValidationIssues(
     const structuredIssue = structuredFileIssue(file.path, file.content);
     if (structuredIssue) issues.push(structuredIssue);
     issues.push(...visualQualityIssues(file.path, file.content));
+    issues.push(...generatedSecurityIssues(file.path, file.content));
+    issues.push(...generatedAuthContractIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
       if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);
@@ -494,6 +660,12 @@ export function generationValidationIssues(
         issues.push(`${file.path} invents a database method; use db.collection(name).list/get/create/update/remove`);
       }
     }
+  }
+
+  for (const existing of options.existingSources || []) {
+    const existingPath = normalizeGeneratedPath(existing.path);
+    if (generatedPaths.has(existingPath)) continue;
+    issues.push(...generatedSecurityIssues(existingPath, existing.content));
   }
 
   const existingNormalized = new Set(existingPathList);
