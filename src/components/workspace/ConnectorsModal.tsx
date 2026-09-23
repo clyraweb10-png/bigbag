@@ -42,17 +42,6 @@ interface Connector {
 
 const LS_KEY = (id: string) => `bigbag:connector:${id}`;
 
-function loadCreds(id: string): Record<string, string> | null {
-  try {
-    const raw = localStorage.getItem(LS_KEY(id));
-    return raw ? (JSON.parse(raw) as Record<string, string>) : null;
-  } catch { return null; }
-}
-
-function saveCreds(id: string, creds: Record<string, string>) {
-  localStorage.setItem(LS_KEY(id), JSON.stringify(creds));
-}
-
 function removeCreds(id: string) {
   localStorage.removeItem(LS_KEY(id));
 }
@@ -398,13 +387,13 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
   const [selected, setSelected] = useState<Connector | null>(null);
   const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set());
 
-  // Load connected state from localStorage
+  // Older builds stored connector secrets in browser storage and reported a
+  // successful connection without contacting the provider. Purge that unsafe
+  // legacy state as soon as this always-mounted landing-page component starts,
+  // even when the modal is never opened.
   useEffect(() => {
-    if (!open) return;
-    const ids = new Set<string>();
-    CONNECTORS.forEach((c) => { if (loadCreds(c.id)) ids.add(c.id); });
-    setConnectedIds(ids);
-  }, [open]);
+    CONNECTORS.forEach((connector) => removeCreds(connector.id));
+  }, []);
 
   const filtered = useMemo(() => {
     let list = CONNECTORS;
@@ -487,10 +476,11 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
               <div className="px-2">
                 <p className="text-xs text-muted-foreground mb-1.5">Missing a connector?</p>
                 <button
-                  onClick={() => toast.info("Request submitted! We'll add it soon.")}
-                  className="w-full text-xs text-center border border-white/15 rounded-lg py-1.5 text-foreground/80 hover:bg-white/5 transition-colors"
+                  disabled
+                  title="Connector request intake is not implemented"
+                  className="w-full cursor-not-allowed text-xs text-center border border-white/10 rounded-lg py-1.5 text-muted-foreground/60"
                 >
-                  Request
+                  Request unavailable
                 </button>
               </div>
             </div>
@@ -514,7 +504,7 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
                 <div>
                   <DialogTitle className="text-sm font-semibold text-foreground">Connectors</DialogTitle>
                   <DialogDescription className="text-[11px] text-muted-foreground mt-0.5">
-                    Connect tools and data sources to power your app.
+                    Review planned integrations. Unimplemented connectors remain unavailable.
                   </DialogDescription>
                 </div>
                 <button onClick={handleClose} className="h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors">
@@ -555,7 +545,7 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
               </div>
 
               <div className="border-t border-white/8 px-5 py-2.5 shrink-0">
-                <p className="text-[10px] text-muted-foreground text-center">Credentials are stored locally in your browser. Never sent to any third party.</p>
+                <p className="text-[10px] text-muted-foreground text-center">Credentials are not collected until a server-side provider verification flow is implemented.</p>
               </div>
             </>
           )}
@@ -616,12 +606,8 @@ interface CredPanelProps {
 }
 
 function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, onDisconnected }: CredPanelProps) {
-  const [form, setForm] = useState<Record<string, string>>(() => {
-    const saved = loadCreds(connector.id);
-    return saved ?? {};
-  });
+  const [form, setForm] = useState<Record<string, string>>({});
   const [showFields, setShowFields] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validate = () => {
@@ -637,19 +623,9 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
   const handleSave = async () => {
     const errs = validate();
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    setSaving(true);
-    // Simulate a brief "saving" state for UX
-    await new Promise((r) => setTimeout(r, 400));
-    const creds: Record<string, string> = {};
-    for (const f of connector.fields) {
-      if (form[f.key]?.trim()) creds[f.key] = form[f.key].trim();
-    }
-    saveCreds(connector.id, creds);
-    setSaving(false);
-    toast.success(`${connector.name} connected successfully`, {
-      description: "Credentials saved locally. Reference them in your project via the agent.",
+    toast.error(`${connector.name} is not available`, {
+      description: "A server-side connection and real provider verification flow has not been implemented.",
     });
-    onConnected(connector.id);
   };
 
   const handleDisconnect = () => {
@@ -658,7 +634,7 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
     onDisconnected(connector.id);
   };
 
-  const savedCreds = connected ? loadCreds(connector.id) : null;
+  const savedCreds: Record<string, string> | null = null;
 
   return (
     <>
@@ -689,6 +665,10 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
           {connector.docsHint}
         </div>
 
+        <div role="status" className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2.5">
+          Not implemented: BigBag cannot mark this connector connected until credentials are stored server-side and a real provider operation succeeds.
+        </div>
+
         {/* Credential fields */}
         <div className="space-y-3">
           {connector.fields.map((f) => {
@@ -706,6 +686,7 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
                     <>
                       <input
                         type={shown ? "text" : "password"}
+                        disabled
                         value={form[f.key] ?? ""}
                         onChange={(e) => { setForm((p) => ({ ...p, [f.key]: e.target.value })); setErrors((p) => { const n = { ...p }; delete n[f.key]; return n; }); }}
                         placeholder={savedVal ? maskValue(savedVal) : f.placeholder}
@@ -713,6 +694,7 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
                       />
                       <button
                         type="button"
+                        disabled
                         onClick={() => setShowFields((p) => ({ ...p, [f.key]: !p[f.key] }))}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                       >
@@ -722,6 +704,7 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
                   ) : (
                     <input
                       type="text"
+                      disabled
                       value={form[f.key] ?? ""}
                       onChange={(e) => { setForm((p) => ({ ...p, [f.key]: e.target.value })); setErrors((p) => { const n = { ...p }; delete n[f.key]; return n; }); }}
                       placeholder={savedVal ?? f.placeholder}
@@ -763,8 +746,8 @@ function CredentialsPanel({ connector, connected, onBack, onClose, onConnected, 
               <Unlink className="w-3 h-3" /> Disconnect
             </button>
           )}
-          <Button size="sm" onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground hover:bg-primary/90 min-w-[100px]">
-            {saving ? "Saving…" : connected ? "Update" : "Connect"}
+          <Button size="sm" onClick={handleSave} disabled className="bg-primary text-primary-foreground hover:bg-primary/90 min-w-[100px]">
+            Unavailable
           </Button>
         </div>
       </div>

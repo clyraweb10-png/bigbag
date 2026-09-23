@@ -48,7 +48,8 @@ const {
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { generatedSourcesRequireEndUserAuth, hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, localAgentEngine, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { extractDeletionsFromMarkdown, generatedSourcesRequireEndUserAuth, hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, localAgentEngine, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { withE2BBuildSlot } = require("../src/lib/local-orchestrator/e2b-sandbox-manager") as typeof import("../src/lib/local-orchestrator/e2b-sandbox-manager");
 const {
   GENERATED_AUTH_BRIDGE_SOURCE,
   GENERATED_AUTH_CLIENT_SOURCE,
@@ -58,7 +59,7 @@ const {
   legacyStarterPageSource,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
-const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
+const { generationValidationIssues, validationRepairContext } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { GENERATED_RUNTIME_CHECK_SCRIPT } = require("../src/lib/local-orchestrator/runtime-validator") as typeof import("../src/lib/local-orchestrator/runtime-validator");
 const { buildPexelsSearchPlan, resolvePexelsImagery } = require("../src/lib/local-orchestrator/pexels-imagery") as typeof import("../src/lib/local-orchestrator/pexels-imagery");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
@@ -288,6 +289,22 @@ test("a cancelled generation rejects late worker events but keeps ordinary chat 
   }
 });
 
+test("qualification retries can enumerate every preserved project attempt", () => {
+  const base = `attempt-history-${randomUUID().slice(0, 8)}`;
+  const tenantId = randomUUID();
+  const first = localProjectStore.create({ tenantId, projectId: base, description: "First attempt" });
+  const second = localProjectStore.create({ tenantId, projectId: base, description: "Retest" });
+  try {
+    assert.deepEqual(
+      localProjectStore.findRecordsByProjectIdPrefix(base).map((record) => record.projectId),
+      [first.projectId, second.projectId]
+    );
+  } finally {
+    localProjectStore.remove(first.projectId);
+    localProjectStore.remove(second.projectId);
+  }
+});
+
 test("Stop aborts the active provider request and remains terminal", async () => {
   const originalComplete = multiModelRouter.complete;
   const originalGetProviders = multiModelRouter.getProviders;
@@ -489,11 +506,94 @@ test("generated Tailwind CSS cannot break previews with unsupported apply utilit
 
 test("only proven source compilation failures can trigger model-based repair", () => {
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: unexpected token")), true);
+  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: [deadline_exceeded] the operation timed out because it exceeded timeoutMs")), false);
   assert.equal(isBuildResourceFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
-  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
+  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), false);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
+  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code E404\nnpm ERR! 404 '@cairn/sdk@latest' is not in this registry.")), true);
+  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code ETARGET\nnpm ERR! No matching version found for package@99.")), true);
   assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
   assert.equal(isSourceBuildFailure(new Error("Project persistence is temporarily unavailable")), false);
+});
+
+test("E2B production builds are serialized and queued cancellation is prompt", async () => {
+  const order: string[] = [];
+  let releaseFirst = () => undefined;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const first = withE2BBuildSlot(undefined, async () => {
+    order.push("first-start");
+    await firstGate;
+    order.push("first-end");
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = withE2BBuildSlot(undefined, async () => { order.push("second"); });
+  const cancelled = new AbortController();
+  const third = withE2BBuildSlot(cancelled.signal, async () => { order.push("third"); });
+  cancelled.abort(new Error("queued build cancelled"));
+  await assert.rejects(third, /queued build cancelled/);
+  assert.deepEqual(order, ["first-start"]);
+  releaseFirst();
+  await Promise.all([first, second]);
+  assert.deepEqual(order, ["first-start", "first-end", "second"]);
+});
+
+test("E2B build concurrency is configurable without exceeding its capacity", async () => {
+  const previousConcurrency = process.env.E2B_BUILD_CONCURRENCY;
+  process.env.E2B_BUILD_CONCURRENCY = "2";
+  const order: string[] = [];
+  let releaseFirst = () => undefined;
+  let releaseSecond = () => undefined;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
+  try {
+    const first = withE2BBuildSlot(undefined, async () => { order.push("first"); await firstGate; });
+    const second = withE2BBuildSlot(undefined, async () => { order.push("second"); await secondGate; });
+    const third = withE2BBuildSlot(undefined, async () => { order.push("third"); });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, ["first", "second"]);
+    releaseFirst();
+    await first;
+    await third;
+    assert.deepEqual(order, ["first", "second", "third"]);
+    releaseSecond();
+    await second;
+  } finally {
+    if (previousConcurrency === undefined) delete process.env.E2B_BUILD_CONCURRENCY;
+    else process.env.E2B_BUILD_CONCURRENCY = previousConcurrency;
+    releaseFirst();
+    releaseSecond();
+  }
+});
+
+test("generation validation rejects prose-only component files before E2B", () => {
+  const issues = generationValidationIssues([
+    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
+    { path: "src/components/ui/button.tsx", content: `"No custom button is needed"\n(none)` },
+  ]);
+  assert.ok(issues.some((issue) => issue.includes("non-code content in src/components/ui/button.tsx")));
+});
+
+test("generation validation rejects chart dependencies that exceed E2B capacity", () => {
+  const issues = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `import { LineChart } from "recharts"; export default function App(){ return <LineChart width={320} height={180} data={[]} />; }`,
+  }]);
+  assert.ok(issues.some((issue) => issue.includes("recharts") && issue.includes("sandbox capacity")));
+  assert.equal(generationValidationIssues([{
+    path: "src/App.tsx",
+    content: `export default function App(){ return <svg role="img" aria-label="Trend"><path d="M0 20 L20 5" /></svg>; }`,
+  }]).some((issue) => issue.includes("sandbox capacity")), false);
+});
+
+test("static repair context prioritizes the file named by validation", () => {
+  const context = validationRepairContext([
+    { path: "src/App.tsx", content: "A".repeat(120) },
+    { path: "src/components/Broken.tsx", content: "const broken = <main>repair me</main>;" },
+  ], ["syntax error in src/components/Broken.tsx: '}' expected"], 110);
+
+  assert.match(context, /^### File: src\/components\/Broken\.tsx/);
+  assert.match(context, /repair me/);
+  assert.ok(context.indexOf("src/components/Broken.tsx") < context.indexOf("src/App.tsx"));
 });
 
 test("runtime-owned model output is discarded without poisoning a valid page", () => {
@@ -530,6 +630,25 @@ test("runtime-owned model output is discarded without poisoning a valid page", (
   }], ["src/lib/db.ts"]), []);
 });
 
+test("generated auth subscriptions normalize an unused provider event to the session-first contract", () => {
+  const files = [{
+    path: "src/App.tsx",
+    content: "export default function App() { auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)); return <main />; }",
+  }];
+  postProcessGeneratedFiles(files);
+  assert.match(files[0].content, /auth\.onAuthStateChange\(\(nextSession\) => setSession\(nextSession\)\)/);
+  assert.doesNotMatch(files[0].content, /_event/);
+});
+
+test("generated auth normalization does not rewrite a raw Supabase client callback", () => {
+  const files = [{
+    path: "src/App.tsx",
+    content: "export default function App() { supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)); return <main />; }",
+  }];
+  postProcessGeneratedFiles(files);
+  assert.match(files[0].content, /supabase\.auth\.onAuthStateChange\(\(_event, nextSession\) => setSession\(nextSession\)\)/);
+});
+
 test("fresh runtime scaffolding is not misclassified as a follow-up project", () => {
   assert.equal(hasRealGeneratedSource([
     { path: "index.html", content: '<div id="root"></div>' },
@@ -547,6 +666,10 @@ test("fresh runtime scaffolding is not misclassified as a follow-up project", ()
 });
 
 test("generation retries keep only the latest file or deletion action per path", () => {
+  assert.deepEqual(
+    extractDeletionsFromMarkdown("### Delete: src/lib/db.ts\n### Delete: src/lib/auth.ts\n### Delete: src/components/Legacy.tsx"),
+    ["src/components/Legacy.tsx"]
+  );
   const firstRetry = mergeGeneratedActions(
     [
       { path: "src/App.tsx", content: "old app" },
@@ -1453,6 +1576,7 @@ test("token-limited model output continues, merges safely, and keeps provider id
     );
     assert.equal(result.text, "<section>continuation-boundary-complete</section>");
     assert.equal(result.publicModelName, "AI");
+    assert.deepEqual(result.failureCategories, []);
     assert.equal(requestCount, 2);
     assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
     assert.ok(statuses.some((status) => status.includes("Continuing generation")));
@@ -1672,6 +1796,7 @@ test("plain-text overloads retry and repeated continuations cannot produce false
     );
     assert.equal(result.text, "recovered without false success");
     assert.equal(requestCount, 4);
+    assert.deepEqual(result.failureCategories, ["provider_unavailable", "output_limit"]);
   } finally {
     global.fetch = previousFetch;
     if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
@@ -1695,6 +1820,8 @@ test("generated apps use a browser-safe durable data client", async () => {
   assert.match(GENERATED_AUTH_CLIENT_SOURCE, /__bigbag\/auth\/storage/);
   assert.match(GENERATED_AUTH_CLIENT_SOURCE, /storage: previewAuthStorage/);
   assert.match(GENERATED_AUTH_CLIENT_SOURCE, /bigbag-preview-/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /key === previewSessionKey/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /window\.sessionStorage\.setItem/);
   assert.doesNotMatch(GENERATED_AUTH_CLIENT_SOURCE, /service.role|SERVICE_ROLE|passwordHash/);
   assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /@libsql|node:|process\.env|process\.cwd|from ["'](?:fs|path)["']/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /\/api\/preview\/runtime-validation\//);

@@ -184,6 +184,12 @@ export const localProjectStore = {
     return projects[projectId] || null;
   },
 
+  findRecordsByProjectIdPrefix(projectIdPrefix: string): LocalProjectRecord[] {
+    return Object.values(readProjects())
+      .filter((record) => record.projectId === projectIdPrefix || record.projectId.startsWith(`${projectIdPrefix}-`))
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  },
+
   create(body: { projectId: string; description: string; label?: string; tenantId: string }): VcaasProject {
     const projects = readProjects();
     let id = body.projectId.toLowerCase().replace(/[^a-z0-9-]/g, "-");

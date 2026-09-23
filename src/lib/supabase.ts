@@ -9,14 +9,21 @@ let runtimeSupabaseUrl: string | null = null;
 let runtimeSupabaseAnonKey: string | null = null;
 
 export function configureRuntimeSupabase(url?: string | null, anonKey?: string | null): void {
+  const previousUrl = getSupabaseUrl();
+  const previousAnonKey = getSupabaseAnonKey();
   if (url && typeof url === "string") {
     runtimeSupabaseUrl = url.trim();
   }
   if (anonKey && typeof anonKey === "string") {
     runtimeSupabaseAnonKey = anonKey.trim();
   }
-  if (url || anonKey) {
-    // Reset publicClient so it reinitializes with updated credentials
+  if (
+    publicClient &&
+    (getSupabaseUrl() !== previousUrl || getSupabaseAnonKey() !== previousAnonKey)
+  ) {
+    // Only replace a live auth client when its effective credentials changed.
+    // Recreating it for the same runtime config duplicates GoTrue listeners and
+    // storage locks during the AuthProvider bootstrap.
     publicClient = null;
   }
 }
