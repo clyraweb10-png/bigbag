@@ -103,8 +103,8 @@ function usePreviewUrl(item: AttachmentItem): string | null {
     React.useEffect(() => {
         setReady(null);
 
-        const mime = type || file?.type || guessMime(name);
-        if (!isPreviewableImage({ name, type: mime })) return;
+        const mime = type || file?.type || guessMime(name) || guessMime(url || "");
+        if (!isPreviewableImage({ name, type: mime }) && !(mime === "image/svg+xml" && !file)) return;
 
         const source = file ? URL.createObjectURL(file) : url;
         if (!source) return;
@@ -240,7 +240,8 @@ export function AttachmentPreviews({
  * Just enough to answer "is this an image the browser can render".
  */
 function guessMime(name: string): string {
-    const extension = (name.split(".").pop() || "").toLowerCase();
+    const extension = (name.split(/[?#]/, 1)[0].split(".").pop() || "").toLowerCase();
+    if (extension === "svg") return "image/svg+xml";
     if (["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp"].includes(extension)) return `image/${extension === "jpg" ? "jpeg" : extension}`;
     return "";
 }

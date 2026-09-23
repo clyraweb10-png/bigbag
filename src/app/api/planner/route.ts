@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callPlanner } from "@/lib/local-orchestrator/planner-client";
+import { callPlanner, streamChatResponse } from "@/lib/local-orchestrator/planner-client";
 import { plannerPromptForIntent } from "@/lib/local-orchestrator/planner-prompts";
 import { ONBOARDING_PROMPT } from "@/lib/local-orchestrator/planner-prompts";
 import { normalizePlannerText, parsePlannerOutput } from "@/lib/local-orchestrator/planner-output";
@@ -24,6 +24,7 @@ export interface PlannerRequestBody {
   /** Trimmed conversation history — up to last 10 messages for context. */
   history?: Array<{ role: "user" | "assistant"; content: string }>;
   context?: ProjectContext;
+  stream?: boolean;
 }
 
 export interface PlannerResponseData {
@@ -35,7 +36,7 @@ export interface PlannerResponseData {
   onboarding?: OnboardingAnalysis;
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<Response> {
   if (!verifyAuthSession(req.cookies.get(AUTH_COOKIE)?.value)) {
     return NextResponse.json({ ok: false, error: "Sign in with Google to continue" }, { status: 401 });
   }
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ].join("\n\n"),
     }];
     try {
-      let result = await callPlanner(ONBOARDING_PROMPT, messages, { groqMaxTokens: 600 });
+      let result = await callPlanner(ONBOARDING_PROMPT, messages, { onlyGlm53: true });
       let durationMs = result.durationMs;
       let analysis = parseOnboardingOutput(result.text, context, { allowAnsweredQuestion: true });
       if (
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             content: `${answeredKind} is already answered in the structured context. Return corrected JSON that preserves every known fact and either asks one genuinely missing question or returns nextQuestion as null.`,
           }
         );
-        result = await callPlanner(ONBOARDING_PROMPT, messages, { groqMaxTokens: 600 });
+        result = await callPlanner(ONBOARDING_PROMPT, messages, { onlyGlm53: true });
         durationMs += result.durationMs;
         analysis = parseOnboardingOutput(result.text, analysis.context);
       }
@@ -117,8 +118,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     { role: "user", content: message },
   ];
 
+  if (plannerIntent === "chat" && body.stream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: unknown) => {
+          if (!req.signal.aborted) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        };
+        try {
+          for await (const event of streamChatResponse(systemPrompt, messages, message, req.signal)) {
+            send(event);
+          }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Chat request failed";
+          send({ type: "error", category: "provider_error", message: reason });
+        } finally {
+          if (!req.signal.aborted) controller.close();
+        }
+      },
+    });
+    return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } });
+  }
+
   try {
-    const result = await callPlanner(systemPrompt, messages);
+    const result = await callPlanner(systemPrompt, messages, { onlyGlm53: true });
     const plannerOutput = parsePlannerOutput(result.text);
     const response: { ok: true; data: PlannerResponseData } = {
       ok: true,

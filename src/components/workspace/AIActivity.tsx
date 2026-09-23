@@ -29,6 +29,7 @@ export interface AIActivityProps {
   /** True while the agent run is in progress. Controls the header icon and the
    * collapsed/expanded default state. */
   isBuilding: boolean;
+  outcome?: "success" | "failed" | "cancelled";
   /** Optional CSS class for the outer wrapper. */
   className?: string;
 }
@@ -59,7 +60,7 @@ function StepIcon({ status }: { status: ActivityStep["status"] }) {
  * // Used by ChatPanel for the planning phase (Groq/GLM)
  * <AIActivity steps={planningSteps} isBuilding={isPlannerRunning} />
  */
-export function AIActivity({ steps, isBuilding, className }: AIActivityProps) {
+export function AIActivity({ steps, isBuilding, outcome = "success", className }: AIActivityProps) {
   const [isOpen, setIsOpen] = useState(true);
 
   const completedCount = steps.filter((s) => s.status === "completed").length;
@@ -100,11 +101,13 @@ export function AIActivity({ steps, isBuilding, className }: AIActivityProps) {
         <div className="flex items-center gap-2">
           {isBuilding ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+          ) : outcome !== "success" ? (
+            <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
           ) : (
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
           )}
           <Zap className="w-3 h-3 text-yellow-500" />
-          <span className="font-semibold">Build progress</span>
+          <span className="font-semibold">{outcome === "cancelled" ? "Build stopped" : outcome === "failed" ? "Build failed" : "Build progress"}</span>
 
           {/* Collapsed summary */}
           {!isOpen && !isBuilding && summaryText ? (
@@ -192,7 +195,8 @@ export function AIActivity({ steps, isBuilding, className }: AIActivityProps) {
 export function activityStepsFromBuildMsgs(
   buildMsgs: Array<{ message: string; createdAt?: string; generationEvent?: GenerationEvent }>,
   isComplete: boolean,
-  startTime?: string
+  startTime?: string,
+  terminalType?: GenerationEvent["type"]
 ): ActivityStep[] {
   // Provider retries, output continuations, and failover are one generation phase,
   // not separate user tasks. Keep only the latest privacy-safe status so the UI
@@ -203,30 +207,39 @@ export function activityStepsFromBuildMsgs(
   buildMsgs.forEach((msg, index) => {
     if (isModelProgress(msg.message)) latestModelProgress = index;
   });
-  const visibleMessages = buildMsgs.filter(
-    (msg, index) => !isModelProgress(msg.message) || index === latestModelProgress
+  const visibleMessages = buildMsgs.filter((msg, index) =>
+    (!isModelProgress(msg.message) || index === latestModelProgress) &&
+    !["crawl_asset_received", "asset_fetched", "file_created", "file_updated", "visual_analysis_completed"].includes(msg.generationEvent?.type || "")
   );
-  const eventTypes = new Set(buildMsgs.flatMap((message) => message.generationEvent?.type || []));
+  const terminalFailure = isComplete && (["generation_failed", "generation_cancelled"].includes(terminalType || "") || buildMsgs.some((message) =>
+    ["generation_failed", "generation_cancelled"].includes(message.generationEvent?.type || "")
+  ));
   const completionForStartedEvent: Partial<Record<GenerationEvent["type"], GenerationEvent["type"][]>> = {
     crawl_started: ["crawl_completed"],
     visual_analysis_started: ["visual_analysis_completed", "visual_analysis_failed"],
-    file_generation_started: ["file_created", "file_updated", "generation_completed", "generation_failed"],
-    build_started: ["build_completed", "generation_failed"],
-    validation_started: ["validation_completed", "generation_failed"],
-    preview_started: ["preview_ready", "preview_failed", "generation_failed"],
+    file_generation_started: ["file_created", "file_updated"],
+    build_started: ["build_completed"],
+    validation_started: ["validation_completed"],
+    preview_started: ["preview_ready", "preview_failed"],
   };
 
   return visibleMessages.map((msg, i) => {
     const originalIndex = buildMsgs.indexOf(msg);
     const event = msg.generationEvent;
     const completionEvents = event ? completionForStartedEvent[event.type] : undefined;
-    const hasRealCompletion = completionEvents?.some((type) => eventTypes.has(type)) || false;
+    const subsequentEvents = buildMsgs.slice(originalIndex + 1).map((message) => message.generationEvent);
+    const hasRealCompletion = completionEvents?.some((type) => subsequentEvents.some((later) =>
+      later?.type === type && (!event?.generationId || later.generationId === event.generationId)
+    )) || false;
     const status: ActivityStep["status"] = event?.status === "failed"
       ? "failed"
-      : event?.status === "completed" || hasRealCompletion
+      : event?.status === "completed" || hasRealCompletion || (isComplete && !terminalFailure && event?.status === "started")
         ? "completed"
+        : isComplete && event?.status === "started"
+          ? "failed"
         : event?.status === "started"
           ? "running"
+          : terminalFailure ? "pending"
           : isComplete || i < visibleMessages.length - 1
             ? "completed"
             : "running";

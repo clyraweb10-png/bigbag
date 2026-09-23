@@ -27,7 +27,7 @@ const testDatabase = new PgClient({
 });
 
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
-const { persistentPreviewUrl } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
+const { persistentPreviewUrl, localProjectStore } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
 const { extractFirecrawlImageUrls, extractWebsiteUrl } = require("../src/lib/local-orchestrator/firecrawl-design") as typeof import("../src/lib/local-orchestrator/firecrawl-design");
 const { parseReferenceDesignSpecification, runReferenceAnalysis } = require("../src/lib/local-orchestrator/reference-analysis") as typeof import("../src/lib/local-orchestrator/reference-analysis");
 const { approvedBuildInstruction, classifyIntent } = require("../src/lib/local-orchestrator/intent-router") as typeof import("../src/lib/local-orchestrator/intent-router");
@@ -45,7 +45,7 @@ const {
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { hasRealGeneratedSource, isSourceBuildFailure, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
@@ -217,6 +217,9 @@ test("intent routing keeps conversation separate from planning and code edits", 
   assert.equal(classifyIntent("Hi, build me a responsive CRM app", "idle"), "plan");
   assert.equal(classifyIntent("Can you build me a responsive CRM app?", "idle"), "plan");
   assert.equal(classifyIntent("How can I build a responsive CRM app?", "idle"), "chat");
+  assert.equal(classifyIntent("Could you explain how to create a private database for each user? I am asking for an explanation, not asking you to create or edit a project.", "idle"), "chat");
+  assert.equal(classifyIntent("Could you explain how I can fix the header?", "active"), "chat");
+  assert.equal(classifyIntent("Can you fix the header overlap?", "active"), "direct_edit");
   assert.equal(classifyIntent("proceed", "idle"), "chat");
   assert.equal(classifyIntent("portfolio website", "idle"), "plan");
   assert.equal(classifyIntent("recreate https://example.com", "idle"), "plan");
@@ -230,6 +233,9 @@ test("intent routing keeps conversation separate from planning and code edits", 
   assert.equal(classifyIntent("hello", "active"), "chat");
   assert.equal(classifyIntent("I like the direction", "active"), "chat");
   assert.equal(classifyIntent("change the navbar color", "active"), "direct_edit");
+  assert.equal(classifyIntent("Adjust the TeamForge dashboard heading to a larger bold size and use a darker background behind it. Preserve all existing behavior.", "active"), "direct_edit");
+  assert.equal(classifyIntent("Could you please explain how to adjust the dashboard heading?", "active"), "chat");
+  assert.equal(classifyIntent("Can I adjust the dashboard heading myself?", "active"), "chat");
   assert.equal(classifyIntent("the header should be blue", "active"), "direct_edit");
   assert.equal(classifyIntent("I don't like the navbar", "active"), "direct_edit");
   assert.equal(classifyIntent("how can I change the navbar?", "active"), "chat");
@@ -248,6 +254,33 @@ test("intent routing keeps conversation separate from planning and code edits", 
     { author: "agent", message: "I can help with that." },
     { author: "user", message: "Make it work offline too" },
   ], "proceed"), "Build a calm travel planner\n\nMake it work offline too");
+});
+
+test("a cancelled generation rejects late worker events but keeps ordinary chat persistent", () => {
+  const created = localProjectStore.create({
+    tenantId: randomUUID(), projectId: `cancel-chat-${randomUUID().slice(0, 8)}`, description: "Cancellation regression",
+  });
+  const id = created.projectId;
+  const at = new Date().toISOString();
+  const cancelled = {
+    author: "agent" as const, message: "Generation stopped", messageType: "finished" as const,
+    createdAt: at, generationEvent: { type: "generation_cancelled" as const, status: "cancelled" as const },
+  };
+  try {
+    localProjectStore.update(id, { status: "done", cancellationRequestedAt: at, conversation: [cancelled] });
+    const late = {
+      author: "agent" as const, message: "Preview ready", messageType: "building" as const,
+      createdAt: at, generationEvent: { type: "preview_ready" as const, status: "completed" as const },
+    };
+    localProjectStore.update(id, { status: "done", conversation: [cancelled, late], previewUrl: "/should-not-exist" });
+    assert.equal(localProjectStore.getRecord(id)?.conversation.length, 1);
+    assert.equal(localProjectStore.getRecord(id)?.previewUrl, undefined);
+    const chat = { author: "user" as const, message: "What is Supabase?", messageType: "regular" as const, createdAt: at };
+    localProjectStore.update(id, { conversation: [cancelled, chat] });
+    assert.equal(localProjectStore.getRecord(id)?.conversation.at(-1)?.message, chat.message);
+  } finally {
+    localProjectStore.remove(id);
+  }
 });
 
 test("planner output keeps generated suggestions separate from visible chat", () => {
@@ -389,6 +422,8 @@ test("generated Tailwind CSS cannot break previews with unsupported apply utilit
 
 test("only proven source compilation failures can trigger model-based repair", () => {
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: unexpected token")), true);
+  assert.equal(isBuildResourceFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
+  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), false);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
   assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
   assert.equal(isSourceBuildFailure(new Error("Project persistence is temporarily unavailable")), false);
@@ -1136,9 +1171,9 @@ test("provider exhaustion and failover statuses keep provider identity private",
       }
     );
     assert.deepEqual(statuses, [
-      "Building your project…",
+      "Generating the implementation…",
       "Continuing generation…",
-      "Building your project…",
+      "Generating the implementation…",
     ]);
   } finally {
     global.fetch = previousFetch;

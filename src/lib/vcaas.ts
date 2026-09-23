@@ -424,9 +424,10 @@ export const vcaasApi = {
     /** Persist local planner chat so a refresh does not lose an approved plan. */
     appendConversation: (
       projectId: string,
-      messages: Array<Pick<ConversationMessage, "author" | "message" | "messageType" | "createdAt">>
+      messages: Array<Pick<ConversationMessage, "author" | "message" | "messageType" | "createdAt">>,
+      projectContext?: VcaasProject["projectContext"]
     ): Promise<VcaasResponse<{ saved: number }>> =>
-      proxy.post<{ saved: number }>(`${project(projectId)}/agent/conversation`, { messages }),
+      proxy.post<{ saved: number }>(`${project(projectId)}/agent/conversation`, { messages, projectContext }),
 
     /** POST …/agent/start — kick off an agent run with a prompt and optional files. */
     start: (

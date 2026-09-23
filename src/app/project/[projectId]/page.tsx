@@ -49,6 +49,7 @@ import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEd
 import { VisualChangesBar } from "@/components/workspace/visual-editor/VisualChangesBar";
 import { t as translate } from "@/i18n";
 import { approvedBuildInstruction, classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
+import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 // Pick the correct development preview URL following the Totalum API docs:
@@ -326,6 +327,9 @@ export default function WorkspacePage() {
 
   const [project, setProject] = useState<VcaasProject | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [stopping, setStopping] = useState(false);
+  const plannerAbortRef = useRef<AbortController | null>(null);
+  const savedChatReplyRetryRef = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState("preview");
   const [prompt, setPrompt] = useState("");
   /**
@@ -429,7 +433,10 @@ export default function WorkspacePage() {
   /** Model-authored next prompts for the current planning conversation. */
   const [plannerSuggestions, setPlannerSuggestions] = useState<string[]>([]);
 
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; plannerAbortRef.current?.abort(); };
+  }, []);
   useEffect(() => { setPlannerSuggestions([]); }, [projectId]);
 
 
@@ -514,6 +521,10 @@ export default function WorkspacePage() {
   ): Promise<void> {
     if (!mountedRef.current) return;
     setPlannerRunning(true);
+    const abortController = new AbortController();
+    let streamedPlaceholderAt: string | null = null;
+    let savedUserMessage = intent === "chat" && savedChatReplyRetryRef.current === userMessage;
+    plannerAbortRef.current = abortController;
     setPlannerSuggestions([]);
 
     // Build a short history from the last 10 messages for context.
@@ -526,12 +537,35 @@ export default function WorkspacePage() {
       }));
 
     try {
+      if (intent === "chat" && !savedUserMessage) {
+        const persistedUser = await vcaasApi.agent.appendConversation(projectId, [{
+          author: "user", message: userMessage, messageType: "regular", createdAt: new Date().toISOString(),
+        }]);
+        if (!persistedUser.ok) throw new Error(persistedUser.error || "Could not save the chat message");
+        savedUserMessage = true;
+        savedChatReplyRetryRef.current = userMessage;
+      }
       const res = await fetch("/api/planner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent, message: userMessage, history }),
+        body: JSON.stringify({ intent, message: userMessage, history, stream: intent === "chat" }),
+        signal: abortController.signal,
       });
       if (!mountedRef.current) return;
+      if (intent === "chat") {
+        const createdAt = new Date().toISOString();
+        streamedPlaceholderAt = createdAt;
+        setMessages((prev) => [...prev, { author: "agent", message: "", messageType: "regular", createdAt }]);
+        const result = await readPlannerStream(res, (text) => setMessages((prev) => [
+          ...prev.slice(0, -1), { author: "agent", message: text, messageType: "regular", createdAt },
+        ]));
+        const saved = await vcaasApi.agent.appendConversation(projectId, [{
+          author: "agent", message: result.text, messageType: "regular", createdAt,
+        }]);
+        if (!saved.ok) throw new Error(saved.error || "Could not save the assistant reply");
+        savedChatReplyRetryRef.current = null;
+        return;
+      }
       const data = await res.json() as { ok: boolean; data?: { text: string; suggestions?: string[] }; error?: string };
 
       if (data.ok && data.data?.text) {
@@ -562,11 +596,20 @@ export default function WorkspacePage() {
       }
     } catch (err) {
       if (!mountedRef.current) return;
-      toast.error("Planner request failed — check your connection.");
-      setMessages((prev) => prev.slice(0, -1));
+      if (intent === "chat") {
+        setMessages((prev) => prev.at(-1)?.author === "agent" && prev.at(-1)?.createdAt === streamedPlaceholderAt
+          ? prev.slice(0, -1) : prev);
+        if (abortController.signal.aborted) {
+          toast.info("Chat response stopped");
+          return;
+        }
+      }
+      toast.error(savedUserMessage ? "Reply failed; your message was saved. Send it again to retry the reply." : "Planner request failed — check your connection.");
+      if (intent !== "chat") setMessages((prev) => prev.slice(0, -1));
       setPrompt(userMessage);
       console.error("[planner] fetch error:", err);
     } finally {
+      if (plannerAbortRef.current === abortController) plannerAbortRef.current = null;
       if (mountedRef.current) setPlannerRunning(false);
     }
   }
@@ -767,10 +810,12 @@ export default function WorkspacePage() {
         sendingRef.current = true;
         const hasFiles = !!files && files.length > 0;
         if (hasFiles) sentFilesRef.current.push({ message: visiblePrompt, files: files! });
-        setMessages((prev) => [...prev, {
-          author: "user", message: visiblePrompt, messageType: "regular",
-          createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined,
-        }]);
+        if (savedChatReplyRetryRef.current !== text) {
+          setMessages((prev) => [...prev, {
+            author: "user", message: visiblePrompt, messageType: "regular",
+            createdAt: new Date().toISOString(), inputFiles: hasFiles ? files : undefined,
+          }]);
+        }
         setPrompt("");
         // For "plan" intents, advance stage to "planning" while the request is in flight.
         if (intent === "plan") setStage("planning");
@@ -809,6 +854,9 @@ export default function WorkspacePage() {
     if (res.ok) {
       failedBuildRetryRef.current = null;
       setProject((prev) => prev ? { ...prev, agentProcessStatus: "init" } : prev);
+      // The first /generate request was persisted before navigation. Replace the
+      // optimistic bubble with the authoritative history so it appears once.
+      await fetchConversation();
       pendingRunRef.current = true; runWaitPollsRef.current = 0;
       // A new run: the previous run's estimate must not show while the first poll is out.
       setRunStartedAt(null); setExpectedMinutes(null);
@@ -1324,7 +1372,26 @@ export default function WorkspacePage() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [visual.phase, projectId, visualFinishRebuild, visualFailRebuild]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleStopAgent = async () => { await vcaasApi.agent.stop(projectId); toast.info("Stop signal sent"); };
+  const handleStopAgent = async () => {
+    if (stopping) return;
+    if (plannerRunning) {
+      plannerAbortRef.current?.abort();
+      return;
+    }
+    setStopping(true);
+    try {
+      const result = await vcaasApi.agent.stop(projectId);
+      if (!result.ok) {
+        toast.error(result.error || "Generation could not be stopped");
+        return;
+      }
+      stopAgentPolling();
+      await Promise.all([fetchProject(), fetchConversation()]);
+      toast.success("Generation stopped");
+    } finally {
+      setStopping(false);
+    }
+  };
   // Autofill the chat prompt with an edit instruction for the given file, then focus the chat.
   const handleAskAiEdit = useCallback((path: string) => {
     setPrompt(`On file ${path} write what you want to edit`);
@@ -1666,7 +1733,7 @@ export default function WorkspacePage() {
         <div className="flex-1 flex overflow-hidden">
           <div className={`flex flex-col shrink-0 transition-all ${chatCollapsed ? "w-0 overflow-hidden" : ""}`} style={chatCollapsed ? {} : { width: chatWidth, background: cardBg }}>
             <ChatPanel
-              messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets}
+              messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} stopping={stopping} sending={sending} projectId={projectId} projectSecrets={project?.secrets}
               runStartedAt={runStartedAt} expectedMinutes={expectedMinutes}
               {...composerProps}
               visualEditAvailable
@@ -1799,7 +1866,7 @@ export default function WorkspacePage() {
           {mobileTab === "chat" ? (
             <div className="flex flex-col h-full">
               {/* ⚠️ No pencil here: the visual editor is a desktop surface (see the frame-ref note). */}
-              <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} suggestions={plannerSuggestions} />
+              <ChatPanel messages={messages} isBuilding={isBuilding || plannerRunning} prompt={prompt} setPrompt={setPrompt} onSend={handleSendPrompt} onStop={handleStopAgent} stopping={stopping} sending={sending} projectId={projectId} projectSecrets={project?.secrets} runStartedAt={runStartedAt} expectedMinutes={expectedMinutes} {...composerProps} stage={stage} onSuggestSend={handleSuggestSend} suggestions={plannerSuggestions} />
             </div>
           ) : (
             <div className="h-full overflow-hidden">

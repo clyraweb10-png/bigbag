@@ -43,6 +43,7 @@ interface ChatPanelProps {
    */
   onSend: (files?: { name: string; url: string; imageDescription: string }[], options?: AgentRunOptions) => void;
   onStop: () => void;
+  stopping?: boolean;
   sending: boolean;
   projectId: string;
   projectSecrets?: VcaasSecret[];
@@ -121,7 +122,7 @@ function groupMessages(messages: ConversationMessage[]): MessageGroup[] {
         if (current.author === "user" && buildGroup.length > 0) break;
         buildGroup.push(current);
         if (current.messageType === "starting") startMsg = current;
-        else if (current.messageType === "finished" || current.messageType === "error" || current.messageType === "limit-reached") { finishMsg = current; i++; break; }
+        else if (current.messageType === "finished" || current.messageType === "error" || current.messageType === "limit-reached" || ["generation_completed", "generation_failed", "generation_cancelled"].includes(current.generationEvent?.type || "")) { finishMsg = current; i++; break; }
         else if (current.messageType === "building") buildMsgs.push(current);
         i++;
       }
@@ -505,9 +506,10 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
   });
 
   const activitySteps = activityStepsFromBuildMsgs(
-    timelineMessages,
+    buildMessages,
     isComplete,
-    group.startMsg?.createdAt
+    group.startMsg?.createdAt,
+    group.finishMsg?.generationEvent?.type
   );
 
   return (
@@ -526,14 +528,15 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
         <div className="rounded-xl border border-border bg-card/55 p-3" aria-label="Crawled visual references">
           <p className="mb-2 text-xs font-semibold text-foreground">Crawled visual references</p>
           <AttachmentPreviews
-            items={evidenceFiles.map((file) => ({ name: file.name, url: file.url }))}
+            items={evidenceFiles.map((file) => ({ name: file.name, url: file.url, type: file.mimeType }))}
+            className="max-h-52 overflow-y-auto"
           />
           <p className="mt-2 text-[11px] text-muted-foreground">Assets returned by the submitted reference URL.</p>
         </div>
       )}
 
       {(timelineMessages.length > 0 || !isComplete) && (
-        <AIActivity steps={activitySteps} isBuilding={!isComplete} />
+        <AIActivity steps={activitySteps} isBuilding={!isComplete} outcome={group.finishMsg?.generationEvent?.type === "generation_cancelled" ? "cancelled" : group.finishMsg?.messageType === "error" ? "failed" : "success"} />
       )}
 
       {fileEvents.length > 0 && (
@@ -580,9 +583,9 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
           ) : (
             <div>
               <FormattedText text={group.finishMsg.message} />
-              <div className="flex items-center gap-1.5 mt-3 text-sm text-emerald-600 dark:text-emerald-400">
-                <Check className="w-4 h-4" />
-                <span className="font-medium">{"Completed"}</span>
+              <div className={cn("flex items-center gap-1.5 mt-3 text-sm", group.finishMsg.generationEvent?.type === "generation_cancelled" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}>
+                {group.finishMsg.generationEvent?.type === "generation_cancelled" ? <Square className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                <span className="font-medium">{group.finishMsg.generationEvent?.type === "generation_cancelled" ? "Stopped" : "Completed"}</span>
               </div>
             </div>
           )}
@@ -624,7 +627,7 @@ function BuildGroup({ group, projectId, onTellAi, projectSecrets }: { group: Mes
 
 
 export function ChatPanel({
-  messages, isBuilding, prompt, setPrompt, onSend, onStop, sending, projectId, projectSecrets,
+  messages, isBuilding, prompt, setPrompt, onSend, onStop, stopping = false, sending, projectId, projectSecrets,
   runStartedAt = null, expectedMinutes = null,
   attachedFiles, setAttachedFiles,
   onOpenFigma, figmaConnected = false, onDisconnectFigma,
@@ -923,7 +926,7 @@ export function ChatPanel({
               )}
             </div>
             {isBuilding ? (
-              <button onClick={() => setConfirmingStop(true)} aria-label={t("workspace.chat.stop")} className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors"><Square className="w-3 h-3 text-white" /></button>
+              <button onClick={() => setConfirmingStop(true)} disabled={stopping} aria-label={stopping ? "Stopping..." : t("workspace.chat.stop")} className="w-8 h-8 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center transition-colors disabled:opacity-70">{stopping ? <Loader2 className="w-3 h-3 animate-spin text-white" /> : <Square className="w-3 h-3 text-white" />}</button>
             ) : (
               <button onClick={handleSend} disabled={(!prompt.trim() && attachedFiles.length === 0) || sending}
                 aria-label={t("workspace.chat.send")}

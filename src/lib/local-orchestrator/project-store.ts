@@ -67,6 +67,9 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
   
   return {
     projectId: record.projectId,
+    conversationId: record.conversationId,
+    activeGenerationId: record.activeGenerationId,
+    projectContext: record.projectContext,
     label: record.label || record.projectId,
     description: record.description,
     plan: "Local Developer",
@@ -204,6 +207,7 @@ export const localProjectStore = {
       lastModifiedAt: now,
       port,
       status: "idle",
+      conversationId: randomUUID(),
       serverStatus: "Starting",
       rebuildStatus: "idle",
       conversation: [],
@@ -225,6 +229,24 @@ export const localProjectStore = {
     const projects = readProjects();
     const record = projects[projectId];
     if (!record) return null;
+
+    if (record.cancellationRequestedAt && patch.status !== "init") {
+      const cancelling = patch.conversation?.at(-1)?.generationEvent?.type === "generation_cancelled";
+      // A terminal job must reject its own late stage/file/preview events, but
+      // the same project conversation must remain usable for ordinary chat.
+      const appendOnlyChat = Boolean(patch.conversation &&
+        patch.conversation.length > record.conversation.length &&
+        record.conversation.every((message, index) => {
+          const candidate = patch.conversation?.[index];
+          return candidate?.author === message.author && candidate?.message === message.message &&
+            candidate?.createdAt === message.createdAt && candidate?.generationEvent?.eventId === message.generationEvent?.eventId;
+        }) && patch.conversation.slice(record.conversation.length).every((message) =>
+          message.messageType === "regular" && !message.generationEvent
+        ));
+      if ((patch.conversation && !cancelling && !appendOnlyChat) || (!cancelling && (patch.previewUrl || patch.deployment || patch.serverStatus || patch.status))) {
+        return record;
+      }
+    }
 
     if (patch.conversation) identifyGenerationEvents(patch.conversation);
     Object.assign(record, patch, { lastModifiedAt: new Date().toISOString() });

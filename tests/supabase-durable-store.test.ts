@@ -95,6 +95,14 @@ test("Supabase PostgreSQL: source and deployment snapshots with binary BYTEA int
     assert.ok(deployed);
     assert.equal(Buffer.from(deployed!.content).toString(), "<!DOCTYPE html><html><body>Supabase App</body></html>");
 
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await assert.rejects(() => durableProjectStore.saveDeployment(record, [
+      { path: "index.html", content: Buffer.from("cancelled replacement") },
+    ], cancelled.signal));
+    const preserved = await durableProjectStore.readDeploymentFile(projectId, "index.html");
+    assert.equal(Buffer.from(preserved!.content).toString(), "<!DOCTYPE html><html><body>Supabase App</body></html>");
+
     // Restore source from Supabase
     const restoredCount = await durableProjectStore.restoreSource(projectId, tenantId, restoreWorkspace);
     assert.equal(restoredCount, 2);
