@@ -95,6 +95,7 @@ async function ensureSchema(): Promise<Pool | null> {
             project_id TEXT NOT NULL,
             collection_name TEXT NOT NULL,
             record_id TEXT NOT NULL,
+            owner_id TEXT,
             data_json TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -103,6 +104,9 @@ async function ensureSchema(): Promise<Pool | null> {
           );
           CREATE INDEX IF NOT EXISTS builder_app_records_collection
             ON public.builder_app_records (project_id, collection_name, updated_at DESC);
+          ALTER TABLE public.builder_app_records ADD COLUMN IF NOT EXISTS owner_id TEXT;
+          CREATE INDEX IF NOT EXISTS builder_app_records_owner
+            ON public.builder_app_records (project_id, collection_name, owner_id, updated_at DESC);
         `);
       } finally {
         client.release();
@@ -314,6 +318,18 @@ export const durableProjectStore = {
     return parsed.tenantId === tenantId ? parsed : null;
   },
 
+  async loadRecordByProjectId(projectId: string): Promise<LocalProjectRecord | null> {
+    const pool = await ensureSchema();
+    if (!pool) return null;
+    const res = await pool.query(
+      "SELECT record_json FROM public.builder_projects WHERE project_id = $1 LIMIT 1",
+      [projectId]
+    );
+    return res.rows[0]
+      ? JSON.parse(rowText(res.rows[0].record_json)) as LocalProjectRecord
+      : null;
+  },
+
   async listRecords(tenantId: string): Promise<LocalProjectRecord[]> {
     const pool = await ensureSchema();
     if (!pool) return [];
@@ -466,7 +482,7 @@ export const durableProjectStore = {
   async listAppRecords(
     projectId: string,
     collectionName: string,
-    options: { limit?: number; offset?: number } = {}
+    options: { limit?: number; offset?: number; ownerId?: string } = {}
   ): Promise<{ records: AppRecord[]; total: number }> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
@@ -478,13 +494,15 @@ export const durableProjectStore = {
         `SELECT record_id, data_json, created_at, updated_at
          FROM public.builder_app_records
          WHERE project_id = $1 AND collection_name = $2
+           AND ($5::text IS NULL OR owner_id = $5)
          ORDER BY updated_at DESC LIMIT $3 OFFSET $4`,
-        [projectId, collection, limit, offset]
+        [projectId, collection, limit, offset, options.ownerId || null]
       ),
       pool.query(
         `SELECT COUNT(*) AS record_count FROM public.builder_app_records
-         WHERE project_id = $1 AND collection_name = $2`,
-        [projectId, collection]
+         WHERE project_id = $1 AND collection_name = $2
+           AND ($3::text IS NULL OR owner_id = $3)`,
+        [projectId, collection, options.ownerId || null]
       ),
     ]);
     return {
@@ -507,15 +525,16 @@ export const durableProjectStore = {
     return res.rows.map((row) => appRecordFromRow(row as Record<string, unknown>));
   },
 
-  async getAppRecord(projectId: string, collectionName: string, recordId: string): Promise<AppRecord | null> {
+  async getAppRecord(projectId: string, collectionName: string, recordId: string, ownerId?: string): Promise<AppRecord | null> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
 
     const res = await pool.query(
       `SELECT record_id, data_json, created_at, updated_at
        FROM public.builder_app_records
-       WHERE project_id = $1 AND collection_name = $2 AND record_id = $3 LIMIT 1`,
-      [projectId, collection, recordId]
+       WHERE project_id = $1 AND collection_name = $2 AND record_id = $3
+         AND ($4::text IS NULL OR owner_id = $4) LIMIT 1`,
+      [projectId, collection, recordId, ownerId || null]
     );
     const row = res.rows[0];
     return row ? appRecordFromRow(row as Record<string, unknown>) : null;
@@ -524,7 +543,8 @@ export const durableProjectStore = {
   async createAppRecord(
     projectId: string,
     collectionName: string,
-    value: Record<string, unknown>
+    value: Record<string, unknown>,
+    ownerId?: string
   ): Promise<AppRecord> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
@@ -534,9 +554,9 @@ export const durableProjectStore = {
 
     const res = await pool.query(
       `INSERT INTO public.builder_app_records
-       (project_id, collection_name, record_id, data_json, created_at, updated_at)
-       SELECT project_id, $1, $2, $3, $4, $5 FROM public.builder_projects WHERE project_id = $6`,
-      [collection, recordId, JSON.stringify(data), now, now, projectId]
+       (project_id, collection_name, record_id, owner_id, data_json, created_at, updated_at)
+       SELECT project_id, $1, $2, $3, $4, $5, $6 FROM public.builder_projects WHERE project_id = $7`,
+      [collection, recordId, ownerId || null, JSON.stringify(data), now, now, projectId]
     );
     if ((res.rowCount ?? 0) !== 1) throw new Error("Project not found");
     return { ...data, _id: recordId, createdAt: now, updatedAt: now };
@@ -546,7 +566,8 @@ export const durableProjectStore = {
     projectId: string,
     collectionName: string,
     recordId: string,
-    patch: Record<string, unknown>
+    patch: Record<string, unknown>,
+    ownerId?: string
   ): Promise<AppRecord | null> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
@@ -556,8 +577,9 @@ export const durableProjectStore = {
       const res = await client.query(
         `SELECT record_id, data_json, created_at, updated_at
          FROM public.builder_app_records
-         WHERE project_id = $1 AND collection_name = $2 AND record_id = $3 LIMIT 1`,
-        [projectId, collection, recordId]
+         WHERE project_id = $1 AND collection_name = $2 AND record_id = $3
+           AND ($4::text IS NULL OR owner_id = $4) LIMIT 1`,
+        [projectId, collection, recordId, ownerId || null]
       );
       const row = res.rows[0];
       if (!row) {
@@ -571,8 +593,9 @@ export const durableProjectStore = {
 
       const updateRes = await client.query(
         `UPDATE public.builder_app_records SET data_json = $1, updated_at = $2
-         WHERE project_id = $3 AND collection_name = $4 AND record_id = $5`,
-        [JSON.stringify(data), updatedAt, projectId, collection, recordId]
+         WHERE project_id = $3 AND collection_name = $4 AND record_id = $5
+           AND ($6::text IS NULL OR owner_id = $6)`,
+        [JSON.stringify(data), updatedAt, projectId, collection, recordId, ownerId || null]
       );
 
       if ((updateRes.rowCount ?? 0) !== 1) {
@@ -590,14 +613,15 @@ export const durableProjectStore = {
     }
   },
 
-  async deleteAppRecord(projectId: string, collectionName: string, recordId: string): Promise<boolean> {
+  async deleteAppRecord(projectId: string, collectionName: string, recordId: string, ownerId?: string): Promise<boolean> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
 
     const res = await pool.query(
       `DELETE FROM public.builder_app_records
-       WHERE project_id = $1 AND collection_name = $2 AND record_id = $3`,
-      [projectId, collection, recordId]
+       WHERE project_id = $1 AND collection_name = $2 AND record_id = $3
+         AND ($4::text IS NULL OR owner_id = $4)`,
+      [projectId, collection, recordId, ownerId || null]
     );
     return (res.rowCount ?? 0) > 0;
   },

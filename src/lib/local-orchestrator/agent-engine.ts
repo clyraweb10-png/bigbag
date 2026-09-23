@@ -32,7 +32,7 @@ OUTPUT FORMAT: Return ONLY complete file blocks. Do not return explanations, pla
 - For every initial build, the FIRST file block must be exactly one application entrypoint. Prefer \`src/App.tsx\`. \`src/app/page.tsx\` or \`src/pages/index.tsx\` are also supported when the user explicitly asks for those conventions.
 - The entrypoint must be non-empty, syntactically valid, and have a default export.
 - Never output more than one application entrypoint.
-- The BigBag runtime owns \`index.html\`, \`src/main.tsx\`, \`src/app/layout.tsx\`, \`src/lib/db.ts\`, build configuration, and package metadata. Import the existing database client but never output or replace it. Do not output or import framework-only server modules such as \`next/*\`.
+- The BigBag runtime owns \`index.html\`, \`src/main.tsx\`, \`src/app/layout.tsx\`, \`src/lib/db.ts\`, \`src/lib/auth.ts\`, \`src/lib/auth-bridge.ts\`, build configuration, and package metadata. Import the documented database and authentication clients, but never output or replace runtime-owned files. Do not output or import framework-only server modules such as \`next/*\`.
 - Secondary routes and components come only after the complete entrypoint. If output might be truncated, finish the current file instead of starting another one.
 
 2. File integrity
@@ -53,11 +53,18 @@ To delete an obsolete file, output:
 ### Delete: path/to/file.tsx
 
 4. Full-stack behavior and dependencies
-- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner.
+- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js.
 - Pre-existing UI primitives: @/components/ui/button, @/components/ui/card, and @/lib/utils (cn).
-- For durable database storage, use exactly: \`import db from "@/lib/db"; const items = db.collection("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`.
+- For durable database storage, use exactly: \`import db from "@/lib/db"; const items = db.collection<ItemRecord>("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. Always supply the application's record type as the collection generic; do not cast generic \`DbRecord\` results into domain records.
+- Database records receive server-owned \`_id\`, \`createdAt\`, and \`updatedAt\` fields. The timestamps are ISO strings. Include those fields with those types in record interfaces when used, and never send or redefine them as numeric application fields.
 - When the request needs persisted records, implement real initial loading plus create/update/delete flows through that database client. Show honest loading, empty, and recoverable error states. Do not substitute hardcoded rows for requested persistence.
 - The database client is browser-safe and project-scoped. Never import server-only database libraries, expose credentials, or invent database methods.
+- The project-scoped CRUD client is NOT an end-user authentication or authorization system. Never store passwords, password hashes, salts, session tokens, or user credentials in it. Never hash or compare passwords in browser code. Never use localStorage/sessionStorage as the authority for login state, and never claim that filtering project records in the browser enforces ownership.
+- Real generated-app authentication is available through \`import { auth } from "@/lib/auth"\`. Use \`auth.signUp(email, password)\`, \`auth.signIn(email, password)\`, \`auth.signOut()\`, \`auth.getSession()\`, and \`auth.onAuthStateChange(callback)\` (which synchronously returns an unsubscribe function). \`getSession()\` and the callback return a Supabase \`Session | null\`; read identity only from \`session.user.id\` and \`session.user.email\`. The runtime persists supported sessions, sends bearer tokens to the database API, and server-scopes database records to the authenticated user. Build real signup/login/logout/loading/error/protected UI around this client whenever authentication is requested.
+- \`signIn\` and \`signUp\` resolve to Supabase auth data shaped as \`{ user, session }\`; they do not return a user or session directly. Signup may return a null session when provider email confirmation is enabled, so show an honest confirmation state instead of claiming the user is logged in.
+- Follow this auth contract exactly: \`const session = await auth.getSession();\` (never destructure \`data\`), \`const { user, session } = await auth.signIn(email, password);\`, and wrap \`signIn\`/\`signUp\` in \`try/catch\` because provider errors are thrown (never destructure an \`error\` property). A safe subscription is \`useEffect(() => { void auth.getSession().then(setSession).catch(setAuthError); return auth.onAuthStateChange(setSession); }, []);\`.
+- Do not add login, signup, account switching, or an auth gate when the user did not request accounts, authentication, ownership, or protected data. Public applications receive a signed guest data capability from the runtime for owner-scoped persistence across refresh.
+- Authentication, roles, private per-user data, payments, uploads, and secret-backed connectors require a real supported provider and server-side authorization boundary. The supplied auth and database clients provide user identity and per-user record ownership, but do not invent organization membership or privileged roles that the server has not explicitly exposed.
 - Do not reference environment variables unless the user explicitly requests an external integration and you also return a complete \`.env.example\` declaration. Browser variables must use the \`VITE_\` prefix and \`import.meta.env.VITE_NAME\`. Never hardcode keys or secrets.
 - If you import additional packages, the system automatically detects them, adds them to package.json, and installs them.
 
@@ -108,6 +115,7 @@ const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "di
 const MAX_STATIC_VALIDATION_RETRIES = 3;
 const MAX_BUILD_REPAIR_ATTEMPTS = 5;
 const MAX_PREVIEW_INFRASTRUCTURE_RETRIES = 2;
+const AUTHENTICATION_REQUEST_PATTERN = /\b(?:auth(?:entication)?|sign[ -]?(?:up|in)|log[ -]?(?:in|out)|protected\s+(?:routes?|data)|customer\s+accounts?|real\s+users?|user\s+ownership)\b/i;
 const BUILD_REPAIR_STRATEGIES = [
   "Fix the direct compiler or runtime cause with the smallest targeted change.",
   "Simplify only the failing implementation while preserving the requested behavior and visual quality.",
@@ -118,7 +126,7 @@ const BUILD_REPAIR_STRATEGIES = [
 
 export function isSourceBuildFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Generated app failed to compile") && !isBuildResourceFailure(error);
+  return message.includes("Generated app failed to compile");
 }
 
 export function isBuildResourceFailure(error: unknown): boolean {
@@ -176,12 +184,21 @@ function restoreWorkspace(projectId: string, snapshot: Map<string, Buffer>): voi
   }
 }
 
-function workspaceRepairContext(projectId: string): string {
+function workspaceRepairContext(projectId: string, validationError = ""): string {
   const sourceExtensions = /\.(?:tsx?|jsx?|css|json|html)$/;
+  const failingPaths = [...validationError.matchAll(/([^\s()]+?\.(?:tsx?|jsx?|css|json|html))(?=\(|:\d)/g)]
+    .map((match) => normalizeGeneratedPath(match[1]));
   const entries = localFileManager
     .getTree(projectId)
-    .entries.filter((entry) => entry.type === "file" && sourceExtensions.test(entry.path));
-  let remaining = 40_000;
+    .entries.filter((entry) => entry.type === "file" && sourceExtensions.test(entry.path))
+    .sort((left, right) => {
+      const isFailing = (entryPath: string) => {
+        const normalized = normalizeGeneratedPath(entryPath);
+        return failingPaths.some((candidate) => candidate === normalized || candidate.endsWith(`/${normalized}`));
+      };
+      return Number(isFailing(right.path)) - Number(isFailing(left.path));
+    });
+  let remaining = 55_000;
   const chunks: string[] = [];
   for (const entry of entries) {
     if (remaining <= 0) break;
@@ -350,7 +367,10 @@ function assertUsableGeneratedFiles(
   files: GeneratedSourceFile[],
   phase: "generation" | "repair",
   existingPaths: Iterable<string>,
-  existingEnvironmentExample?: string
+  existingEnvironmentExample?: string,
+  existingSources: GeneratedSourceFile[] = [],
+  allowSeedData = true,
+  allowAuthentication = true
 ): void {
   const existing = [...existingPaths].map(normalizeGeneratedPath);
   const hasExistingEntrypoint = existing.some((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry));
@@ -358,6 +378,9 @@ function assertUsableGeneratedFiles(
     requireEntrypoint: phase === "generation" && !hasExistingEntrypoint,
     requireEntrypointFirst: phase === "generation" && !hasExistingEntrypoint,
     existingEnvironmentExample,
+    existingSources,
+    allowSeedData,
+    allowAuthentication,
   });
   if (issues.length > 0) throw new Error(`The AI ${phase} was incomplete: ${issues.join("; ")}`);
 }
@@ -372,7 +395,26 @@ function mergeGeneratedFiles(
     merged.delete(normalized);
     merged.set(normalized, { ...file, path: normalized });
   }
-  return [...merged.values()];
+  const files = [...merged.values()];
+  const entrypointCandidates = files
+    .map((file, index) => ({ file, index, path: normalizeGeneratedPath(file.path) }))
+    .filter((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry.path));
+  if (entrypointCandidates.length > 1) {
+    const preferred = entrypointCandidates.find((entry) => entry.path === "src/App.tsx") || entrypointCandidates[0];
+    for (const entry of [...entrypointCandidates].sort((left, right) => right.index - left.index)) {
+      if (entry.index === preferred.index) continue;
+      console.log(`[localAgentEngine] Dropped redundant application entrypoint: ${entry.file.path}`);
+      files.splice(entry.index, 1);
+    }
+  }
+  const entrypointIndex = files.findIndex((file) =>
+    APPLICATION_ENTRYPOINT_PATHS.has(normalizeGeneratedPath(file.path))
+  );
+  if (entrypointIndex > 0) {
+    const [entrypoint] = files.splice(entrypointIndex, 1);
+    files.unshift(entrypoint);
+  }
+  return files;
 }
 
 export function mergeGeneratedActions(
@@ -411,10 +453,41 @@ function availableWorkspacePaths(projectId: string): string[] {
     })
     .map((entry) => normalizeGeneratedPath(entry.path));
   // Runtime-owned files are not user-generated source and must stay out of
-  // follow-up context, but generated code is allowed to import this injected
-  // project-scoped database client.
+  // follow-up context, but generated code is allowed to import these injected
+  // project-scoped database and authentication clients.
   if (localFileManager.getContent(projectId, "src/lib/db.ts")) paths.push("src/lib/db.ts");
+  if (localFileManager.getContent(projectId, "src/lib/auth.ts")) paths.push("src/lib/auth.ts");
   return paths;
+}
+
+function availableWorkspaceSources(projectId: string): GeneratedSourceFile[] {
+  return localFileManager
+    .getTree(projectId)
+    .entries.filter((entry) => entry.type === "file")
+    .flatMap((entry) => {
+      const file = localFileManager.getContent(projectId, entry.path);
+      if (
+        !file ||
+        file.encoding !== "utf8" ||
+        containsGenerationPlaceholder(file.content) ||
+        isRuntimeOwnedGeneratedPath(entry.path, file.content)
+      ) return [];
+      return [{ path: normalizeGeneratedPath(entry.path), content: file.content }];
+    });
+}
+
+function promptRequestsAuthentication(prompt: string): boolean {
+  return AUTHENTICATION_REQUEST_PATTERN.test(prompt);
+}
+
+export function generatedSourcesRequireEndUserAuth(files: GeneratedSourceFile[]): boolean {
+  return files.some((file) =>
+    /(?:from\s*["'][^"']*\/lib\/auth["']|\bauth\.(?:signUp|signIn|signOut|getSession|getUser|onAuthStateChange)\b)/.test(file.content)
+  );
+}
+
+function workspaceRequiresEndUserAuth(projectId: string): boolean {
+  return generatedSourcesRequireEndUserAuth(availableWorkspaceSources(projectId));
 }
 
 function workspaceEnvironmentExample(projectId: string): string | undefined {
@@ -541,6 +614,36 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
       console.log(`[localAgentEngine] Dropped runtime-owned generated file: ${file.path}`);
       files.splice(i, 1);
     }
+  }
+  const entrypointCandidates = files
+    .map((file, index) => ({ file, index, path: normalizeGeneratedPath(file.path) }))
+    .filter((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry.path));
+  if (entrypointCandidates.length > 1) {
+    const preferred = entrypointCandidates.find((entry) => entry.path === "src/App.tsx") || entrypointCandidates[0];
+    for (const entry of [...entrypointCandidates].sort((left, right) => right.index - left.index)) {
+      if (entry.index === preferred.index) continue;
+      console.log(`[localAgentEngine] Dropped redundant application entrypoint: ${entry.file.path}`);
+      files.splice(entry.index, 1);
+    }
+  }
+  const entrypointIndex = files.findIndex((file) =>
+    APPLICATION_ENTRYPOINT_PATHS.has(normalizeGeneratedPath(file.path))
+  );
+  if (entrypointIndex > 0) {
+    const [entrypoint] = files.splice(entrypointIndex, 1);
+    files.unshift(entrypoint);
+    console.log(`[localAgentEngine] Moved ${entrypoint.path} to the first generated file block`);
+  }
+
+  // Model prose inside JSX frequently contains typographic punctuation even
+  // when the code contract requests ASCII. Normalize it without introducing
+  // quote delimiters that could change JavaScript string syntax.
+  for (const file of files) {
+    file.content = file.content
+      .replace(/[\u00a0\u200b-\u200d\u2060\ufeff]/g, " ")
+      .replace(/[\u2013\u2014]/g, "-")
+      .replace(/[\u2018\u2019\u201c\u201d]/g, "")
+      .replace(/\u2026/g, "...");
   }
 
   const REACT_HOOK_PATTERN = /\b(useState|useEffect|useRef|useCallback|useMemo|useReducer|useContext|useLayoutEffect|useImperativeHandle|useDebugValue|useDeferredValue|useTransition|useId|useSyncExternalStore)\b/;
@@ -958,8 +1061,6 @@ export const localAgentEngine = {
         checkCancelled();
 
         const content = routerResult.text;
-        let usedProviderId = routerResult.providerId;
-
         // Extract files from generated markdown, with auto-retry on failure
         let files = extractFilesFromMarkdown(content);
         postProcessGeneratedFiles(files);
@@ -967,16 +1068,22 @@ export const localAgentEngine = {
         for (const file of files) finalDeletions.delete(normalizeGeneratedPath(file.path));
 
         const existingPaths = availableWorkspacePaths(projectId);
+        const existingSources = availableWorkspaceSources(projectId);
         const existingEnvironmentExample = workspaceEnvironmentExample(projectId);
         let effectiveExistingEnvironmentExample = finalDeletions.has(".env.example")
           ? undefined
           : existingEnvironmentExample;
         const initialGeneration = !isFollowUp;
+        const explicitlyRequestedSeedData = /\b(?:seed(?:ed|ing)?|demo\s+data|sample\s+data|fixture\s+data|mock\s+data)\b/i.test(prompt);
+        const explicitlyRequestedAuthentication = promptRequestsAuthentication(prompt);
         let effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
         let validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
           requireEntrypoint: initialGeneration,
           requireEntrypointFirst: initialGeneration,
           existingEnvironmentExample: effectiveExistingEnvironmentExample,
+          existingSources: existingSources.filter((file) => !finalDeletions.has(file.path)),
+          allowSeedData: !initialGeneration || explicitlyRequestedSeedData,
+          allowAuthentication: !initialGeneration || explicitlyRequestedAuthentication,
         });
 
         // Auto-retry incomplete or disconnected output before it touches the workspace.
@@ -1037,12 +1144,14 @@ export const localAgentEngine = {
               ? undefined
               : existingEnvironmentExample;
             postProcessGeneratedFiles(files);
-            usedProviderId = retryResult.providerId;
             effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
             validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
               requireEntrypoint: initialGeneration,
               requireEntrypointFirst: initialGeneration,
               existingEnvironmentExample: effectiveExistingEnvironmentExample,
+              existingSources: existingSources.filter((file) => !finalDeletions.has(file.path)),
+              allowSeedData: !initialGeneration || explicitlyRequestedSeedData,
+              allowAuthentication: !initialGeneration || explicitlyRequestedAuthentication,
             });
             if (validationIssues.length === 0) {
               console.log(`[localAgentEngine] Static correction succeeded with ${retryFiles.length} replacement files`);
@@ -1058,7 +1167,10 @@ export const localAgentEngine = {
           files,
           "generation",
           effectiveExistingPaths,
-          effectiveExistingEnvironmentExample
+          effectiveExistingEnvironmentExample,
+          existingSources.filter((file) => !finalDeletions.has(file.path)),
+          !initialGeneration || explicitlyRequestedSeedData,
+          !initialGeneration || explicitlyRequestedAuthentication
         );
 
         const currentRec = localProjectStore.getRecord(projectId);
@@ -1211,6 +1323,7 @@ export const localAgentEngine = {
                 conversation: newMessages,
                 previewUrl,
                 serverStatus: "Active",
+                requiresEndUserAuth: workspaceRequiresEndUserAuth(projectId),
               });
               return;
             } catch (retryError) {
@@ -1311,6 +1424,7 @@ export const localAgentEngine = {
             conversation: newMessages,
             previewUrl: previewUrl.includes("http") ? previewUrl : `/api/preview/${projectId}`,
             serverStatus: "Active",
+            requiresEndUserAuth: workspaceRequiresEndUserAuth(projectId),
           });
         } catch (sandboxErr) {
           checkCancelled();
@@ -1319,6 +1433,9 @@ export const localAgentEngine = {
           // Provisioning, persistence, dependency installation and preview
           // readiness failures do not prove the generated source is wrong. Retry
           // the real startup operation without asking a model to rewrite code.
+          // A production-build exit 137 is source-sensitive (large dependency
+          // graphs can exceed the sandbox), so it goes through a lightweight
+          // dependency repair before being treated as unrecoverable capacity.
           if (!isSourceBuildFailure(sandboxErr)) {
             await recoverPreviewInfrastructure(
               sandboxErr,
@@ -1332,7 +1449,9 @@ export const localAgentEngine = {
 
           for (let attempt = 1; attempt <= MAX_BUILD_REPAIR_ATTEMPTS; attempt += 1) {
             checkCancelled();
-            const strategy = BUILD_REPAIR_STRATEGIES[attempt - 1];
+            const strategy = isBuildResourceFailure(repairError)
+              ? "Remove or replace memory-heavy optional dependencies with lightweight React, CSS, SVG, or native browser code while preserving the requested behavior."
+              : BUILD_REPAIR_STRATEGIES[attempt - 1];
             const buildError = repairError instanceof Error ? repairError.message : String(repairError);
             newMessages.push({
               author: "agent",
@@ -1348,7 +1467,7 @@ export const localAgentEngine = {
                   { role: "system", content: SYSTEM_PROMPT },
                   {
                     role: "user",
-                    content: `The generated app failed real production validation. Repair the implementation and return ONLY complete corrected file blocks. Never use @apply in CSS. Preserve every working feature and do not report success; the platform will rebuild and verify it.\n\nRepair strategy for this attempt:\n${strategy}\n\nOriginal request:\n${prompt}\n\nLatest validation error:\n${buildError}\n\nCurrent source:\n${workspaceRepairContext(projectId)}`,
+                  content: `The generated app failed real production validation. Repair the implementation and return ONLY complete corrected file blocks. Never use @apply in CSS. Preserve every working feature and do not report success; the platform will rebuild and verify it.\n\nRepair strategy for this attempt:\n${strategy}\n\nOriginal request:\n${prompt}\n\nLatest validation error:\n${buildError}\n\nCurrent source (files named by the error are first):\n${workspaceRepairContext(projectId, buildError)}`,
                   },
                 ],
                 () => undefined,
@@ -1379,7 +1498,12 @@ export const localAgentEngine = {
                 repairFiles,
                 "repair",
                 repairExistingPaths,
-                repairEnvironmentExample
+                repairEnvironmentExample,
+                availableWorkspaceSources(projectId).filter(
+                  (file) => !repairDeletions.has(file.path)
+                ),
+                !initialGeneration || explicitlyRequestedSeedData,
+                !initialGeneration || explicitlyRequestedAuthentication
               );
 
               for (const file of repairFiles) {
@@ -1451,6 +1575,7 @@ export const localAgentEngine = {
                 conversation: newMessages,
                 previewUrl,
                 serverStatus: "Active",
+                requiresEndUserAuth: workspaceRequiresEndUserAuth(projectId),
               });
               repaired = true;
               break;

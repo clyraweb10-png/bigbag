@@ -13,6 +13,8 @@
     "test:real-generation": "node --test --require ts-node/register/transpile-only tests/real-file-generation.test.ts",
     "test:prompt-matrix": "node --test --require ts-node/register/transpile-only tests/prompt-contract-matrix.test.ts",
     "test:live-generation": "node --require ts-node/register/transpile-only --require tsconfig-paths/register scripts/live-generation-smoke.ts",
+    "test:qualification-batch": "node --require ts-node/register/transpile-only --require tsconfig-paths/register scripts/qualification-batch.ts",
+    "test:generated-auth": "node --test --require ts-node/register/transpile-only --require tsconfig-paths/register tests/generated-app-auth.test.ts",
     "test:serve": "TESTING_MODE=true PORT=3000 next start"
   },
   "dependencies": {
