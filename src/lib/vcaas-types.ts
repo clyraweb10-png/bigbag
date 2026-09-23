@@ -13,6 +13,15 @@
 
 export interface VcaasProject {
   projectId: string;
+  conversationId?: string;
+  activeGenerationId?: string;
+  projectContext?: {
+    originalPrompt: string;
+    projectName: string | null;
+    projectType: string | null;
+    onboardingAnswers: Record<string, unknown>;
+    referenceUrl: string | null;
+  };
   /**
    * The human name, when the owner has set one — the same field
    * `VcaasProjectSummary.label` carries, returned here so a workspace opened from a
@@ -215,6 +224,7 @@ export interface AgentInputFile {
   name: string;
   url: string;
   imageDescription: string;
+  mimeType?: string;
 }
 
 /** Claude model alias for a run (`POST /agent/start` → `model`). `opus` is the default. */
@@ -255,13 +265,14 @@ export type GenerationEventType =
   | "preview_ready"
   | "preview_failed"
   | "generation_completed"
-  | "generation_failed";
+  | "generation_failed"
+  | "generation_cancelled";
 
 export interface GenerationEvent {
   eventId?: string;
   generationId?: string;
   type: GenerationEventType;
-  status?: "started" | "completed" | "failed";
+  status?: "started" | "completed" | "failed" | "cancelled";
   occurredAt?: string;
   durationMs?: number;
   path?: string;

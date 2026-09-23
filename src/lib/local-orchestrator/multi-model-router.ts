@@ -26,6 +26,7 @@ export interface RouterCompletionResult {
 }
 
 export type ProviderErrorCategory =
+  | "cancelled"
   | "rate_limit"
   | "provider_unavailable"
   | "network_timeout"
@@ -55,6 +56,7 @@ export interface ModelMessage {
 }
 
 export interface RouterCompletionOptions {
+  signal?: AbortSignal;
   perProviderTimeoutMs?: number;
   totalTimeoutMs?: number;
   deprioritizeProviderId?: string;
@@ -298,6 +300,7 @@ class MultiModelRouter {
       maxOutputContinuations: number;
       responseFormat?: "json_object";
       requestLabel: string;
+      signal?: AbortSignal;
     }
   ): Promise<RouterCompletionResult> {
     const startedAt = Date.now();
@@ -316,6 +319,7 @@ class MultiModelRouter {
     let lastError = new ProviderRequestError("Provider request failed", "unknown", false);
 
     for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
+      options.signal?.throwIfAborted();
       let remainingMs = options.deadlineAt === undefined
         ? undefined
         : options.deadlineAt - Date.now();
@@ -328,6 +332,7 @@ class MultiModelRouter {
         console.log(`[MultiModelRouter] Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`);
         onStatus?.(retryMsg);
         await sleep(options.retryDelayMs);
+        options.signal?.throwIfAborted();
         remainingMs = options.deadlineAt === undefined
           ? undefined
           : options.deadlineAt - Date.now();
@@ -341,6 +346,7 @@ class MultiModelRouter {
         let requestMessages = messages;
 
         for (let continuation = 0; continuation <= options.maxOutputContinuations; continuation += 1) {
+          options.signal?.throwIfAborted();
           remainingMs = options.deadlineAt === undefined
             ? undefined
             : options.deadlineAt - Date.now();
@@ -380,6 +386,7 @@ class MultiModelRouter {
           })}`);
 
           const res: Response = await this.enqueue(provider.id, () => {
+            options.signal?.throwIfAborted();
             const remainingAtFetchMs = options.deadlineAt === undefined
               ? undefined
               : options.deadlineAt - Date.now();
@@ -401,7 +408,9 @@ class MultiModelRouter {
               method: "POST",
               headers,
               body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(attemptTimeoutMs),
+              signal: options.signal
+                ? AbortSignal.any([options.signal, AbortSignal.timeout(attemptTimeoutMs)])
+                : AbortSignal.timeout(attemptTimeoutMs),
             });
           }, remainingMs);
 
@@ -526,6 +535,9 @@ class MultiModelRouter {
           ];
         }
       } catch (err: any) {
+        if (options.signal?.aborted) {
+          throw new ProviderRequestError("Generation cancelled", "cancelled", false, "", "", requestAttempts);
+        }
         const message = err?.message || String(err);
         const isTimeout = err?.name === "TimeoutError" || /aborted|timeout/i.test(message);
         const isNetworkFailure = /fetch|network|socket/i.test(message);
@@ -592,6 +604,7 @@ class MultiModelRouter {
     const perProviderTimeoutMs = options.perProviderTimeoutMs ?? 120_000;
 
     for (let i = 0; i < providers.length; i++) {
+      options.signal?.throwIfAborted();
       const provider = providers[i];
       const isLast = i === providers.length - 1;
       // Reserve a fair share of the remaining wall-clock budget for every
@@ -604,7 +617,9 @@ class MultiModelRouter {
         : Date.now() + Math.max(1, Math.floor(remainingTotalMs / providersRemaining));
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
-      onStatus?.("Building your project…");
+      // Model inference is still code generation, not a running build. Build
+      // status is emitted separately when validation starts.
+      onStatus?.("Generating the implementation…");
 
       try {
         return await this.tryProvider(provider, messages, onStatus, {
@@ -617,6 +632,7 @@ class MultiModelRouter {
             Math.min(MAX_OUTPUT_CONTINUATIONS, options.maxOutputContinuations ?? MAX_OUTPUT_CONTINUATIONS)
           ),
           responseFormat: options.responseFormat,
+          signal: options.signal,
           requestLabel: options.requestLabel?.trim() || "generation",
         });
       } catch (err: any) {

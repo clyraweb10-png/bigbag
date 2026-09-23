@@ -9,6 +9,16 @@ export interface LocalProjectRecord {
   createdAt: string;
   lastModifiedAt?: string;
   agentStartedAt?: string;
+  conversationId?: string;
+  activeGenerationId?: string;
+  cancellationRequestedAt?: string;
+  projectContext?: {
+    originalPrompt: string;
+    projectName: string | null;
+    projectType: string | null;
+    onboardingAnswers: Record<string, unknown>;
+    referenceUrl: string | null;
+  };
   port: number;
   status: "init" | "done" | "idle";
   serverStatus: "Active" | "Starting" | "Stopped" | "Error";

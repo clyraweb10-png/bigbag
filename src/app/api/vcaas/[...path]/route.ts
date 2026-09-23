@@ -302,7 +302,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
     // code-engine messages. Cloud mode never calls this endpoint.
     if (subRoute === "agent/conversation" && method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const rawMessages = Array.isArray(body.messages) ? body.messages.slice(0, 4) : [];
+      const rawMessages = Array.isArray(body.messages) ? body.messages.slice(0, 50) : [];
       const messages: ConversationMessage[] = rawMessages.flatMap((entry: unknown) => {
         if (!entry || typeof entry !== "object") return [];
         const value = entry as Record<string, unknown>;
@@ -320,9 +320,25 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
         return NextResponse.json({ ok: false, error: "No valid conversation messages" }, { status: 400 });
       }
       const record = localProjectStore.getRecord(projectId);
-      localProjectStore.update(projectId, {
+      const rawContext = body.projectContext && typeof body.projectContext === "object" ? body.projectContext : null;
+      const projectContext = rawContext && !record?.projectContext && typeof rawContext.originalPrompt === "string"
+        ? {
+            originalPrompt: rawContext.originalPrompt.trim().slice(0, 20_000),
+            projectName: typeof rawContext.projectName === "string" ? rawContext.projectName.slice(0, 160) : null,
+            projectType: typeof rawContext.projectType === "string" ? rawContext.projectType.slice(0, 80) : null,
+            onboardingAnswers: rawContext.onboardingAnswers && typeof rawContext.onboardingAnswers === "object" && !Array.isArray(rawContext.onboardingAnswers) && JSON.stringify(rawContext.onboardingAnswers).length <= 4_000
+              ? rawContext.onboardingAnswers as Record<string, unknown>
+              : {},
+            referenceUrl: typeof rawContext.referenceUrl === "string" ? extractWebsiteUrl(rawContext.referenceUrl) : null,
+          }
+        : undefined;
+      const saved = localProjectStore.update(projectId, {
         conversation: [...(record?.conversation || []), ...messages],
+        ...(projectContext ? { projectContext } : {}),
       });
+      if (!saved || saved.conversation.length !== (record?.conversation.length || 0) + messages.length) {
+        return NextResponse.json({ ok: false, error: "Conversation could not be saved" }, { status: 409 });
+      }
       await localProjectStore.flush(projectId);
       return NextResponse.json({ ok: true, data: { saved: messages.length } }, { status: 200 });
     }
@@ -330,8 +346,12 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
     // /projects/:id/agent/start
     if (subRoute === "agent/start" && method === "POST") {
       const body = await req.json().catch(() => ({}));
-      if (!localProjectStore.getRecord(projectId)) {
+      const existingRecord = localProjectStore.getRecord(projectId);
+      if (!existingRecord) {
         return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
+      }
+      if (existingRecord.status === "init") {
+        return NextResponse.json({ ok: false, error: "A generation is already running", code: "GENERATION_RUNNING" }, { status: 409 });
       }
       const rawVisualReference = typeof body.visualReferenceUrl === "string"
         ? body.visualReferenceUrl.trim()
@@ -362,8 +382,10 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
 
     // /projects/:id/agent/stop
     if (subRoute === "agent/stop" && method === "POST") {
-      localProjectStore.update(projectId, { status: "idle" });
-      return NextResponse.json({ ok: true, data: { stopped: true } }, { status: 200 });
+      const stopped = await localAgentEngine.cancelPrompt(projectId);
+      return stopped
+        ? NextResponse.json({ ok: true, data: { stopped: true } }, { status: 200 })
+        : NextResponse.json({ ok: false, error: "There is no active generation to stop", code: "GENERATION_NOT_RUNNING" }, { status: 409 });
     }
 
     // /projects/:id/agent/server/start-or-restart

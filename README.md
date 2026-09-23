@@ -138,6 +138,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `GROQ_API_KEY` | ⬜ Optional | Primary fast provider for chat, implementation planning, and plan refinement. |
 | `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
+| `E2B_BUILD_TEMPLATE` | ⬜ Optional | Existing E2B template ID/name sized for memory-heavy production builds; the default is `base`. An exit-137 memory kill requires a larger provisioned template, not model-generated source repairs. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
 | `PEXELS_API_KEY` | ⬜ Image prompts | Supplies licensed, theme-specific image candidates to image-forward generations; absent/failed searches use designed CSS/SVG fallbacks. |
 | `SUPABASE_DATABASE_URL` | ✅ Local orchestrator | Supabase PostgreSQL storage for durable metadata, generated source, and compiled preview artifacts. |

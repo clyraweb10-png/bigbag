@@ -16,9 +16,10 @@ import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
 import { durableProjectStore } from "@/lib/local-orchestrator/durable-project-store";
 import { localSandboxManager } from "@/lib/local-orchestrator/sandbox-manager";
 import { localProjectStore } from "@/lib/local-orchestrator/project-store";
+import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
 import {
     createPreviewWriteCapability,
-    resolveLocalTenant,
+    tenantContextForIdentity,
     verifyPreviewWriteCapability,
 } from "@/lib/local-orchestrator/tenant-context";
 
@@ -77,7 +78,7 @@ function previewBootPage(): NextResponse {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="refresh" content="2" />
+  <meta http-equiv="refresh" content="5" />
   <title>Starting preview</title>
   <style>
     body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
@@ -96,8 +97,10 @@ function previewBootPage(): NextResponse {
 </body>
 </html>`;
     return new NextResponse(html, {
-        status: 200,
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        // A boot page is not a validated application preview. In particular,
+        // health checks and qualification runs must not treat it as success.
+        status: 503,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "5" },
     });
 }
 
@@ -135,10 +138,9 @@ async function readAppDataBody(request: NextRequest): Promise<Record<string, unk
 }
 
 /**
- * Public, project-scoped CRUD used by generated apps. This is intentionally not
- * the builder API: it exposes no tenant cookie, source, provider key, or project
- * operation. Generated applications that need end-user auth must implement that
- * policy in their own UI before exposing write controls.
+ * Project-scoped CRUD used by generated apps in authenticated owner previews.
+ * A project-wide capability is not a substitute for end-user identity: public
+ * viewers cannot read private records or acquire this capability from HTML.
  */
 async function serveAppData(
     request: NextRequest,
@@ -152,6 +154,14 @@ async function serveAppData(
     }
 
     try {
+        const tenantId = verifyPreviewWriteCapability(
+            request.headers.get("x-bigbag-capability"),
+            projectId
+        );
+        if (!tenantId) return appDataJson({ ok: false, error: "Project data authorization required" }, 401);
+        if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
+            return appDataJson({ ok: false, error: "Project not found" }, 404);
+        }
         if (request.method === "GET") {
             if (recordId) {
                 const record = await durableProjectStore.getAppRecord(projectId, collection, recordId);
@@ -169,14 +179,6 @@ async function serveAppData(
                 : 0;
             const data = await durableProjectStore.listAppRecords(projectId, collection, { limit, offset });
             return appDataJson({ ok: true, data });
-        }
-        const tenantId = verifyPreviewWriteCapability(
-            request.headers.get("x-bigbag-capability"),
-            projectId
-        );
-        if (!tenantId) return appDataJson({ ok: false, error: "Write authorization required" }, 401);
-        if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
-            return appDataJson({ ok: false, error: "Project not found" }, 404);
         }
         if (request.method === "POST" && !recordId) {
             const data = await durableProjectStore.createAppRecord(
@@ -583,26 +585,30 @@ async function handle(
     if (IS_LOCAL) {
         const trustedEditor = request.nextUrl.searchParams.get("editor") === "1";
         let writeCapability: string | undefined;
-        if (trustedEditor) {
-            const tenant = resolveLocalTenant(request);
-            if (!(await localProjectStore.hydrateProject(projectId, tenant.tenantId))) {
+        const ownerSession = verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value);
+        if (trustedEditor && !ownerSession) {
+            return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+        }
+        const documentRequest = request.method === "GET" && (
+            targetSegments.length === 0 ||
+            targetSegments.at(-1)?.endsWith(".html") ||
+            (request.headers.get("accept")?.includes("text/html") &&
+                !targetSegments.at(-1)?.includes("."))
+        );
+        if (ownerSession && (trustedEditor || documentRequest)) {
+            const ownerTenant = tenantContextForIdentity(ownerSession.sub);
+            if (await localProjectStore.hydrateProject(projectId, ownerTenant.tenantId)) {
+                writeCapability = createPreviewWriteCapability(projectId, ownerTenant.tenantId);
+            } else if (trustedEditor) {
                 return NextResponse.json({ ok: false, error: "Project not found" }, { status: 404 });
             }
-            writeCapability = createPreviewWriteCapability(projectId, tenant.tenantId);
         }
         if (targetSegments[0] === APP_DATA_PATH) {
             return serveAppData(request, projectId, targetSegments);
         }
         const localRecord = localProjectStore.getRecord(projectId);
-        // Generated applications need their project-scoped data client to work
-        // in ordinary Preview and deployed-preview tabs, not only while the
-        // visual editor is open. The signed capability is bound to this project
-        // and tenant, cannot authenticate builder APIs, and is still required by
-        // every mutation endpoint below. Apps that need end-user authorization
-        // must add that policy before presenting public write controls.
-        if (!writeCapability && localRecord) {
-            writeCapability = createPreviewWriteCapability(projectId, localRecord.tenantId);
-        }
+        // Never embed an owner-wide capability in public HTML. A generated
+        // login form alone cannot authorize server-side reads or mutations.
         const usesDisposableE2b = process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b";
         const runningOrigin = localSandboxManager.getRunningOrigin(projectId) ||
             (!usesDisposableE2b && localRecord?.serverStatus === "Active"
