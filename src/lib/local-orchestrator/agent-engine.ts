@@ -19,6 +19,7 @@ import {
   generationValidationIssues,
   isRuntimeOwnedGeneratedPath,
   normalizeGeneratedPath,
+  validationRepairContext,
   type GeneratedSourceFile,
 } from "./generation-validator";
 
@@ -53,7 +54,8 @@ To delete an obsolete file, output:
 ### Delete: path/to/file.tsx
 
 4. Full-stack behavior and dependencies
-- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, recharts, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js.
+- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js.
+- For charts and analytics visualization, use lightweight semantic HTML, CSS, or inline SVG. Do not import recharts or another charting library; its module graph exceeds the production sandbox capacity. Preserve accessible labels and data tables alongside visual charts.
 - Pre-existing UI primitives: @/components/ui/button, @/components/ui/card, and @/lib/utils (cn).
 - For durable database storage, use exactly: \`import db from "@/lib/db"; const items = db.collection<ItemRecord>("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. Always supply the application's record type as the collection generic; do not cast generic \`DbRecord\` results into domain records.
 - Database records receive server-owned \`_id\`, \`createdAt\`, and \`updatedAt\` fields. The timestamps are ISO strings. Include those fields with those types in record interfaces when used, and never send or redefine them as numeric application fields.
@@ -92,7 +94,7 @@ Return ONLY complete corrected file blocks in this exact format - no explanation
 // complete code here
 \`\`\`
 
-For an initial build, return the complete application entrypoint as the first file block. Use exactly one entrypoint. Replace every file named by the validation report with a complete corrected version. Preserve valid requested behavior, provide every missing local import, use plain ASCII punctuation, and finish every file. Generate the corrected files now.`;
+Return complete replacements ONLY for files named by the validation report and any directly required missing local import. Do not regenerate the application entrypoint or other valid files unless the validation report names them. Preserve valid requested behavior, use plain ASCII punctuation, and finish every returned file. Generate the smallest complete correction now.`;
 
 /**
  * Appended to the system prompt when the user is iterating on an existing project.
@@ -115,6 +117,7 @@ const SNAPSHOT_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "di
 const MAX_STATIC_VALIDATION_RETRIES = 3;
 const MAX_BUILD_REPAIR_ATTEMPTS = 5;
 const MAX_PREVIEW_INFRASTRUCTURE_RETRIES = 2;
+const MAX_BUILD_RESOURCE_RETRIES = 1;
 const AUTHENTICATION_REQUEST_PATTERN = /\b(?:auth(?:entication)?|sign[ -]?(?:up|in)|log[ -]?(?:in|out)|protected\s+(?:routes?|data)|customer\s+accounts?|real\s+users?|user\s+ownership)\b/i;
 const BUILD_REPAIR_STRATEGIES = [
   "Fix the direct compiler or runtime cause with the smallest targeted change.",
@@ -126,7 +129,10 @@ const BUILD_REPAIR_STRATEGIES = [
 
 export function isSourceBuildFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Generated app failed to compile");
+  if (/deadline_exceeded|operation timed out|exceeding ['"]?timeoutMs/i.test(message)) return false;
+  if (isBuildResourceFailure(error)) return false;
+  if (message.includes("Generated app failed to compile")) return true;
+  return /Dependency installation failed[\s\S]*(?:\bE404\b|404 Not Found|is not in this registry|\bETARGET\b|No matching version found|\bENOVERSIONS\b|Invalid package name|Invalid tag name|Unsupported URL Type)/i.test(message);
 }
 
 export function isBuildResourceFailure(error: unknown): boolean {
@@ -137,7 +143,17 @@ export function isBuildResourceFailure(error: unknown): boolean {
 type SharedAgentRunState = {
   runs: Map<string, Promise<void>>;
   controllers: Map<string, { generationId: string; controller: AbortController }>;
+  diagnostics: Map<string, GenerationModelDiagnostics>;
 };
+
+export interface GenerationModelDiagnostics {
+  providerId: string;
+  model: string;
+  attempts: number;
+  continuationAttempts: number;
+  failureCategories: string[];
+  durationMs: number;
+}
 
 const agentRunStateKey = Symbol.for("bigbag.local-orchestrator.agent-runs");
 const agentGlobalState = globalThis as typeof globalThis & {
@@ -146,9 +162,27 @@ const agentGlobalState = globalThis as typeof globalThis & {
 const sharedAgentRunState = agentGlobalState[agentRunStateKey] || {
   runs: new Map<string, Promise<void>>(),
   controllers: new Map<string, { generationId: string; controller: AbortController }>(),
+  diagnostics: new Map<string, GenerationModelDiagnostics>(),
 };
 sharedAgentRunState.controllers ||= new Map();
+sharedAgentRunState.diagnostics ||= new Map();
 agentGlobalState[agentRunStateKey] = sharedAgentRunState;
+
+export function getGenerationModelDiagnostics(projectId: string, generationId: string): GenerationModelDiagnostics | null {
+  return sharedAgentRunState.diagnostics.get(`${projectId}:${generationId}`) || null;
+}
+
+function recordGenerationModelDiagnostics(
+  projectId: string,
+  generationId: string,
+  diagnostics: GenerationModelDiagnostics
+): void {
+  sharedAgentRunState.diagnostics.set(`${projectId}:${generationId}`, diagnostics);
+  if (sharedAgentRunState.diagnostics.size > 1_000) {
+    const oldest = sharedAgentRunState.diagnostics.keys().next().value;
+    if (oldest) sharedAgentRunState.diagnostics.delete(oldest);
+  }
+}
 
 class GenerationCancelledError extends Error {
   constructor() {
@@ -358,7 +392,8 @@ export function extractDeletionsFromMarkdown(text: string): string[] {
   const deletePattern = /(?:^|[\r\n])\s*(?:###\s*Delete:\s*|<delete\s+(?:filePath|path)=["'])(`?[a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+`?)/gi;
   let m: RegExpExecArray | null;
   while ((m = deletePattern.exec(text)) !== null) {
-    deletions.push(m[1].replace(/[`"']/g, "").trim());
+    const candidate = normalizeGeneratedPath(m[1].replace(/[`"']/g, "").trim());
+    if (!isRuntimeOwnedGeneratedPath(candidate)) deletions.push(candidate);
   }
   return deletions;
 }
@@ -686,6 +721,16 @@ export function postProcessGeneratedFiles(files: Array<{ path: string; content: 
 
     // Remove styled-jsx <style jsx> blocks
     content = content.replace(/<style\s+jsx[^>]*>[\s\S]*?<\/style>/gi, "");
+
+    // The generated auth wrapper intentionally exposes the session-first
+    // callback documented in SYSTEM_PROMPT. Models sometimes copy Supabase's
+    // two-argument callback but name the unused first argument `_event`; make
+    // that common form session-first so TypeScript can contextually type it and
+    // the runtime delivers the value the callback actually consumes.
+    content = content.replace(
+      /(?<![\w$.])auth\.onAuthStateChange\(\(\s*_event\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*=>/g,
+      "auth.onAuthStateChange(($1) =>"
+    );
 
     // Auto-inject 'use client' if hooks or browser APIs are used
     const needsUseClient =
@@ -1059,6 +1104,14 @@ export const localAgentEngine = {
           { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000, onlyProviderId: "telnyx-glm", signal: controller.signal, requestLabel: "code_generation" }
         );
         checkCancelled();
+        recordGenerationModelDiagnostics(projectId, generationId, {
+          providerId: routerResult.providerId,
+          model: routerResult.usedModel,
+          attempts: routerResult.attempts,
+          continuationAttempts: routerResult.continuationAttempts,
+          failureCategories: routerResult.failureCategories,
+          durationMs: routerResult.durationMs,
+        });
 
         const content = routerResult.text;
         // Extract files from generated markdown, with auto-retry on failure
@@ -1106,10 +1159,7 @@ export const localAgentEngine = {
             ],
           });
 
-          const extractedContext = files
-            .map((file) => `### File: ${file.path}\n\`\`\`\n${file.content}\n\`\`\``)
-            .join("\n\n")
-            .slice(0, 48_000);
+          const extractedContext = validationRepairContext(files, validationIssues);
           try {
             const retryResult = await multiModelRouter.complete(
               [
@@ -1281,14 +1331,17 @@ export const localAgentEngine = {
 
         const recoverPreviewInfrastructure = async (
           initialError: unknown,
-          recoveredMessage: string
+          recoveredMessage: string,
+          deferRepeatedResourceFailure = false
         ): Promise<void> => {
           let infrastructureError = initialError;
-          const maxInfrastructureRetries = isBuildResourceFailure(initialError) ? 0 : MAX_PREVIEW_INFRASTRUCTURE_RETRIES;
+          const maxInfrastructureRetries = isBuildResourceFailure(initialError)
+            ? MAX_BUILD_RESOURCE_RETRIES
+            : MAX_PREVIEW_INFRASTRUCTURE_RETRIES;
           for (let attempt = 1; attempt <= maxInfrastructureRetries; attempt += 1) {
             newMessages.push({
               author: "agent",
-              message: `Preview infrastructure failed. Retrying startup (${attempt} of ${MAX_PREVIEW_INFRASTRUCTURE_RETRIES}) without changing your source...`,
+              message: `Preview infrastructure failed. Retrying startup (${attempt} of ${maxInfrastructureRetries}) without changing your source...`,
               messageType: "building",
               createdAt: new Date().toISOString(),
             });
@@ -1297,6 +1350,13 @@ export const localAgentEngine = {
               checkCancelled();
               const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
               checkCancelled();
+              newMessages.push({
+                author: "agent",
+                message: "Production build completed successfully after infrastructure recovery.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "build_completed", status: "completed" },
+              });
               newMessages.push({
                 author: "agent",
                 message: "Validation and preview startup succeeded after infrastructure recovery.",
@@ -1334,6 +1394,9 @@ export const localAgentEngine = {
           }
 
           checkCancelled();
+          if (deferRepeatedResourceFailure && isBuildResourceFailure(infrastructureError)) {
+            throw infrastructureError;
+          }
           if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
           let restoredPreviewUrl = priorDeployment?.previewUrl;
           if (!restoredPreviewUrl && !isBuildResourceFailure(initialError) && previousWorkspace) {
@@ -1433,18 +1496,25 @@ export const localAgentEngine = {
           // Provisioning, persistence, dependency installation and preview
           // readiness failures do not prove the generated source is wrong. Retry
           // the real startup operation without asking a model to rewrite code.
-          // A production-build exit 137 is source-sensitive (large dependency
-          // graphs can exceed the sandbox), so it goes through a lightweight
-          // dependency repair before being treated as unrecoverable capacity.
-          if (!isSourceBuildFailure(sandboxErr)) {
-            await recoverPreviewInfrastructure(
-              sandboxErr,
-              "Application generated and verified after the preview infrastructure recovered."
-            );
-            return;
-          }
-
+          // A production-build exit 137 proves resource pressure, not a source
+          // defect. Retry the exact durable source through preview recovery and
+          // never ask a model to mutate working code without a source diagnostic.
           let repairError: unknown = sandboxErr;
+          if (!isSourceBuildFailure(sandboxErr)) {
+            try {
+              await recoverPreviewInfrastructure(
+                sandboxErr,
+                "Application generated and verified after the preview infrastructure recovered.",
+                isBuildResourceFailure(sandboxErr)
+              );
+              return;
+            } catch (repeatedResourceError) {
+              checkCancelled();
+              if (!isBuildResourceFailure(repeatedResourceError)) throw repeatedResourceError;
+              repairError = repeatedResourceError;
+              console.error("[localAgentEngine] Resource failure persisted after unchanged-source retry; entering targeted dependency repair:", repeatedResourceError);
+            }
+          }
           let repaired = false;
 
           for (let attempt = 1; attempt <= MAX_BUILD_REPAIR_ATTEMPTS; attempt += 1) {
@@ -1464,7 +1534,10 @@ export const localAgentEngine = {
             try {
               const repairResult = await multiModelRouter.complete(
                 [
-                  { role: "system", content: SYSTEM_PROMPT },
+                  {
+                    role: "system",
+                    content: `${SYSTEM_PROMPT}\n\n## BUILD REPAIR MODE\nThe workspace already contains a complete application. The initial-build entrypoint and full-application output rules do not apply. When the error names source files, return complete replacements ONLY for those files and directly required dependency files. For a pathless persistent resource or dependency-installation failure, return only package.json when necessary and the single smallest source file importing the offending dependency. Preserve every other file unchanged.`,
+                  },
                   {
                     role: "user",
                   content: `The generated app failed real production validation. Repair the implementation and return ONLY complete corrected file blocks. Never use @apply in CSS. Preserve every working feature and do not report success; the platform will rebuild and verify it.\n\nRepair strategy for this attempt:\n${strategy}\n\nOriginal request:\n${prompt}\n\nLatest validation error:\n${buildError}\n\nCurrent source (files named by the error are first):\n${workspaceRepairContext(projectId, buildError)}`,
@@ -1544,11 +1617,19 @@ export const localAgentEngine = {
                 console.error(`[localAgentEngine] Repair attempt ${attempt} reached preview infrastructure failure:`, deploymentError);
                 await recoverPreviewInfrastructure(
                   deploymentError,
-                  `Application generated, repaired on attempt ${attempt}, and verified after the preview infrastructure recovered.`
+                  `Application generated, repaired on attempt ${attempt}, and verified after the preview infrastructure recovered.`,
+                  isBuildResourceFailure(deploymentError)
                 );
                 repaired = true;
                 break;
               }
+              newMessages.push({
+                author: "agent",
+                message: "Production build completed successfully after repair.",
+                messageType: "building",
+                createdAt: new Date().toISOString(),
+                generationEvent: { type: "build_completed", status: "completed" },
+              });
               newMessages.push({
                 author: "agent",
                 message: "Production validation completed successfully after repair.",

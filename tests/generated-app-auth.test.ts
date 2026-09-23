@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 const { GET, POST, PATCH, DELETE } = require("../src/app/api/preview/[projectId]/[[...path]]/route") as typeof import("../src/app/api/preview/[projectId]/[[...path]]/route");
 const { durablePersistenceConfigured, durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { localProjectStore } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
-const { createPreviewGuestCapability } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
+const { createPreviewGuestCapability, sealPreviewAuthStorage } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 
 type RouteContext = { params: Promise<{ projectId: string; path?: string[] }> };
 
@@ -169,7 +169,8 @@ test("public generated apps receive refresh-stable owner-scoped guest persistenc
     const cookie = setCookie.split(";")[0];
     assert.ok(firstCapability && cookie, "Preview did not issue a guest identity");
 
-    const storageUrl = `${rootUrl}__bigbag/auth/storage?key=preview-session`;
+    const authStorageKey = `bigbag-preview-${projectId}-auth`;
+    const storageUrl = `${rootUrl}__bigbag/auth/storage?key=${encodeURIComponent(authStorageKey)}`;
     const storageContext: RouteContext = {
       params: Promise.resolve({ projectId, path: ["__bigbag", "auth", "storage"] }),
     };
@@ -186,18 +187,128 @@ test("public generated apps receive refresh-stable owner-scoped guest persistenc
     assert.equal(storageWrite.status, 200);
     assert.equal(storageWrite.headers.get("access-control-allow-origin"), "null");
     assert.equal(storageWrite.headers.get("access-control-allow-credentials"), "true");
+    assert.match(storageWrite.headers.get("set-cookie") || "", /SameSite=None/i);
+    assert.match(storageWrite.headers.get("set-cookie") || "", /Secure/i);
     const authCookie = (storageWrite.headers.get("set-cookie") || "").match(/bigbag_preview_auth=[^;]+/)?.[0];
     assert.ok(authCookie, "Secure auth storage cookie was not issued");
 
     const storageRead = await GET(new NextRequest(storageUrl, {
-      headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
+      headers: { cookie, origin: "null", "x-bigbag-guest": firstCapability },
     }), storageContext);
     assert.deepEqual(await storageRead.json(), { value: '{"access_token":"refresh-stable"}' });
+
+    const guestId = firstCapability.split(".")[1];
+    const newerCookieToken = sealPreviewAuthStorage(projectId, guestId, authStorageKey, '{"access_token":"newer-cookie"}', Date.now() + 1);
+    const newerCookieRead = await GET(new NextRequest(storageUrl, {
+      headers: { cookie: `${cookie}; bigbag_preview_auth=${newerCookieToken}`, origin: "null", "x-bigbag-guest": firstCapability },
+    }), storageContext);
+    assert.deepEqual(await newerCookieRead.json(), { value: '{"access_token":"newer-cookie"}' });
+
+    const newerDurableToken = sealPreviewAuthStorage(projectId, guestId, authStorageKey, '{"access_token":"newer-durable"}', Date.now() + 2);
+    await durableProjectStore.writePreviewAuthStorage(projectId, guestId, authStorageKey, newerDurableToken);
+    const newerDurableRead = await GET(new NextRequest(storageUrl, {
+      headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
+    }), storageContext);
+    assert.deepEqual(await newerDurableRead.json(), { value: '{"access_token":"newer-durable"}' });
+
+    const originalReadPreviewAuthStorage = durableProjectStore.readPreviewAuthStorage;
+    durableProjectStore.readPreviewAuthStorage = async () => { throw new Error("simulated durable read outage"); };
+    try {
+      const fallbackRead = await GET(new NextRequest(storageUrl, {
+        headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
+      }), storageContext);
+      assert.deepEqual(await fallbackRead.json(), { value: '{"access_token":"refresh-stable"}' });
+    } finally {
+      durableProjectStore.readPreviewAuthStorage = originalReadPreviewAuthStorage;
+    }
+
+    const originalWritePreviewAuthStorage = durableProjectStore.writePreviewAuthStorage;
+    durableProjectStore.writePreviewAuthStorage = async () => { throw new Error("simulated durable write outage"); };
+    try {
+      const fallbackWrite = await POST(new NextRequest(storageUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          origin: "null",
+          "x-bigbag-guest": firstCapability,
+        },
+        body: JSON.stringify({ value: '{"access_token":"cookie-fallback"}' }),
+      }), storageContext);
+      assert.equal(fallbackWrite.status, 200);
+      assert.match(fallbackWrite.headers.get("set-cookie") || "", /bigbag_preview_auth=/);
+    } finally {
+      durableProjectStore.writePreviewAuthStorage = originalWritePreviewAuthStorage;
+    }
+
+    const originalDeletePreviewAuthStorage = durableProjectStore.deletePreviewAuthStorage;
+    durableProjectStore.deletePreviewAuthStorage = async () => { throw new Error("simulated durable delete outage"); };
+    try {
+      const failedDelete = await DELETE(new NextRequest(storageUrl, {
+        method: "DELETE",
+        headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
+      }), storageContext);
+      assert.equal(failedDelete.status, 503);
+      assert.equal(failedDelete.headers.get("set-cookie"), null, "A failed durable delete cleared the retryable auth cookie");
+    } finally {
+      durableProjectStore.deletePreviewAuthStorage = originalDeletePreviewAuthStorage;
+    }
+
+    durableProjectStore.readPreviewAuthStorage = async () => { throw new Error("simulated sign-out read outage"); };
+    try {
+      const deleteAfterReadFailure = await DELETE(new NextRequest(storageUrl, {
+        method: "DELETE",
+        headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
+      }), storageContext);
+      assert.equal(deleteAfterReadFailure.status, 200);
+      assert.match(deleteAfterReadFailure.headers.get("set-cookie") || "", /Max-Age=0/i);
+    } finally {
+      durableProjectStore.readPreviewAuthStorage = originalReadPreviewAuthStorage;
+    }
+
+    const localStorageWrite = await POST(new NextRequest(
+      `http://localhost:3000/api/preview/${projectId}/__bigbag/auth/storage?key=${encodeURIComponent(authStorageKey)}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie,
+          origin: "http://localhost:3000",
+          "x-bigbag-guest": firstCapability,
+        },
+        body: JSON.stringify({ value: '{"access_token":"local-refresh-stable"}' }),
+      }
+    ), storageContext);
+    const localCookie = localStorageWrite.headers.get("set-cookie") || "";
+    assert.match(localCookie, /SameSite=None/i);
+    assert.match(localCookie, /;\s*Secure/i);
+
+    const originalWriteForInsecureHost = durableProjectStore.writePreviewAuthStorage;
+    durableProjectStore.writePreviewAuthStorage = async () => { throw new Error("simulated insecure-host durable write outage"); };
+    try {
+      const insecureFallback = await POST(new NextRequest(
+        `http://preview.internal/api/preview/${projectId}/__bigbag/auth/storage?key=${encodeURIComponent(authStorageKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie,
+            origin: "null",
+            "x-bigbag-guest": firstCapability,
+          },
+          body: JSON.stringify({ value: '{"access_token":"must-not-be-lost"}' }),
+        }
+      ), storageContext);
+      assert.equal(insecureFallback.status, 503);
+      assert.equal(insecureFallback.headers.get("set-cookie"), null);
+    } finally {
+      durableProjectStore.writePreviewAuthStorage = originalWriteForInsecureHost;
+    }
     const mismatchedDelete = await DELETE(new NextRequest(`${rootUrl}__bigbag/auth/storage?key=other-session`, {
       method: "DELETE",
       headers: { cookie: `${cookie}; ${authCookie}`, origin: "null", "x-bigbag-guest": firstCapability },
     }), storageContext);
-    assert.equal(mismatchedDelete.status, 200);
+    assert.equal(mismatchedDelete.status, 400);
     assert.equal(mismatchedDelete.headers.get("set-cookie"), null, "A mismatched key cleared the auth cookie");
 
     const createdResponse = await POST(

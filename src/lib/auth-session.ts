@@ -59,6 +59,18 @@ export function isCloudOperator(session: AuthSession): boolean {
   return allowed.has(session.sub);
 }
 
+/** Qualification evidence spans projects and tenants, so ordinary signed-in
+ * users must never be able to inspect it. */
+export function isQualificationOperator(session: AuthSession): boolean {
+  const allowed = new Set(
+    (process.env.QUALIFICATION_OPERATOR_UIDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+  return allowed.has(session.sub);
+}
+
 export const authCookieOptions = {
   httpOnly: true,
   sameSite: "lax" as const,

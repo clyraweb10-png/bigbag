@@ -16,7 +16,7 @@ import {
 const PREVIEW_PORT = 3000;
 const SANDBOX_TIMEOUT_MS = 3_600_000;
 const INSTALL_TIMEOUT_MS = 180_000;
-const BUILD_TIMEOUT_MS = 120_000;
+const BUILD_TIMEOUT_MS = 300_000;
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
@@ -55,6 +55,13 @@ type SharedE2BState = {
   activeSandboxes: Map<string, Sandbox>;
   activeUrls: Map<string, string>;
   initializing: Map<string, { promise: Promise<string>; rebuild: boolean; controller?: AbortController }>;
+  activeBuilds?: number;
+  buildWaiters?: Array<{
+    resolve: () => void;
+    reject: (error: unknown) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }>;
 };
 
 const stateKey = Symbol.for("bigbag.local-orchestrator.e2b-state");
@@ -63,8 +70,75 @@ const sharedState: SharedE2BState = globalState[stateKey] || {
   activeSandboxes: new Map<string, Sandbox>(),
   activeUrls: new Map<string, string>(),
   initializing: new Map<string, { promise: Promise<string>; rebuild: boolean; controller?: AbortController }>(),
+  activeBuilds: 0,
+  buildWaiters: [],
 };
 globalState[stateKey] = sharedState;
+
+function e2bBuildConcurrency(): number {
+  const configured = Number.parseInt(process.env.E2B_BUILD_CONCURRENCY || "1", 10);
+  return Number.isInteger(configured) && configured > 0 ? Math.min(configured, 10) : 1;
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
+}
+
+function drainBuildWaiters(): void {
+  const waiters = sharedState.buildWaiters || (sharedState.buildWaiters = []);
+  sharedState.activeBuilds ||= 0;
+  while (sharedState.activeBuilds < e2bBuildConcurrency() && waiters.length > 0) {
+    const waiter = waiters.shift()!;
+    if (waiter.onAbort) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    if (waiter.signal?.aborted) {
+      waiter.reject(abortReason(waiter.signal));
+      continue;
+    }
+    sharedState.activeBuilds += 1;
+    waiter.resolve();
+  }
+}
+
+async function acquireE2BBuildSlot(signal?: AbortSignal): Promise<() => void> {
+  signal?.throwIfAborted();
+  const waiters = sharedState.buildWaiters || (sharedState.buildWaiters = []);
+  sharedState.activeBuilds ||= 0;
+  if (sharedState.activeBuilds < e2bBuildConcurrency() && waiters.length === 0) {
+    sharedState.activeBuilds += 1;
+  } else {
+    await new Promise<void>((resolve, reject) => {
+      const waiter: NonNullable<SharedE2BState["buildWaiters"]>[number] = { resolve, reject, signal };
+      waiters.push(waiter);
+      if (signal) {
+        waiter.onAbort = () => {
+          const index = waiters.indexOf(waiter);
+          if (index >= 0) waiters.splice(index, 1);
+          reject(abortReason(signal));
+        };
+        signal.addEventListener("abort", waiter.onAbort, { once: true });
+        if (signal.aborted) waiter.onAbort();
+      }
+    });
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    sharedState.activeBuilds = Math.max(0, (sharedState.activeBuilds || 1) - 1);
+    drainBuildWaiters();
+  };
+}
+
+export async function withE2BBuildSlot<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
+  const release = await acquireE2BBuildSlot(signal);
+  try {
+    signal?.throwIfAborted();
+    return await task();
+  } finally {
+    release();
+  }
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -369,44 +443,46 @@ class E2BSandboxManager {
         // before any disposable build worker is created.
         await localProjectStore.persistSource(projectId);
         signal.throwIfAborted();
-        const sandbox = await this.createSandbox(projectId, apiKey);
-        if (signal.aborted) {
-          await sandbox.kill().catch(() => undefined);
-          signal.throwIfAborted();
-        }
-        const onCancel = () => { void sandbox.kill().catch(() => undefined); };
-        signal.addEventListener("abort", onCancel, { once: true });
-        try {
-          const build = await this.compileAndStart(projectId, sandbox, signal);
-          signal.throwIfAborted();
-          const deployment = {
-            status: "success" as const,
-            createdAt: new Date().toISOString(),
-            versionId: randomUUID(),
-          };
-          const current = localProjectStore.getRecord(projectId);
-          if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
-          const deploymentFields = {
-            serverStatus: "Active" as const,
-            previewUrl: persistentPreviewPath(projectId),
-            productionProjectUrl: persistentPreviewUrl(projectId),
-            sandboxId: undefined,
-            deployment,
-          };
-          // Never advertise a successful preview before the transactional
-          // artifact snapshot commits. An aborted transaction keeps the last
-          // deployed version visible (or keeps this project unready).
-          await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
-          signal.throwIfAborted();
-          localProjectStore.update(projectId, deploymentFields);
-          await sandbox.kill().catch(() => undefined);
-          this.activeSandboxes.delete(projectId);
-          this.activeUrls.delete(projectId);
-          console.log(`[E2B] Build verified and deployed persistently for ${projectId}`);
-          return persistentPreviewPath(projectId);
-        } finally {
-          signal.removeEventListener("abort", onCancel);
-        }
+        return await withE2BBuildSlot(signal, async () => {
+          const sandbox = await this.createSandbox(projectId, apiKey);
+          if (signal.aborted) {
+            await sandbox.kill().catch(() => undefined);
+            signal.throwIfAborted();
+          }
+          const onCancel = () => { void sandbox.kill().catch(() => undefined); };
+          signal.addEventListener("abort", onCancel, { once: true });
+          try {
+            const build = await this.compileAndStart(projectId, sandbox, signal);
+            signal.throwIfAborted();
+            const deployment = {
+              status: "success" as const,
+              createdAt: new Date().toISOString(),
+              versionId: randomUUID(),
+            };
+            const current = localProjectStore.getRecord(projectId);
+            if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
+            const deploymentFields = {
+              serverStatus: "Active" as const,
+              previewUrl: persistentPreviewPath(projectId),
+              productionProjectUrl: persistentPreviewUrl(projectId),
+              sandboxId: undefined,
+              deployment,
+            };
+            // Never advertise a successful preview before the transactional
+            // artifact snapshot commits. An aborted transaction keeps the last
+            // deployed version visible (or keeps this project unready).
+            await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
+            signal.throwIfAborted();
+            localProjectStore.update(projectId, deploymentFields);
+            await sandbox.kill().catch(() => undefined);
+            this.activeSandboxes.delete(projectId);
+            this.activeUrls.delete(projectId);
+            console.log(`[E2B] Build verified and deployed persistently for ${projectId}`);
+            return persistentPreviewPath(projectId);
+          } finally {
+            signal.removeEventListener("abort", onCancel);
+          }
+        });
       } catch (error) {
         const sandbox = this.activeSandboxes.get(projectId);
         if (sandbox) await sandbox.kill().catch(() => undefined);

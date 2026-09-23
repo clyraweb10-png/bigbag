@@ -10,8 +10,19 @@ export type AppRecord = Record<string, unknown> & {
   createdAt: string;
   updatedAt: string;
 };
+export type QualificationEvidence = Record<string, unknown> & {
+  projectNumber: number;
+  projectName: string;
+  category: string;
+  projectId: string;
+  generationId: string;
+  statuses: { final?: string };
+};
 
 const SOURCE_IGNORED = new Set(["node_modules", ".next", ".git", ".turbo", "dist", "build"]);
+const PREVIEW_AUTH_STORAGE_TTL_MS = 30 * 24 * 60 * 60_000;
+const MAX_PREVIEW_AUTH_SESSIONS_PER_PROJECT = 100_000;
+const PREVIEW_AUTH_GLOBAL_PURGE_BATCH = 1_000;
 let pgPool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 
@@ -107,6 +118,37 @@ async function ensureSchema(): Promise<Pool | null> {
           ALTER TABLE public.builder_app_records ADD COLUMN IF NOT EXISTS owner_id TEXT;
           CREATE INDEX IF NOT EXISTS builder_app_records_owner
             ON public.builder_app_records (project_id, collection_name, owner_id, updated_at DESC);
+          CREATE TABLE IF NOT EXISTS public.builder_preview_auth_storage (
+            project_id TEXT NOT NULL,
+            guest_id TEXT NOT NULL,
+            storage_key TEXT NOT NULL,
+            sealed_value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, guest_id, storage_key),
+            FOREIGN KEY (project_id) REFERENCES public.builder_projects(project_id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS builder_preview_auth_storage_updated
+            ON public.builder_preview_auth_storage (updated_at);
+          CREATE TABLE IF NOT EXISTS public.builder_qualification_results (
+            run_id TEXT NOT NULL,
+            project_number INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            final_status TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, project_number)
+          );
+          CREATE INDEX IF NOT EXISTS builder_qualification_results_updated
+            ON public.builder_qualification_results (updated_at DESC);
+          CREATE TABLE IF NOT EXISTS public.builder_qualification_benchmarks (
+            run_id TEXT NOT NULL,
+            benchmark_key TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, benchmark_key)
+          );
         `);
       } finally {
         client.release();
@@ -624,6 +666,180 @@ export const durableProjectStore = {
       [projectId, collection, recordId, ownerId || null]
     );
     return (res.rowCount ?? 0) > 0;
+  },
+
+  async readPreviewAuthStorage(projectId: string, guestId: string, storageKey: string): Promise<string | null> {
+    const pool = await requireSchema();
+    const activeSince = new Date(Date.now() - PREVIEW_AUTH_STORAGE_TTL_MS).toISOString();
+    const res = await pool.query(
+      `SELECT sealed_value FROM public.builder_preview_auth_storage
+       WHERE project_id = $1 AND guest_id = $2 AND storage_key = $3 AND updated_at >= $4 LIMIT 1`,
+      [projectId, guestId, storageKey, activeSince]
+    );
+    return res.rows[0] ? rowText(res.rows[0].sealed_value) : null;
+  },
+
+  async writePreviewAuthStorage(
+    projectId: string,
+    guestId: string,
+    storageKey: string,
+    sealedValue: string
+  ): Promise<void> {
+    const pool = await requireSchema();
+    const now = new Date().toISOString();
+    const activeSince = new Date(Date.now() - PREVIEW_AUTH_STORAGE_TTL_MS).toISOString();
+    await pool.query(
+      `DELETE FROM public.builder_preview_auth_storage
+       WHERE updated_at < $1 AND (project_id, guest_id, storage_key) IN (
+         SELECT project_id, guest_id, storage_key
+         FROM public.builder_preview_auth_storage
+         WHERE updated_at < $1
+         ORDER BY updated_at ASC
+         LIMIT $2
+       )`,
+      [activeSince, PREVIEW_AUTH_GLOBAL_PURGE_BATCH]
+    );
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [projectId, "preview-auth"]);
+      await client.query(
+        "DELETE FROM public.builder_preview_auth_storage WHERE project_id = $1 AND updated_at < $2",
+        [projectId, activeSince]
+      );
+      const existing = await client.query(
+        `SELECT 1 FROM public.builder_preview_auth_storage
+         WHERE project_id = $1 AND guest_id = $2 AND storage_key = $3 LIMIT 1`,
+        [projectId, guestId, storageKey]
+      );
+      if ((existing.rowCount ?? 0) === 0) {
+        const count = await client.query(
+          "SELECT COUNT(*)::int AS count FROM public.builder_preview_auth_storage WHERE project_id = $1",
+          [projectId]
+        );
+        if (Number(count.rows[0]?.count || 0) >= MAX_PREVIEW_AUTH_SESSIONS_PER_PROJECT) {
+          throw new Error("Preview authentication session capacity reached");
+        }
+      }
+      const res = await client.query(
+        `INSERT INTO public.builder_preview_auth_storage
+         (project_id, guest_id, storage_key, sealed_value, updated_at)
+         SELECT project_id, $2, $3, $4, $5 FROM public.builder_projects WHERE project_id = $1
+         ON CONFLICT (project_id, guest_id, storage_key) DO UPDATE SET
+           sealed_value = EXCLUDED.sealed_value,
+           updated_at = EXCLUDED.updated_at`,
+        [projectId, guestId, storageKey, sealedValue, now]
+      );
+      if ((res.rowCount ?? 0) !== 1) throw new Error("Project not found");
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async deletePreviewAuthStorage(projectId: string, guestId: string, storageKey: string): Promise<boolean> {
+    const pool = await requireSchema();
+    const res = await pool.query(
+      `DELETE FROM public.builder_preview_auth_storage
+       WHERE project_id = $1 AND guest_id = $2 AND storage_key = $3`,
+      [projectId, guestId, storageKey]
+    );
+    return (res.rowCount ?? 0) > 0;
+  },
+
+  async saveQualificationEvidence(runId: string, evidence: QualificationEvidence): Promise<void> {
+    const pool = await requireSchema();
+    if (!/^[a-z0-9-]{1,120}$/i.test(runId)) throw new Error("Invalid qualification run id");
+    if (!Number.isInteger(evidence.projectNumber) || evidence.projectNumber < 1 || evidence.projectNumber > 100) {
+      throw new Error("Invalid qualification project number");
+    }
+    const updatedAt = new Date().toISOString();
+    await pool.query(
+      `INSERT INTO public.builder_qualification_results
+       (run_id, project_number, category, project_id, generation_id, final_status, evidence_json, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (run_id, project_number) DO UPDATE SET
+         category = EXCLUDED.category,
+         project_id = EXCLUDED.project_id,
+         generation_id = EXCLUDED.generation_id,
+         final_status = EXCLUDED.final_status,
+         evidence_json = EXCLUDED.evidence_json,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        runId,
+        evidence.projectNumber,
+        evidence.category,
+        evidence.projectId,
+        evidence.generationId,
+        evidence.statuses.final || "FAIL",
+        JSON.stringify(evidence),
+        updatedAt,
+      ]
+    );
+  },
+
+  async listQualificationEvidence(runId?: string): Promise<{ runId: string | null; results: QualificationEvidence[] }> {
+    const pool = await requireSchema();
+    const selectedRun = runId || rowText((await pool.query(
+      "SELECT run_id FROM public.builder_qualification_results ORDER BY updated_at DESC LIMIT 1"
+    )).rows[0]?.run_id);
+    if (!selectedRun) return { runId: null, results: [] };
+    const res = await pool.query(
+      `SELECT evidence_json FROM public.builder_qualification_results
+       WHERE run_id = $1 ORDER BY project_number ASC`,
+      [selectedRun]
+    );
+    return {
+      runId: selectedRun,
+      results: res.rows.map((row) => JSON.parse(rowText(row.evidence_json)) as QualificationEvidence),
+    };
+  },
+
+  async removeQualificationRun(runId: string): Promise<number> {
+    const pool = await requireSchema();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM public.builder_qualification_benchmarks WHERE run_id = $1", [runId]);
+      const res = await client.query("DELETE FROM public.builder_qualification_results WHERE run_id = $1", [runId]);
+      await client.query("COMMIT");
+      return res.rowCount ?? 0;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async saveQualificationBenchmark(runId: string, key: string, evidence: Record<string, unknown>): Promise<void> {
+    const pool = await requireSchema();
+    if (!/^[a-z0-9-]{1,120}$/i.test(runId) || !/^[a-z0-9-]{1,80}$/i.test(key)) {
+      throw new Error("Invalid qualification benchmark identity");
+    }
+    await pool.query(
+      `INSERT INTO public.builder_qualification_benchmarks (run_id, benchmark_key, evidence_json, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (run_id, benchmark_key) DO UPDATE SET
+         evidence_json = EXCLUDED.evidence_json,
+         updated_at = EXCLUDED.updated_at`,
+      [runId, key, JSON.stringify(evidence), new Date().toISOString()]
+    );
+  },
+
+  async listQualificationBenchmarks(runId: string): Promise<Record<string, Record<string, unknown>>> {
+    const pool = await requireSchema();
+    const res = await pool.query(
+      "SELECT benchmark_key, evidence_json FROM public.builder_qualification_benchmarks WHERE run_id = $1",
+      [runId]
+    );
+    return Object.fromEntries(res.rows.map((row) => [
+      rowText(row.benchmark_key),
+      JSON.parse(rowText(row.evidence_json)) as Record<string, unknown>,
+    ]));
   },
 
   async remove(projectId: string, tenantId: string): Promise<boolean> {

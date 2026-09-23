@@ -64,6 +64,7 @@ export function sealPreviewAuthStorage(
     guestId,
     key,
     value,
+    sealedAt: now,
     expiresAt: now + PREVIEW_AUTH_STORAGE_TTL_MS,
   }), "utf8"));
   const iv = randomBytes(12);
@@ -79,6 +80,16 @@ export function openPreviewAuthStorage(
   key: string,
   now = Date.now()
 ): string | null {
+  return openPreviewAuthStorageRecord(token, projectId, guestId, key, now)?.value ?? null;
+}
+
+export function openPreviewAuthStorageRecord(
+  token: string | undefined,
+  projectId: string,
+  guestId: string,
+  key: string,
+  now = Date.now()
+): { value: string; sealedAt: number } | null {
   if (!token || token.length > 4_000 || !projectId || !TENANT_ID.test(guestId) || !key) return null;
   try {
     const sealed = Buffer.from(token, "base64url");
@@ -96,10 +107,15 @@ export function openPreviewAuthStorage(
       payload.key !== key ||
       typeof payload.value !== "string" ||
       typeof payload.expiresAt !== "number" ||
+      (payload.sealedAt !== undefined && typeof payload.sealedAt !== "number") ||
       payload.expiresAt < now ||
       payload.expiresAt > now + PREVIEW_AUTH_STORAGE_TTL_MS + 60_000
     ) return null;
-    return payload.value;
+    const sealedAt = typeof payload.sealedAt === "number"
+      ? payload.sealedAt
+      : payload.expiresAt - PREVIEW_AUTH_STORAGE_TTL_MS;
+    if (sealedAt > now + 60_000 || sealedAt < payload.expiresAt - PREVIEW_AUTH_STORAGE_TTL_MS - 60_000) return null;
+    return { value: payload.value, sealedAt };
   } catch {
     return null;
   }

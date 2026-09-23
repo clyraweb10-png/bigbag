@@ -29,6 +29,7 @@ export function isProtectedPagePath(pathname: string): boolean {
   return (
     pathname === "/dashboard" ||
     pathname === "/generate" ||
+    pathname === "/qualification" ||
     pathname.startsWith("/project/")
   );
 }

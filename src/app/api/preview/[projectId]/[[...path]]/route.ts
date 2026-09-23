@@ -22,7 +22,7 @@ import {
     createPreviewGuestCapability,
     createPreviewWriteCapability,
     consumePreviewGuestMutationBudget,
-    openPreviewAuthStorage,
+    openPreviewAuthStorageRecord,
     PREVIEW_GUEST_COOKIE,
     resolvePreviewGuest,
     sealPreviewAuthStorage,
@@ -117,6 +117,10 @@ const APP_DATA_MAX_BODY_BYTES = 64 * 1024;
 const PREVIEW_GUEST_PROJECT_RECORD_LIMIT = 500;
 const PREVIEW_AUTH_STORAGE_COOKIE = "bigbag_preview_auth";
 
+function previewAuthStorageKey(projectId: string): string {
+    return `bigbag-preview-${projectId}-auth`;
+}
+
 function appDataHeaders(): HeadersInit {
     return {
         "access-control-allow-origin": "*",
@@ -147,16 +151,56 @@ function previewAuthStorageHeaders(request: NextRequest): HeadersInit {
     };
 }
 
+function previewAuthCookieOptions(request: NextRequest): {
+    secure: boolean;
+    sameSite: "lax" | "none";
+} {
+    const forwardedProtocol = request.headers.get("x-forwarded-proto")
+        ?.split(",")[0]
+        ?.trim()
+        .toLowerCase();
+    const hostname = request.nextUrl.hostname.toLowerCase();
+    const localSecureContext = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    const secure = request.nextUrl.protocol === "https:" || forwardedProtocol === "https" || localSecureContext;
+    return { secure, sameSite: secure ? "none" : "lax" };
+}
+
+function newestPreviewAuthValue(
+    durableToken: string | null,
+    cookieToken: string | undefined,
+    projectId: string,
+    guestId: string,
+    key: string
+): string | null {
+    const durable = openPreviewAuthStorageRecord(durableToken || undefined, projectId, guestId, key);
+    const cookie = openPreviewAuthStorageRecord(cookieToken, projectId, guestId, key);
+    if (!durable) return cookie?.value ?? null;
+    if (!cookie) return durable.value;
+    return cookie.sealedAt > durable.sealedAt ? cookie.value : durable.value;
+}
+
 async function servePreviewAuthStorage(request: NextRequest, projectId: string): Promise<NextResponse> {
     const headers = previewAuthStorageHeaders(request);
     if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers });
     const guestId = verifyPreviewGuestCapability(request.headers.get("x-bigbag-guest"), projectId);
     if (!guestId) return NextResponse.json({ error: "Preview session authorization required" }, { status: 401, headers });
     const key = request.nextUrl.searchParams.get("key")?.trim() || "";
-    if (!key || key.length > 256) return NextResponse.json({ error: "Invalid storage key" }, { status: 400, headers });
+    if (key !== previewAuthStorageKey(projectId)) {
+        return NextResponse.json({ error: "Invalid storage key" }, { status: 400, headers });
+    }
 
     if (request.method === "GET") {
-        const value = openPreviewAuthStorage(
+        let stored: string | null = null;
+        try {
+            stored = await durableProjectStore.readPreviewAuthStorage(projectId, guestId, key);
+        } catch (error) {
+            console.warn("[preview-auth] Durable session read unavailable; using the encrypted cookie fallback", {
+                projectId,
+                error: error instanceof Error ? error.message : "Unknown storage error",
+            });
+        }
+        const value = newestPreviewAuthValue(
+            stored,
             request.cookies.get(PREVIEW_AUTH_STORAGE_COOKIE)?.value,
             projectId,
             guestId,
@@ -165,18 +209,39 @@ async function servePreviewAuthStorage(request: NextRequest, projectId: string):
         return NextResponse.json({ value }, { headers });
     }
     if (request.method === "DELETE") {
-        const response = NextResponse.json({ ok: true }, { headers });
-        const storedValue = openPreviewAuthStorage(
+        let durableStored: string | null = null;
+        let durableReadFailed = false;
+        try {
+            durableStored = await durableProjectStore.readPreviewAuthStorage(projectId, guestId, key);
+        } catch (error) {
+            durableReadFailed = true;
+            console.warn("[preview-auth] Durable session read unavailable during sign-out", {
+                projectId,
+                error: error instanceof Error ? error.message : "Unknown storage error",
+            });
+        }
+        const storedValue = newestPreviewAuthValue(
+            durableStored,
             request.cookies.get(PREVIEW_AUTH_STORAGE_COOKIE)?.value,
             projectId,
             guestId,
             key
         );
-        if (storedValue === null) return response;
+        if (storedValue === null && !durableReadFailed) return NextResponse.json({ ok: true }, { headers });
+        try {
+            await durableProjectStore.deletePreviewAuthStorage(projectId, guestId, key);
+        } catch (error) {
+            console.warn("[preview-auth] Durable session delete unavailable; preserving the cookie so sign-out can be retried", {
+                projectId,
+                error: error instanceof Error ? error.message : "Unknown storage error",
+            });
+            return NextResponse.json({ error: "Secure session sign-out is temporarily unavailable" }, { status: 503, headers });
+        }
+        const response = NextResponse.json({ ok: true }, { headers });
+        const cookieSecurity = previewAuthCookieOptions(request);
         response.cookies.set(PREVIEW_AUTH_STORAGE_COOKIE, "", {
             httpOnly: true,
-            sameSite: "none",
-            secure: true,
+            ...cookieSecurity,
             path: `/api/preview/${encodeURIComponent(projectId)}`,
             maxAge: 0,
         });
@@ -205,13 +270,24 @@ async function servePreviewAuthStorage(request: NextRequest, projectId: string):
         if (sealed.length > 3_800) {
             return NextResponse.json({ error: "Session value exceeds secure cookie capacity" }, { status: 413, headers });
         }
+        const cookieSecurity = previewAuthCookieOptions(request);
+        try {
+            await durableProjectStore.writePreviewAuthStorage(projectId, guestId, key, sealed);
+        } catch (error) {
+            console.warn("[preview-auth] Durable session write unavailable", {
+                projectId,
+                error: error instanceof Error ? error.message : "Unknown storage error",
+            });
+            if (cookieSecurity.sameSite !== "none") {
+                return NextResponse.json({ error: "Secure session persistence is temporarily unavailable" }, { status: 503, headers });
+            }
+        }
         const response = NextResponse.json({ ok: true }, { headers });
         response.cookies.set(PREVIEW_AUTH_STORAGE_COOKIE, sealed, {
             httpOnly: true,
             // The preview document intentionally has an opaque origin, so this
             // same-host fetch is a third-party context from the browser's view.
-            sameSite: "none",
-            secure: true,
+            ...cookieSecurity,
             path: `/api/preview/${encodeURIComponent(projectId)}`,
             maxAge: 60 * 60 * 24 * 30,
         });

@@ -23,6 +23,8 @@ export interface RouterCompletionResult {
   durationMs: number;
   attempts: number;
   continuationAttempts: number;
+  /** Internal qualification telemetry; never include provider credentials or response content. */
+  failureCategories: ProviderErrorCategory[];
 }
 
 export type ProviderErrorCategory =
@@ -317,6 +319,7 @@ class MultiModelRouter {
 
     let requestAttempts = 0;
     let lastError = new ProviderRequestError("Provider request failed", "unknown", false);
+    const failureCategories: ProviderErrorCategory[] = [];
 
     for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
       options.signal?.throwIfAborted();
@@ -506,6 +509,7 @@ class MultiModelRouter {
               durationMs: Date.now() - startedAt,
               attempts: requestAttempts,
               continuationAttempts: continuation,
+              failureCategories,
             };
           }
 
@@ -562,6 +566,7 @@ class MultiModelRouter {
           partialResponseLength: lastError.partialText.length,
           reason: safeProviderMessage(lastError.message),
         })}`);
+        failureCategories.push(lastError.category);
 
         if (!lastError.retryable) break;
       }
@@ -622,7 +627,7 @@ class MultiModelRouter {
       onStatus?.("Generating the implementation…");
 
       try {
-        return await this.tryProvider(provider, messages, onStatus, {
+        const result = await this.tryProvider(provider, messages, onStatus, {
           deadlineAt: providerDeadlineAt,
           perProviderTimeoutMs,
           maxTokens: options.maxTokens,
@@ -635,6 +640,13 @@ class MultiModelRouter {
           signal: options.signal,
           requestLabel: options.requestLabel?.trim() || "generation",
         });
+        return {
+          ...result,
+          failureCategories: [
+            ...errors.map((error) => error.category),
+            ...result.failureCategories,
+          ],
+        };
       } catch (err: any) {
         const providerError = err instanceof ProviderRequestError
           ? err

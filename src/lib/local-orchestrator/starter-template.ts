@@ -146,20 +146,46 @@ async function authStorageRequest(key: string, method: "GET" | "POST" | "DELETE"
   return payload?.value ?? null;
 }
 
+let previewSessionKey: string | null = null;
+const transientAuthStorage = new Map<string, string>();
+
+function getTransientAuthValue(key: string): string | null {
+  try {
+    return window.sessionStorage.getItem(key) ?? transientAuthStorage.get(key) ?? null;
+  } catch {
+    return transientAuthStorage.get(key) ?? null;
+  }
+}
+
+function setTransientAuthValue(key: string, value: string): void {
+  transientAuthStorage.set(key, value);
+  try { window.sessionStorage.setItem(key, value); } catch { /* opaque previews use the in-memory fallback */ }
+}
+
+function removeTransientAuthValue(key: string): void {
+  transientAuthStorage.delete(key);
+  try { window.sessionStorage.removeItem(key); } catch { /* opaque previews use the in-memory fallback */ }
+}
+
 const previewAuthStorage = {
   getItem(key: string) {
-    return authStorageRequest(key, "GET");
+    if (key === previewSessionKey) return authStorageRequest(key, "GET");
+    return Promise.resolve(getTransientAuthValue(key));
   },
   async setItem(key: string, value: string) {
-    await authStorageRequest(key, "POST", value);
+    if (key === previewSessionKey) await authStorageRequest(key, "POST", value);
+    else setTransientAuthValue(key, value);
   },
   async removeItem(key: string) {
-    await authStorageRequest(key, "DELETE");
+    if (key === previewSessionKey) await authStorageRequest(key, "DELETE");
+    else removeTransientAuthValue(key);
   },
 };
 
 async function createClientPromise() {
-  const response = await fetch(previewBase() + "/__bigbag/auth/config", { cache: "no-store" });
+  const base = previewBase();
+  previewSessionKey = "bigbag-preview-" + base.split("/").at(-1) + "-auth";
+  const response = await fetch(base + "/__bigbag/auth/config", { cache: "no-store" });
   const payload = await response.json().catch(() => null) as { data?: AuthConfig; error?: string } | null;
   if (response.status === 503) authUnavailable = true;
   if (!response.ok || !payload?.data) throw new Error(payload?.error || "Authentication is not configured");
@@ -169,7 +195,7 @@ async function createClientPromise() {
       autoRefreshToken: true,
       detectSessionInUrl: true,
       storage: previewAuthStorage,
-      storageKey: "bigbag-preview-" + previewBase().split("/").at(-1) + "-auth",
+      storageKey: previewSessionKey,
     },
   });
 }
@@ -196,6 +222,8 @@ export async function getAuthAccessToken(): Promise<string | null> {
 
 registerAuthTokenProvider(getAuthAccessToken);
 
+function onAuthStateChange(callback: (session: Session | null) => void): AuthUnsubscribe;
+function onAuthStateChange(callback: (event: AuthChangeEvent, session: Session | null) => void): AuthUnsubscribe;
 function onAuthStateChange(
   callback:
     | ((session: Session | null) => void)

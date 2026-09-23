@@ -53,6 +53,25 @@ function structuredFileIssue(filePath: string, content: string): string | null {
   return null;
 }
 
+function nonCodeComponentIssue(filePath: string, content: string): string | null {
+  if (!/\.(?:tsx|jsx)$/.test(filePath)) return null;
+  const sourceFile = sourceFileFor(filePath, content);
+  const hasModuleCode = sourceFile.statements.some((statement) =>
+    ts.isImportDeclaration(statement) ||
+    ts.isImportEqualsDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    ts.isExportAssignment(statement) ||
+    ts.isVariableStatement(statement) ||
+    ts.isFunctionDeclaration(statement) ||
+    ts.isClassDeclaration(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement) ||
+    ts.isEnumDeclaration(statement) ||
+    ts.isModuleDeclaration(statement)
+  );
+  return hasModuleCode ? null : `non-code content in ${filePath}; return a complete component module`;
+}
+
 function referencedEnvironmentVariables(content: string): string[] {
   const names = new Set<string>();
   for (const match of content.matchAll(/\bprocess\.env\.([A-Z][A-Z0-9_]*)\b/g)) {
@@ -143,6 +162,28 @@ export function containsGenerationPlaceholder(content: string): boolean {
     /className\s*=\s*["']\s*\.{3}\s*["']/.test(content) ||
     /(?:\/\/[^\n]*\b(?:TODO|FIXME)\b|\/\*[\s\S]*?\b(?:TODO|FIXME)\b[\s\S]*?\*\/)/.test(content)
   );
+}
+
+/**
+ * Keep files named by validation diagnostics at the front of the bounded
+ * repair context. Large generations previously truncated the failing file out
+ * of the prompt, causing repeated model rewrites that could never address the
+ * reported syntax error.
+ */
+export function validationRepairContext(
+  files: GeneratedSourceFile[],
+  issues: string[],
+  maxCharacters = 48_000
+): string {
+  const issueText = issues.join("\n");
+  const prioritized = files
+    .map((file, index) => ({ file, index, referenced: issueText.includes(normalizeGeneratedPath(file.path)) }))
+    .sort((left, right) => Number(right.referenced) - Number(left.referenced) || left.index - right.index)
+    .map(({ file }) => file);
+  return prioritized
+    .map((file) => `### File: ${file.path}\n\`\`\`\n${file.content}\n\`\`\``)
+    .join("\n\n")
+    .slice(0, Math.max(1, maxCharacters));
 }
 
 function cssImportSpecifiers(content: string): string[] {
@@ -656,6 +697,11 @@ export function generationValidationIssues(
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
       if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);
+      const nonCodeIssue = nonCodeComponentIssue(file.path, file.content);
+      if (nonCodeIssue) issues.push(nonCodeIssue);
+      if (importSpecifiers(file.path, file.content).some((specifier) => specifier === "recharts" || specifier.startsWith("recharts/"))) {
+        issues.push(`${file.path} imports recharts, whose module graph exceeds production sandbox capacity; use lightweight CSS or inline SVG charts`);
+      }
       if (hasUnsupportedDirectDatabaseCall(file.path, file.content)) {
         issues.push(`${file.path} invents a database method; use db.collection(name).list/get/create/update/remove`);
       }
