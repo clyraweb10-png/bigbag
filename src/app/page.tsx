@@ -10,6 +10,8 @@ import {
   ExportProjectDialog,
   ImportProjectDialog,
 } from "@/components/workspace/ProjectTransferDialogs";
+import { ConnectorsModal } from "@/components/workspace/ConnectorsModal";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,8 +25,9 @@ import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import {
   Plus, Loader2, Trash2, ArrowRight, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
-  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb,
+  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb, Plug2,
 } from "lucide-react";
+
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
@@ -244,6 +247,8 @@ export function DashboardContent() {
   const [cloneTarget, setCloneTarget] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
+
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
@@ -734,7 +739,44 @@ export function DashboardContent() {
         {/* Projects */}
         {!chatOpen && !projectsLoading && hasProjects && (
           <>
-            {/* Toolbar: search, sort, view toggle */}
+            {/* ── Recent Projects strip (last 5) ── */}
+            {projects.length > 0 && !search.trim() && (
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-semibold text-foreground">Recent Projects</h2>
+                  <span className="text-[10px] text-muted-foreground">Last 5</span>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x scroll-smooth">
+                  {[...projects]
+                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                    .slice(0, 5)
+                    .map((p) => (
+                      <Link
+                        key={p.projectId}
+                        href={`/project/${p.projectId}`}
+                        className="snap-start shrink-0 w-44 group"
+                      >
+                        <div className="bg-card border border-border rounded-xl overflow-hidden hover:border-primary/50 hover:shadow-md transition-all duration-200 h-full flex flex-col">
+                          <div className="h-24 relative overflow-hidden bg-muted/40">
+                            <ProjectThumbnail project={p} />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
+                          </div>
+                          <div className="p-2.5">
+                            <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                              {p.label || p.projectId}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {new Date(p.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </p>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Toolbar: title, search, sort, view toggle, import, connect, new */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-semibold text-foreground">Projects</h2>
@@ -800,6 +842,15 @@ export function DashboardContent() {
                   title="Import a project"
                 >
                   <DownloadCloud className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Import</span>
+                </button>
+
+                {/* Connect */}
+                <button
+                  onClick={() => setConnectorsOpen(true)}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground h-8 px-2.5 rounded-lg border border-border bg-card/70 hover:bg-card transition-colors shadow-xs"
+                  title="Add a connector"
+                >
+                  <Plug2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Connect</span>
                 </button>
 
                 {/* New project */}
@@ -1096,6 +1147,10 @@ export function DashboardContent() {
         takenNames={takenNames}
         onCloned={fetchData}
       />
+
+      {/* Connectors modal */}
+      <ConnectorsModal open={connectorsOpen} onOpenChange={setConnectorsOpen} />
     </div>
+
   );
 }
