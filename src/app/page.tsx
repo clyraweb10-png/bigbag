@@ -39,7 +39,9 @@ import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitiv
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
+import { DashboardSidebar } from "@/components/DashboardSidebar";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
+
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 
 type ViewMode = "cards" | "table";
@@ -252,6 +254,7 @@ export function DashboardContent() {
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
   const conversationEndRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setConversationHydrated(false);
@@ -508,42 +511,44 @@ export function DashboardContent() {
   const hasProjects = projects.length > 0;
 
   return (
-    <div className={`${chatOpen ? "h-[100dvh] overflow-hidden" : "min-h-screen overflow-hidden"} relative bg-background text-foreground transition-colors duration-200`}>
+    <div className="flex h-[100dvh] bg-background text-foreground overflow-hidden">
       {/* Background */}
       <div className="fixed inset-0 -z-10 bg-background pointer-events-none" />
 
-      {/* Header */}
-      {chatOpen ? (
-        <header className="relative z-50 border-b border-border bg-background/92 backdrop-blur-xl">
-          <div className="mx-auto flex h-16 max-w-5xl items-center px-4 sm:px-6">
+      {/* Sidebar */}
+      <DashboardSidebar
+        projects={projects}
+        onConnectorsOpen={() => setConnectorsOpen(true)}
+        onSearchFocus={() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }}
+        onNewProject={focusComposer}
+      />
+
+      {/* Main content */}
+      <div className={`flex-1 overflow-y-auto ${chatOpen ? "overflow-hidden" : ""}`}>
+        {/* Thin top bar: theme toggle + auth menu */}
+        {!chatOpen && (
+          <div className="flex items-center justify-end gap-2 px-6 pt-4 pb-0">
+            <ThemeToggle showLabel={false} />
+            <AuthUserMenu />
+          </div>
+        )}
+        {chatOpen && (
+          <div className="flex h-16 items-center px-6 border-b border-border/80 bg-background/88 backdrop-blur-xl">
             <button
               type="button"
               onClick={() => setChatOpen(false)}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-3.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-3.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent"
             >
               <ArrowLeft className="h-4 w-4" />
               Back
             </button>
-            <h1 className="sr-only sm:hidden">Build something remarkable</h1>
-            <div className="pointer-events-none absolute left-1/2 hidden -translate-x-1/2 text-center sm:block">
-              <h1 className="text-sm font-semibold">Build something remarkable</h1>
-              <p className="hidden text-xs text-muted-foreground sm:block">Ask questions or chat</p>
-            </div>
           </div>
-        </header>
-      ) : (
-        <header className="sticky top-0 z-50 border-b border-border/80 bg-background/88 backdrop-blur-xl">
-          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-            <BigBagLogo size="md" />
-            <div className="flex items-center gap-2">
-              <ThemeToggle showLabel={false} />
-              <AuthUserMenu />
-            </div>
-          </div>
-        </header>
-      )}
+        )}
 
-      <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-5xl px-4 py-8 sm:py-12 sm:px-6"}>
+      <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-6xl px-6 py-6"}>
         {/* Hero prompt */}
         <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || projectsLoading || keyConfigured === false ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
             <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
@@ -790,6 +795,7 @@ export function DashboardContent() {
                 <div className="relative flex-1 sm:flex-none sm:w-56 min-w-[160px]">
                   <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
+                    ref={searchInputRef}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search projects..."
@@ -870,63 +876,68 @@ export function DashboardContent() {
                 <p className="text-sm">No projects match &ldquo;{search}&rdquo;</p>
               </div>
             ) : resolvedView === "cards" ? (
-              /* ── CARD VIEW ── */
+              /* ── CARD VIEW (image-4 style) ── */
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {pageItems.map((p) => (
-                  <Link key={p.projectId} href={`/project/${p.projectId}`}>
-                    <div className="lovable-card bg-card border border-border rounded-xl overflow-hidden hover:shadow-md hover:border-primary/50 transition-all duration-200 cursor-pointer group h-full flex flex-col">
-                      <div className="h-32 relative overflow-hidden bg-muted/40">
-                        <ProjectThumbnail project={p} />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
-                      </div>
-                      <div className="p-4 flex-1 flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-start justify-between mb-1">
-                            <h3 className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors truncate flex-1">
-                              {p.projectId}
-                            </h3>
+                {pageItems.map((p) => {
+                  const initial = (user?.displayName || user?.email || "U")[0].toUpperCase();
+                  const editedAt = p.lastModifiedAt ?? p.createdAt;
+                  const diffMs = Date.now() - new Date(editedAt).getTime();
+                  const diffMins = Math.floor(diffMs / 60000);
+                  const relTime = diffMins < 60
+                    ? `${diffMins || 1} min${diffMins !== 1 ? "s" : ""} ago`
+                    : diffMins < 1440
+                    ? `${Math.floor(diffMins / 60)} hour${Math.floor(diffMins / 60) !== 1 ? "s" : ""} ago`
+                    : diffMins < 43200
+                    ? `${Math.floor(diffMins / 1440)} day${Math.floor(diffMins / 1440) !== 1 ? "s" : ""} ago`
+                    : new Date(editedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                  return (
+                    <div key={p.projectId} className="group relative">
+                      <Link href={`/project/${p.projectId}`}>
+                        <div className="bg-card rounded-2xl overflow-hidden hover:ring-1 hover:ring-white/20 dark:hover:ring-white/15 transition-all duration-200 cursor-pointer">
+                          {/* Thumbnail */}
+                          <div className="h-44 relative overflow-hidden bg-muted/40">
+                            <ProjectThumbnail project={p} />
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
+                          </div>
+                          {/* Meta */}
+                          <div className="p-3.5 flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shrink-0">
+                              {initial}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                                {p.label || p.projectId}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground mt-0.5">Edited {relTime}</p>
+                            </div>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <button
                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
                                   title="Options"
-                                  className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-all shrink-0 ml-2"
+                                  className="opacity-0 group-hover:opacity-100 w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-all shrink-0"
                                 >
                                   <MoreVertical className="w-3.5 h-3.5" />
                                 </button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48 bg-card border-border" onClick={(e) => e.stopPropagation()}>
-                                <DropdownMenuItem
-                                  className="cursor-pointer"
-                                  onSelect={(e) => { e.preventDefault(); setCloneTarget(p.projectId); }}
-                                >
+                                <DropdownMenuItem className="cursor-pointer" onSelect={(e) => { e.preventDefault(); setCloneTarget(p.projectId); }}>
                                   <CopyCheck className="w-3.5 h-3.5 mr-2" /> Duplicate
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="cursor-pointer"
-                                  onSelect={(e) => { e.preventDefault(); setExportTarget(p.projectId); }}
-                                >
+                                <DropdownMenuItem className="cursor-pointer" onSelect={(e) => { e.preventDefault(); setExportTarget(p.projectId); }}>
                                   <FileDown className="w-3.5 h-3.5 mr-2" /> Export…
                                 </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer"
-                                  onSelect={(e) => { e.preventDefault(); setDeleteTarget(p.projectId); }}
-                                >
+                                <DropdownMenuItem className="text-red-500 focus:text-red-500 focus:bg-red-500/10 cursor-pointer" onSelect={(e) => { e.preventDefault(); setDeleteTarget(p.projectId); }}>
                                   <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
-                          <p className="text-[11px] text-muted-foreground line-clamp-1">{p.description || "No description"}</p>
                         </div>
-                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/50">
-                          <span className="text-[10px] text-muted-foreground">{new Date(p.createdAt).toLocaleDateString()}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
-                        </div>
-                      </div>
+                      </Link>
                     </div>
-                  </Link>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               /* ── TABLE VIEW ── */
@@ -1150,7 +1161,7 @@ export function DashboardContent() {
 
       {/* Connectors modal */}
       <ConnectorsModal open={connectorsOpen} onOpenChange={setConnectorsOpen} />
+      </div>
     </div>
-
   );
 }
