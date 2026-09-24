@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { scanGeneratedSourceLine, type GeneratedSourceSeverity } from "../src/lib/generated-source-security";
-import { normalizeQualificationRunId } from "../src/lib/qualification-run";
+import { normalizeQualificationRunId, qualificationProjectId } from "../src/lib/qualification-run";
 
 const envPath = path.join(process.cwd(), ".env.local");
 if (fs.existsSync(envPath)) process.loadEnvFile(envPath);
@@ -51,7 +51,7 @@ for (let projectNumber = 1; projectNumber <= 100; projectNumber += 1) {
   }
   const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as { projectId?: string };
   const projectId = String(evidence.projectId || "");
-  const expectedProjectId = `qualification-p${String(projectNumber).padStart(2, "0")}-${runId}`.slice(0, 120);
+  const expectedProjectId = qualificationProjectId(runId, projectNumber);
   const retrySuffix = projectId.startsWith(`${expectedProjectId}-`)
     ? projectId.slice(expectedProjectId.length + 1)
     : "";

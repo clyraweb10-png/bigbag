@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import type { LocalProjectRecord } from "./types";
+import { qualificationProjectId } from "../qualification-run";
 
 export type PersistedFile = { path: string; content: Uint8Array };
 export type AppRecord = Record<string, unknown> & {
@@ -796,6 +797,59 @@ export const durableProjectStore = {
       runId: selectedRun,
       results: res.rows.map((row) => JSON.parse(rowText(row.evidence_json)) as QualificationEvidence),
     };
+  },
+
+  async listQualificationProjectAttempts(runId: string, projectNumber: number): Promise<LocalProjectRecord[]> {
+    const prefix = qualificationProjectId(runId, projectNumber);
+    const pool = await requireSchema();
+    const res = await pool.query(
+      `SELECT project_id, record_json FROM public.builder_projects
+       WHERE project_id = $1 OR project_id LIKE $2`,
+      [prefix, `${prefix}-%`]
+    );
+    const records = res.rows.map((row) => JSON.parse(rowText(row.record_json)) as LocalProjectRecord);
+    const legacyRetries = records.filter((record) => !record.qualificationRunId && record.projectId !== prefix &&
+      record.projectId.startsWith(`${prefix}-`) && /^\d+$/.test(record.projectId.slice(prefix.length + 1)));
+    const referencedIds = new Set<string>();
+    const ambiguousBase = /-\d+$/.test(runId) && records.some((record) => !record.qualificationRunId && record.projectId === prefix);
+    if (legacyRetries.length > 0 || ambiguousBase) {
+      const evidenceRes = await pool.query(
+        `SELECT evidence_json FROM public.builder_qualification_results
+         WHERE run_id = $1 AND project_number = $2`,
+        [runId, projectNumber]
+      );
+      if (evidenceRes.rows[0]) {
+        const evidence = JSON.parse(rowText(evidenceRes.rows[0].evidence_json)) as QualificationEvidence & {
+          priorCampaignAttempts?: Array<{ projectId?: string }>;
+        };
+        referencedIds.add(evidence.projectId);
+        for (const attempt of evidence.priorCampaignAttempts || []) {
+          if (typeof attempt.projectId === "string") referencedIds.add(attempt.projectId);
+        }
+      }
+    }
+    return records
+      .filter((record) => record.qualificationRunId
+        ? record.qualificationRunId === runId && (record.projectId === prefix ||
+          (record.projectId.startsWith(`${prefix}-`) && /^\d+$/.test(record.projectId.slice(prefix.length + 1))))
+        : (record.projectId === prefix && (!ambiguousBase || referencedIds.has(prefix))) || referencedIds.has(record.projectId))
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  },
+
+  async reserveQualificationProjectId(record: LocalProjectRecord): Promise<boolean> {
+    const match = /^qualification-p(\d+)-/.exec(record.projectId);
+    const prefix = qualificationProjectId(record.qualificationRunId || "", Number(match?.[1]));
+    if (record.projectId !== prefix && !(record.projectId.startsWith(`${prefix}-`) &&
+      /^\d+$/.test(record.projectId.slice(prefix.length + 1)))) {
+      throw new Error("Invalid qualification project identity");
+    }
+    const pool = await requireSchema();
+    const res = await pool.query(
+      `INSERT INTO public.builder_projects (project_id, tenant_id, record_json, updated_at)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (project_id) DO NOTHING`,
+      [record.projectId, record.tenantId, JSON.stringify(record), record.lastModifiedAt || record.createdAt]
+    );
+    return res.rowCount === 1;
   },
 
   async removeQualificationRun(runId: string): Promise<number> {

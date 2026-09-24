@@ -190,7 +190,7 @@ export const localProjectStore = {
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
   },
 
-  create(body: { projectId: string; description: string; label?: string; tenantId: string }): VcaasProject {
+  create(body: { projectId: string; description: string; label?: string; tenantId: string; qualificationRunId?: string }): VcaasProject {
     const projects = readProjects();
     let id = body.projectId.toLowerCase().replace(/[^a-z0-9-]/g, "-");
     if (!id || id === "-") id = `app-${Date.now()}`;
@@ -209,6 +209,7 @@ export const localProjectStore = {
       tenantId: body.tenantId,
       label: body.label || body.description.slice(0, 30) || uniqueId,
       description: body.description,
+      ...(body.qualificationRunId ? { qualificationRunId: body.qualificationRunId } : {}),
       createdAt: now,
       lastModifiedAt: now,
       port,
@@ -280,6 +281,10 @@ export const localProjectStore = {
       console.warn("Could not delete directory:", dir, e);
     }
     return true;
+  },
+
+  async waitForRecordPersistence(projectId: string): Promise<void> {
+    await persistenceState.recordWrites.get(projectId);
   },
 
   owns(projectId: string, tenantId: string): boolean {

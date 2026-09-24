@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { normalizeQualificationRunId } from "../src/lib/qualification-run";
+import { normalizeQualificationRunId, qualificationProjectId } from "../src/lib/qualification-run";
+import type { LocalProjectRecord } from "../src/lib/local-orchestrator/types";
 
 const envPath = path.join(process.cwd(), ".env.local");
 if (fs.existsSync(envPath)) process.loadEnvFile(envPath);
@@ -233,14 +234,26 @@ async function databaseProbe(projectId: string): Promise<{ status: Status; detai
 }
 
 async function qualify(item: QualificationCase) {
-  const requestedProjectId = `qualification-p${String(item.id).padStart(2, "0")}-${runId}`.slice(0, 120);
-  const priorCampaignAttempts = localProjectStore.findRecordsByProjectIdPrefix(requestedProjectId)
-    .filter((record) => {
-      if (record.projectId === requestedProjectId) return true;
-      const suffix = record.projectId.slice(requestedProjectId.length + 1);
-      return record.projectId.startsWith(`${requestedProjectId}-`) && /^\d+$/.test(suffix);
-    })
-    .map((record) => {
+  const requestedProjectId = qualificationProjectId(runId, item.id);
+  const durableAttempts = await durableProjectStore.listQualificationProjectAttempts(runId, item.id);
+  const durableAttemptIds = new Set(durableAttempts.map((record) => record.projectId));
+  const localAttempts = localProjectStore.findRecordsByProjectIdPrefix(requestedProjectId);
+  const localIds = new Set(localAttempts.map((record) => record.projectId));
+  const byProjectId = new Map<string, (typeof durableAttempts)[number]>();
+  for (const record of [
+    ...localAttempts,
+    ...durableAttempts,
+  ]) {
+    const previous = byProjectId.get(record.projectId);
+    if (!previous || Date.parse(record.lastModifiedAt || record.createdAt) >= Date.parse(previous.lastModifiedAt || previous.createdAt)) {
+      byProjectId.set(record.projectId, record);
+    }
+  }
+  const attempts = [...byProjectId.values()]
+    .filter((record) => durableAttemptIds.has(record.projectId) || record.qualificationRunId === runId ||
+      (!record.qualificationRunId && record.projectId === requestedProjectId))
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  const priorCampaignAttempts = attempts.map((record) => {
     const terminal = [...record.conversation].reverse().find((message) =>
       message.messageType === "finished" || message.messageType === "error"
     );
@@ -257,15 +270,51 @@ async function qualify(item: QualificationCase) {
       result,
       terminalMessage: terminal?.message || "Previous attempt did not persist a terminal event",
     };
-    });
+  });
   const priorCampaignAttempt = priorCampaignAttempts.at(-1) || null;
   const tenantId = randomUUID();
-  const projectId = localProjectStore.create({
-    projectId: requestedProjectId,
-    tenantId,
-    label: `Qualification ${String(item.id).padStart(2, "0")} - ${item.name}`,
-    description: item.prompt,
-  }).projectId;
+  const label = `Qualification ${String(item.id).padStart(2, "0")} - ${item.name}`;
+  let nextProjectId = requestedProjectId;
+  for (let suffix = 0; ; suffix += 1) {
+    nextProjectId = suffix === 0 ? requestedProjectId : `${requestedProjectId}-${suffix}`;
+    if (localIds.has(nextProjectId)) continue;
+    const createdAt = new Date().toISOString();
+    const reservation: LocalProjectRecord = {
+      projectId: nextProjectId,
+      qualificationRunId: runId,
+      tenantId,
+      label,
+      description: item.prompt,
+      createdAt,
+      lastModifiedAt: createdAt,
+      port: 0,
+      status: "idle",
+      serverStatus: "Stopped",
+      conversation: [],
+    };
+    if (await durableProjectStore.reserveQualificationProjectId(reservation)) break;
+  }
+  let createdProjectId: string | undefined;
+  try {
+    createdProjectId = localProjectStore.create({
+      projectId: nextProjectId,
+      qualificationRunId: runId,
+      tenantId,
+      label,
+      description: item.prompt,
+    }).projectId;
+    if (createdProjectId !== nextProjectId) throw new Error("Qualification reservation no longer matches the local project id");
+  } catch (error) {
+    for (const candidate of new Set([nextProjectId, createdProjectId].filter((id): id is string => Boolean(id)))) {
+      if (localProjectStore.getRecord(candidate)?.tenantId === tenantId) {
+        await localProjectStore.waitForRecordPersistence(candidate).catch(() => undefined);
+        localProjectStore.remove(candidate);
+      }
+      await durableProjectStore.remove(candidate, tenantId);
+    }
+    throw error;
+  }
+  const projectId = createdProjectId;
   process.stdout.write(`QUALIFICATION_START project=${item.id} id=${projectId}\n`);
 
   let initial: { generationId: string; terminal: { status: Status; message: string } };

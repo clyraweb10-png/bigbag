@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { randomUUID } = require("node:crypto") as typeof import("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -22,6 +23,7 @@ if (fs.existsSync(envPath)) {
 }
 
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
+const { qualificationProjectId } = require("../src/lib/qualification-run") as typeof import("../src/lib/qualification-run");
 type LocalProjectRecord = import("../src/lib/local-orchestrator/types").LocalProjectRecord;
 
 function mockRecord(tenantId: string, projectId: string): LocalProjectRecord {
@@ -185,6 +187,46 @@ test("Supabase PostgreSQL: qualification evidence persists by run and project", 
   } finally {
     assert.equal(await durableProjectStore.removeQualificationRun(runId), 1);
     assert.deepEqual(await durableProjectStore.listQualificationBenchmarks(runId), {});
+  }
+});
+
+test("Supabase PostgreSQL: qualification retries discover durable prior attempts", async () => {
+  const runId = `attempt-test-${randomUUID()}-r`;
+  const prefix = qualificationProjectId(runId, 67);
+  const ids = [prefix, `${prefix}-1`, `${prefix}-2`, `${prefix}-3`, `${prefix}-unrelated`];
+  const records = ids.map((projectId, index) => mockRecord(`attempt-tenant-${runId}-${index}`, projectId));
+  records.forEach((record, index) => {
+    record.createdAt = new Date(1_700_000_000_000 + index * 1_000).toISOString();
+    record.lastModifiedAt = record.createdAt;
+  });
+  records[2].qualificationRunId = runId;
+  records[4].qualificationRunId = runId;
+  const reserved = mockRecord(`reservation-${runId}`, qualificationProjectId(runId, 68));
+  reserved.qualificationRunId = runId;
+  try {
+    for (const record of records) await durableProjectStore.saveRecord(record);
+    await durableProjectStore.saveQualificationEvidence(runId, {
+      projectNumber: 67,
+      projectName: "Retry history",
+      category: "DESIGNER",
+      projectId: prefix,
+      generationId: "prior-generation",
+      statuses: { final: "FAIL" },
+      priorCampaignAttempts: [{ projectId: ids[3] }],
+    });
+    const attempts = await durableProjectStore.listQualificationProjectAttempts(runId, 67);
+    assert.deepEqual(attempts.map((record) => record.projectId), [ids[0], ids[2], ids[3]]);
+    assert.deepEqual(await durableProjectStore.listQualificationProjectAttempts(`${runId}-1`, 67), []);
+    assert.deepEqual(await durableProjectStore.listQualificationProjectAttempts(runId, 68), []);
+    assert.equal(await durableProjectStore.reserveQualificationProjectId(reserved), true);
+    const competing = mockRecord(`other-${runId}`, reserved.projectId);
+    competing.qualificationRunId = runId;
+    assert.equal(await durableProjectStore.reserveQualificationProjectId(competing), false);
+    await assert.rejects(() => durableProjectStore.listQualificationProjectAttempts("invalid/run", 67), /Invalid qualification project identity/);
+  } finally {
+    await durableProjectStore.remove(reserved.projectId, reserved.tenantId);
+    await durableProjectStore.removeQualificationRun(runId);
+    for (const record of records) await durableProjectStore.remove(record.projectId, record.tenantId);
   }
 });
 
