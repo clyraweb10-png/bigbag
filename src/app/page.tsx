@@ -264,6 +264,7 @@ export function DashboardContent() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const [dashTab, setDashTab] = useState<"projects" | "starter">("projects");
   const [dismissedRecent, setDismissedRecent] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem(DISMISSED_RECENT_KEY);
@@ -823,23 +824,27 @@ export function DashboardContent() {
             })()}
 
 
-            {/* Toolbar: title, search, sort, view toggle, import, connect, new */}
+            {/* ── Tab switcher: Projects | Starter ── */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-foreground">Projects</h2>
-                <span className="text-xs text-muted-foreground bg-secondary rounded-full px-2.5 py-0.5 border border-border/50">
-                  {filtered.length}
-                </span>
+              <div className="flex items-center gap-1 p-0.5 rounded-xl border border-border bg-card shadow-xs">
                 <button
-                  onClick={focusComposer}
-                  className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 border border-primary/25 hover:border-primary/45 h-6 px-2.5 rounded-full transition-all"
-                  title="Start a new project from the hero prompt"
+                  onClick={() => setDashTab("projects")}
+                  className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "projects" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  <Plus className="w-3 h-3" />
+                  Projects
+                  <span className={`text-[10px] rounded-full px-1.5 py-0.5 transition-colors ${dashTab === "projects" ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"}`}>
+                    {filtered.length}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setDashTab("starter")}
+                  className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "starter" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                >
                   Starter
                 </button>
               </div>
 
+              {dashTab === "projects" && (
               <div className="flex-1 flex flex-wrap items-center gap-2 sm:justify-end">
                 {/* Search */}
                 <div className="relative flex-1 sm:flex-none sm:w-56 min-w-[160px]">
@@ -918,8 +923,11 @@ export function DashboardContent() {
                   <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New</span>
                 </button>
               </div>
+              )}
             </div>
 
+            {/* ── Projects tab content ── */}
+            {dashTab === "projects" && (<>
             {filtered.length === 0 ? (
               <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-2xl">
                 <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -1085,6 +1093,75 @@ export function DashboardContent() {
                 </button>
               </div>
             )}
+            </>)}
+
+            {/* ── Starter tab content ── */}
+            {dashTab === "starter" && (() => {
+              const STARTERS: { category: string; items: { title: string; desc: string; prompt: string; icon: string }[] }[] = [
+                {
+                  category: "Web Apps",
+                  items: [
+                    { icon: "🛒", title: "E-Commerce Store", desc: "Product catalogue, cart & checkout", prompt: "Build a modern e-commerce store with a product grid, shopping cart, and checkout form." },
+                    { icon: "📋", title: "Project Tracker", desc: "Kanban board with drag & drop", prompt: "Build a Kanban-style project tracker with drag-and-drop cards, columns (To Do, In Progress, Done) and task details." },
+                    { icon: "💬", title: "Chat Interface", desc: "Real-time messaging UI", prompt: "Build a modern chat application UI with a sidebar of conversations, message bubbles, and an input area." },
+                    { icon: "📊", title: "Analytics Dashboard", desc: "Charts, KPIs & data tables", prompt: "Build an analytics dashboard with KPI cards, line and bar charts using recharts, and a data table." },
+                  ],
+                },
+                {
+                  category: "Tools",
+                  items: [
+                    { icon: "📝", title: "Notes App", desc: "Create, edit & search notes", prompt: "Build a notes app where users can create, edit, delete and search through markdown notes." },
+                    { icon: "⏱️", title: "Pomodoro Timer", desc: "Focus & break timer", prompt: "Build a Pomodoro timer app with 25-min focus and 5-min break sessions, progress ring, and session history." },
+                    { icon: "💰", title: "Budget Tracker", desc: "Income, expenses & totals", prompt: "Build a personal budget tracker where users can log income and expenses, see totals and a breakdown chart." },
+                    { icon: "🎯", title: "Habit Tracker", desc: "Daily habits & streaks", prompt: "Build a habit tracker where users can add habits, check them off daily, and see a streak calendar." },
+                  ],
+                },
+                {
+                  category: "Landing Pages",
+                  items: [
+                    { icon: "🚀", title: "SaaS Landing", desc: "Hero, features & pricing", prompt: "Build a SaaS product landing page with a hero section, feature grid, pricing cards and a CTA." },
+                    { icon: "👤", title: "Portfolio", desc: "Developer personal site", prompt: "Build a developer portfolio site with an about section, project cards, skills list and a contact form." },
+                    { icon: "📰", title: "Blog", desc: "Article list & reader", prompt: "Build a blog with an article list page and an article reader with markdown content and a sidebar." },
+                    { icon: "🍕", title: "Restaurant Menu", desc: "Menu sections & order UI", prompt: "Build a restaurant menu site with category tabs, menu items with images and prices, and an order summary." },
+                  ],
+                },
+              ];
+              return (
+                <div className="space-y-8">
+                  {STARTERS.map((group) => (
+                    <div key={group.category}>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">{group.category}</h3>
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {group.items.map((item) => (
+                          <button
+                            key={item.title}
+                            type="button"
+                            onClick={() => {
+                              setFirstPrompt(item.prompt);
+                              setDashTab("projects");
+                              window.setTimeout(() => {
+                                heroTextareaRef.current?.focus();
+                                heroTextareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                              }, 80);
+                            }}
+                            className="group text-left flex flex-col gap-2 rounded-2xl border border-border bg-card hover:border-primary/40 hover:bg-accent/50 hover:shadow-md transition-all duration-200 p-4 cursor-pointer"
+                          >
+                            <span className="text-2xl leading-none">{item.icon}</span>
+                            <div>
+                              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{item.title}</p>
+                              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{item.desc}</p>
+                            </div>
+                            <span className="mt-auto inline-flex items-center gap-1 text-[11px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                              Use this template <ArrowRight className="w-3 h-3" />
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </>
         )}
       </div>
