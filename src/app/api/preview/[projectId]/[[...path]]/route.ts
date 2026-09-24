@@ -479,10 +479,16 @@ async function servePersistentDeployment(
         try {
             const rootDir = localProjectStore.getWorkspaceDir(projectId);
             const hasExt = requestedPath.split("/").at(-1)?.includes(".");
+            // Only serve from build-output directories (dist/) and static-asset
+            // directories (public/). Serving from the workspace root directly
+            // would expose source files such as src/main.tsx — a TypeScript
+            // file that Vite transforms at dev-time but which has no valid MIME
+            // type in production and causes a browser 403 / octet-stream failure.
             const candidates = [
                 path.join(rootDir, "dist", requestedPath),
                 path.join(rootDir, "public", requestedPath),
-                path.join(rootDir, requestedPath),
+                // NOTE: path.join(rootDir, requestedPath) intentionally removed —
+                // serving workspace-root files exposes src/ TypeScript sources.
                 ...(!hasExt || requestedPath === "index.html" ? [path.join(rootDir, "dist", "index.html")] : []),
             ];
             for (const c of candidates) {
