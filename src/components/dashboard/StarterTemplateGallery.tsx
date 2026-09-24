@@ -12,6 +12,7 @@ import {
   X,
   Eye,
   Terminal,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -29,26 +30,27 @@ import {
 } from "@/components/ui/dialog";
 
 interface StarterTemplateGalleryProps {
+  /** Legacy prop kept for compatibility — no longer used for template installs */
   onSelectTemplate?: (template: StarterTemplate) => void;
 }
 
-export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGalleryProps) {
+export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: StarterTemplateGalleryProps) {
   const router = useRouter();
   const [activeCategory, setActiveCategory] = useState<StarterCategory>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<StarterTemplate | null>(null);
+  /** ID of template currently being installed (shows spinner) */
+  const [installingId, setInstallingId] = useState<string | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Filter templates
   const filteredTemplates = useMemo(() => {
     return STARTER_TEMPLATES.filter((tpl) => {
-      // Category match
       if (activeCategory !== "All") {
         if (activeCategory === "Recent") {
           if (!tpl.isRecent) return false;
         } else if (tpl.category.toLowerCase() !== activeCategory.toLowerCase()) {
-          // Check tags as well for flexible categorization
           const tagMatches = tpl.tags?.some(
             (t) => t.toLowerCase() === activeCategory.toLowerCase()
           );
@@ -56,17 +58,14 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
         }
       }
 
-      // Search match
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const inTitle = tpl.title.toLowerCase().includes(q);
-        const inBadge = tpl.badge.toLowerCase().includes(q);
-        const inDesc = tpl.description.toLowerCase().includes(q);
+        const inTitle    = tpl.title.toLowerCase().includes(q);
+        const inBadge    = tpl.badge.toLowerCase().includes(q);
+        const inDesc     = tpl.description.toLowerCase().includes(q);
         const inCategory = tpl.category.toLowerCase().includes(q);
-        const inTags = tpl.tags?.some((t) => t.toLowerCase().includes(q));
-        if (!inTitle && !inBadge && !inDesc && !inCategory && !inTags) {
-          return false;
-        }
+        const inTags     = tpl.tags?.some((t) => t.toLowerCase().includes(q));
+        if (!inTitle && !inBadge && !inDesc && !inCategory && !inTags) return false;
       }
 
       return true;
@@ -76,7 +75,6 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
   const handleCopyPrompt = (template: StarterTemplate, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!template.prompt) return;
-
     try {
       navigator.clipboard.writeText(template.prompt);
       setCopiedId(template.id);
@@ -89,25 +87,70 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
     }
   };
 
-  const handleStartBuild = (template: StarterTemplate, e?: React.MouseEvent) => {
+  /**
+   * Install a pre-built template:
+   *  1. Call POST /api/starter-install
+   *  2. Store template info in sessionStorage so the workspace shows it in chat
+   *  3. Navigate to /project/:id — the build runs in the background
+   *
+   * This creates a FRESH copy of the template for this user.
+   * Modifying it never affects the original template or other users.
+   */
+  const handleStartBuild = async (template: StarterTemplate, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    // Stash prompt in sessionStorage for the generate workflow
-    try {
-      sessionStorage.setItem("bigbag:pending-prompt", template.prompt);
-    } catch {}
+    if (installingId) return; // debounce
 
-    if (onSelectTemplate) {
-      onSelectTemplate(template);
-    } else {
-      router.push("/generate");
+    setInstallingId(template.id);
+    try {
+      const res = await fetch("/api/starter-install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateId:   template.id,
+          templateName: template.title,
+          prompt:       template.prompt,
+        }),
+      });
+
+      const data: { ok: boolean; data?: { projectId: string }; error?: string } = await res.json();
+
+      if (!data.ok || !data.data?.projectId) {
+        toast.error(data.error ?? "Failed to create template project");
+        setInstallingId(null);
+        return;
+      }
+
+      const { projectId } = data.data;
+
+      // Store template context so the workspace page can show it in the chat composer.
+      // We use a DIFFERENT key from pendingPrompt so the agent is NOT auto-fired.
+      try {
+        sessionStorage.setItem(
+          `bigbag:starterTemplate:${projectId}`,
+          JSON.stringify({
+            templateId:   template.id,
+            templateName: template.title,
+            description:  template.description,
+            prompt:       template.prompt,
+          })
+        );
+      } catch { /* storage unavailable */ }
+
+      // Navigate — setInstallingId stays set so we don't flash back to "Continue"
+      router.push(`/project/${projectId}`);
+    } catch (err) {
+      console.error("[StarterTemplateGallery] Install failed:", err);
+      toast.error("Failed to install template. Please try again.");
+      setInstallingId(null);
     }
   };
 
+  const isInstalling = (id: string) => installingId === id;
+
   return (
     <div className="w-full space-y-6">
-      {/* ── Category Pill Bar (Reference: Image 1) ── */}
+      {/* ── Category Pill Bar ── */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Pills container */}
         <div
           ref={scrollContainerRef}
           className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 px-1 bg-zinc-900/60 dark:bg-[#121216] border border-white/[0.08] rounded-full max-w-full"
@@ -158,7 +201,7 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
         </div>
       </div>
 
-      {/* ── Template Cards Grid (Reference: Image 2) ── */}
+      {/* ── Template Cards Grid ── */}
       {filteredTemplates.length === 0 ? (
         <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20">
           <Sparkles className="w-8 h-8 text-zinc-500 mx-auto mb-3" />
@@ -168,10 +211,7 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
           </p>
           <button
             type="button"
-            onClick={() => {
-              setActiveCategory("All");
-              setSearchQuery("");
-            }}
+            onClick={() => { setActiveCategory("All"); setSearchQuery(""); }}
             className="mt-4 px-4 py-1.5 text-xs rounded-full bg-zinc-800 hover:bg-zinc-700 text-white transition-colors"
           >
             Reset Filters
@@ -180,22 +220,21 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {filteredTemplates.map((template) => {
-            const isCopied = copiedId === template.id;
+            const isCopied    = copiedId === template.id;
+            const installing  = isInstalling(template.id);
             return (
               <div
                 key={template.id}
-                onClick={() => handleStartBuild(template)}
-                className="group relative flex flex-col rounded-2xl border border-white/[0.08] bg-[#111114] hover:border-zinc-700/80 hover:shadow-2xl hover:shadow-black/60 transition-all duration-200 overflow-hidden cursor-pointer"
+                onClick={() => !installingId && handleStartBuild(template)}
+                className={`group relative flex flex-col rounded-2xl border border-white/[0.08] bg-[#111114] hover:border-zinc-700/80 hover:shadow-2xl hover:shadow-black/60 transition-all duration-200 overflow-hidden ${installingId ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
                 {/* ── Preview Thumbnail ── */}
                 <div className="relative aspect-[16/10] w-full overflow-hidden bg-zinc-950/80 border-b border-white/[0.06]">
-                  {/* Thumbnail Image */}
                   <img
                     src={template.previewImage}
                     alt={template.title}
                     loading="lazy"
                     onError={(e) => {
-                      // Fallback gradient if image hasn't finished screenshotting
                       const target = e.currentTarget;
                       target.style.display = "none";
                       const fallback = target.nextElementSibling;
@@ -203,41 +242,34 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
                     }}
                     className="w-full h-full object-cover object-top group-hover:scale-[1.04] transition-transform duration-300"
                   />
-
-                  {/* Fallback Graphic (hidden by default) */}
+                  {/* Fallback Graphic */}
                   <div
                     style={{ display: "none" }}
                     className="absolute inset-0 flex-col items-center justify-center p-4 bg-gradient-to-br from-zinc-900 via-zinc-950 to-black text-center"
                   >
                     <Layers className="w-8 h-8 text-zinc-600 mb-2" />
-                    <span className="text-xs font-semibold text-zinc-300">
-                      {template.title}
-                    </span>
-                    <span className="text-[10px] text-zinc-500 mt-0.5">
-                      {template.badge}
-                    </span>
+                    <span className="text-xs font-semibold text-zinc-300">{template.title}</span>
+                    <span className="text-[10px] text-zinc-500 mt-0.5">{template.badge}</span>
                   </div>
-
-                  {/* Dark subtle overlay at bottom */}
                   <div className="absolute inset-0 bg-gradient-to-t from-[#111114] via-transparent to-black/20 pointer-events-none" />
 
-                  {/* Hover Continue Action (Reference Image 3: Blue circular arrow button) */}
+                  {/* Hover overlay */}
                   <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-3">
                     <button
                       type="button"
-                      title="Continue & Build"
-                      onClick={(e) => handleStartBuild(template, e)}
-                      className="w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-xl shadow-blue-600/40 transition-transform duration-200 hover:scale-110 active:scale-95 cursor-pointer"
+                      title={installing ? "Installing…" : "Continue & Build"}
+                      onClick={(e) => { e.stopPropagation(); !installingId && handleStartBuild(template, e); }}
+                      disabled={!!installingId}
+                      className="w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white flex items-center justify-center shadow-xl shadow-blue-600/40 transition-transform duration-200 hover:scale-110 active:scale-95 cursor-pointer"
                     >
-                      <ArrowRight className="w-6 h-6 stroke-[2.5]" />
+                      {installing
+                        ? <Loader2 className="w-5 h-5 animate-spin" />
+                        : <ArrowRight className="w-6 h-6 stroke-[2.5]" />}
                     </button>
                     <button
                       type="button"
                       title="View Details"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPreviewTemplate(template);
-                      }}
+                      onClick={(e) => { e.stopPropagation(); setPreviewTemplate(template); }}
                       className="w-9 h-9 rounded-full bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 flex items-center justify-center shadow-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
                     >
                       <Eye className="w-4 h-4" />
@@ -245,9 +277,8 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
                   </div>
                 </div>
 
-                {/* ── Card Content & Actions (Reference Image 2) ── */}
+                {/* ── Card Footer ── */}
                 <div className="p-3.5 flex items-center justify-between gap-3 bg-[#111114]">
-                  {/* Left: Title & Category */}
                   <div className="min-w-0 flex-1">
                     <h4 className="text-[14px] font-semibold text-white tracking-tight truncate group-hover:text-blue-400 transition-colors">
                       {template.title}
@@ -257,8 +288,8 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
                     </p>
                   </div>
 
-                  {/* Right: Copy Prompt Button & Direct Arrow */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {/* Copy prompt button */}
                     <button
                       type="button"
                       title={isCopied ? "Copied!" : "Copy prompt"}
@@ -269,24 +300,31 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
                           : "bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.06] text-zinc-400 hover:text-white"
                       }`}
                     >
-                      {isCopied ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
+                      {isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
 
-                    {/* Compact Image 3 Continue Icon Button */}
+                    {/* Continue button */}
                     <button
                       type="button"
-                      title="Start build"
-                      onClick={(e) => handleStartBuild(template, e)}
-                      className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-sm shadow-blue-600/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                      title={installing ? "Installing…" : "Continue & Build"}
+                      onClick={(e) => { e.stopPropagation(); !installingId && handleStartBuild(template, e); }}
+                      disabled={!!installingId}
+                      className="w-7 h-7 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white flex items-center justify-center shadow-sm shadow-blue-600/30 transition-all hover:scale-105 active:scale-95 cursor-pointer"
                     >
-                      <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                      {installing
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />}
                     </button>
                   </div>
                 </div>
+
+                {/* Installing overlay */}
+                {installing && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-2 rounded-2xl z-10">
+                    <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+                    <p className="text-xs text-zinc-300 font-medium">Creating project…</p>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -340,15 +378,17 @@ export function StarterTemplateGallery({ onSelectTemplate }: StarterTemplateGall
                 </button>
                 <button
                   type="button"
+                  disabled={!!installingId}
                   onClick={() => {
                     const tpl = previewTemplate;
                     setPreviewTemplate(null);
                     handleStartBuild(tpl);
                   }}
-                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95"
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white shadow-lg shadow-blue-600/30 transition-all flex items-center gap-2 cursor-pointer hover:scale-105 active:scale-95"
                 >
-                  <span>Continue & Build</span>
-                  <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                  {installingId
+                    ? <><Loader2 className="w-4 h-4 animate-spin" />Installing…</>
+                    : <><span>Continue & Build</span><ArrowRight className="w-4 h-4 stroke-[2.5]" /></>}
                 </button>
               </div>
             </>

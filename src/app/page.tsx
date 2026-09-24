@@ -1050,15 +1050,7 @@ export function DashboardContent() {
 
             {/* ── Starter tab content: Rich Template Gallery ── */}
             {dashTab === "starter" && (
-              <StarterTemplateGallery
-                onSelectTemplate={(template) => {
-                  setFirstPrompt(template.prompt);
-                  try {
-                    sessionStorage.setItem("bigbag:pending-prompt", template.prompt);
-                  } catch {}
-                  openBuildModal(template.prompt);
-                }}
-              />
+              <StarterTemplateGallery />
             )}
           </>
         )}

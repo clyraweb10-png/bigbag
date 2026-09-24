@@ -1119,6 +1119,31 @@ export default function WorkspacePage() {
       displayPrompt
     );
   }, [loading, project, projectId, sendPromptText]);
+
+  // ─── Starter template: pre-fill the composer with the template prompt ───────
+  // When the user arrived via the starter gallery the gallery stored the template
+  // info in sessionStorage under bigbag:starterTemplate:{projectId}.  We read it
+  // once on mount and put the template's PROMPT into the composer so the user
+  // sees "what this template is about" and can edit it or just press Send to ask
+  // the AI to customise it.  We deliberately do NOT call sendPromptText here —
+  // the pre-built code is already in the workspace; we just want context in the box.
+  useEffect(() => {
+    if (loading || !project) return;
+    const key = `bigbag:starterTemplate:${projectId}`;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem(key); } catch { /* unavailable */ }
+    if (!raw) return;
+    try { sessionStorage.removeItem(key); } catch { /* ignore */ }
+    let info: { templateName?: string; prompt?: string; description?: string } = {};
+    try { info = JSON.parse(raw); } catch { return; }
+    // Pre-fill the composer with the template description so the user sees context.
+    const prefill = info.prompt?.trim() ?? info.description?.trim() ?? "";
+    if (prefill && !prompt.trim()) {
+      setPrompt(prefill);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, project, projectId]);
+
   /**
    * ═══⭐⭐⭐ THE ONE PLACE A LONG OPERATION FINISHES ═════════════════════════
    *
