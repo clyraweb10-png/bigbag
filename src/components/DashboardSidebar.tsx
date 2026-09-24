@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   LayoutGrid, Search, Plug2,
@@ -27,7 +27,8 @@ interface Props {
   onOpen?: () => void;
   onToggle?: () => void;
   onConnectorsOpen: () => void;
-  onSearchFocus: () => void;
+  onSearchFocus?: () => void;
+  onSearchOpen?: () => void;
   onNewProject: () => void;
 }
 
@@ -39,10 +40,33 @@ export function DashboardSidebar({
   onToggle,
   onConnectorsOpen,
   onSearchFocus,
+  onSearchOpen,
   onNewProject,
 }: Props) {
   const { user } = useAuth();
   const [recentsExpanded, setRecentsExpanded] = useState(true);
+  const [isMac, setIsMac] = useState(false);
+
+  useEffect(() => {
+    setIsMac(
+      typeof navigator !== "undefined" &&
+        (navigator.platform?.toUpperCase().includes("MAC") ||
+          navigator.userAgent?.toUpperCase().includes("MAC"))
+    );
+  }, []);
+
+  const handleSearchClick = () => {
+    if (typeof window !== "undefined" && window.innerWidth < 768 && onClose) {
+      onClose();
+    }
+    if (onSearchOpen) {
+      onSearchOpen();
+    } else if (onSearchFocus) {
+      onSearchFocus();
+    }
+  };
+
+  const searchShortcut = isMac ? "⌘K" : "Ctrl+K";
 
   const recentProjects = [...projects]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -180,8 +204,9 @@ export function DashboardSidebar({
             <NavItem
               icon={<Search className="w-4 h-4" />}
               label="Search"
-              onClick={onSearchFocus}
+              onClick={handleSearchClick}
               collapsed={!isOpen}
+              shortcut={searchShortcut}
             />
             <NavItem
               icon={<Plug2 className="w-4 h-4" />}
@@ -260,6 +285,7 @@ function NavItem({
   onClick,
   active,
   collapsed = false,
+  shortcut,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -267,7 +293,9 @@ function NavItem({
   onClick?: () => void;
   active?: boolean;
   collapsed?: boolean;
+  shortcut?: string;
 }) {
+  const tooltipText = shortcut ? `${label} (${shortcut})` : label;
   const cls = collapsed
     ? `w-9 h-9 flex items-center justify-center rounded-xl transition-all mx-auto cursor-pointer ${
         active
@@ -289,20 +317,25 @@ function NavItem({
   ) : (
     <>
       <span className={iconCls}>{icon}</span>
-      <span>{label}</span>
+      <span className="flex-1 truncate">{label}</span>
+      {shortcut && (
+        <kbd className="hidden sm:inline-flex items-center justify-center text-[10px] font-mono font-medium text-zinc-500 dark:text-zinc-400 bg-zinc-200/70 dark:bg-white/8 px-1.5 py-0.5 rounded border border-zinc-200/80 dark:border-white/10 shrink-0">
+          {shortcut}
+        </kbd>
+      )}
     </>
   );
 
   if (href) {
     return (
-      <Link href={href} className={cls} title={collapsed ? label : undefined}>
+      <Link href={href} className={cls} title={collapsed ? tooltipText : undefined}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" onClick={onClick} className={cls} title={collapsed ? label : undefined}>
+    <button type="button" onClick={onClick} className={cls} title={collapsed ? tooltipText : undefined}>
       {content}
     </button>
   );

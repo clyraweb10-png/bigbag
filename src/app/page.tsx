@@ -45,6 +45,7 @@ import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 import { getCachedScreenshot } from "@/lib/project-screenshot";
 import { StarterTemplateGallery } from "@/components/dashboard/StarterTemplateGallery";
+import { DashboardSearchDialog } from "@/components/dashboard/DashboardSearchDialog";
 
 type ViewMode = "cards" | "table";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -269,6 +270,7 @@ export function DashboardContent() {
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [dashTab, setDashTab] = useState<"projects" | "starter">("projects");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -295,6 +297,11 @@ export function DashboardContent() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchDialogOpen((prev) => !prev);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) {
@@ -302,11 +309,34 @@ export function DashboardContent() {
         }
         e.preventDefault();
         handleToggleSidebar();
+        return;
+      }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        setSearchDialogOpen(true);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleToggleSidebar]);
+
+  const handleSelectProjectFromSearch = (projectId: string) => {
+    router.push(`/project/${projectId}`);
+  };
+
+  const handleFilterOnDashboard = (query: string) => {
+    setChatOpen(false);
+    setDashTab("projects");
+    setSearch(query);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+  };
 
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -595,10 +625,8 @@ export function DashboardContent() {
         }}
         onToggle={handleToggleSidebar}
         onConnectorsOpen={() => setConnectorsOpen(true)}
-        onSearchFocus={() => {
-          searchInputRef.current?.focus();
-          searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-        }}
+        onSearchOpen={() => setSearchDialogOpen(true)}
+        onSearchFocus={() => setSearchDialogOpen(true)}
         onNewProject={focusComposer}
       />
 
@@ -1272,6 +1300,21 @@ export function DashboardContent() {
 
       {/* Connectors modal */}
       <ConnectorsModal open={connectorsOpen} onOpenChange={setConnectorsOpen} />
+
+      {/* Quick Search Dialog */}
+      <DashboardSearchDialog
+        open={searchDialogOpen}
+        onOpenChange={setSearchDialogOpen}
+        projects={projects}
+        onSelectProject={handleSelectProjectFromSearch}
+        onNewProject={focusComposer}
+        onConnectorsOpen={() => setConnectorsOpen(true)}
+        onBrowseTemplates={() => {
+          setChatOpen(false);
+          setDashTab("starter");
+        }}
+        onFilterOnDashboard={handleFilterOnDashboard}
+      />
       </div>
     </div>
   );
