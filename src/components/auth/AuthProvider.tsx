@@ -11,6 +11,7 @@ import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
 import { oauthCallbackUrl, resolveAppOrigin } from "@/lib/auth-redirect";
 import { cn } from "@/lib/utils";
+import { extractCleanUserName } from "@/lib/user-name";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface AuthUser {
@@ -48,11 +49,12 @@ async function serializeSessionMutation<T>(operation: () => Promise<T>): Promise
 
 function mapSupabaseUser(sbUser: SupabaseUser | null | undefined): AuthUser | null {
   if (!sbUser) return null;
-  const displayName =
+  const rawDisplayName =
     (sbUser.user_metadata?.full_name as string) ||
     (sbUser.user_metadata?.name as string) ||
     sbUser.email?.split("@")[0] ||
     null;
+  const displayName = rawDisplayName ? extractCleanUserName(rawDisplayName) || rawDisplayName : null;
   const photoURL =
     (sbUser.user_metadata?.avatar_url as string) ||
     (sbUser.user_metadata?.picture as string) ||
@@ -414,7 +416,7 @@ export function UserAvatar({
   user: AuthUser | null;
   className?: string;
 }) {
-  const label = user?.displayName || user?.email || "Account";
+  const label = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Account";
   const initials = (label.trim()[0] || "U").toUpperCase();
   return user?.photoURL ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -434,7 +436,7 @@ export function AuthUserMenu({
   showLabel?: boolean;
 } = {}) {
   const { user, signOutUser } = useAuth();
-  const label = user?.displayName || user?.email || "Account";
+  const label = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Account";
   return (
     <Button
       variant="ghost"

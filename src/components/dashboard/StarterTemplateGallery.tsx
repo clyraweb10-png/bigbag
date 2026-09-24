@@ -522,54 +522,35 @@ function TemplatePreviewThumbnail({
   onStartBuild: (e: React.MouseEvent) => void;
   onOpenDetails: (e: React.MouseEvent) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [isHovered, setIsHovered] = useState(false);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [videoError, setVideoError] = useState(false);
 
   const hasMotion = !!(template.previewVideo || template.previewGif);
 
-  // Auto-play looping video continuously when visible (always in motion without mouse hover)
-  useEffect(() => {
-    const video = videoRef.current;
-    const container = containerRef.current;
-    if (!video || !template.previewVideo || videoError) return;
-
-    let observer: IntersectionObserver | null = null;
-    if (typeof IntersectionObserver !== "undefined" && container) {
-      observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              video.play().catch(() => {});
-            } else {
-              video.pause();
-            }
-          });
-        },
-        { rootMargin: "150px 0px" }
-      );
-      observer.observe(container);
-    } else {
-      video.play().catch(() => {});
-    }
-
-    return () => {
-      observer?.disconnect();
-    };
-  }, [template.previewVideo, videoError]);
-
   const handleMouseEnter = () => {
-    if (template.previewVideo && videoRef.current && videoRef.current.paused) {
+    setIsHovered(true);
+    if (template.previewVideo && videoRef.current) {
       videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setIsHovered(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+      try {
+        videoRef.current.currentTime = 0;
+      } catch {}
     }
   };
 
   return (
     <div
-      ref={containerRef}
       className="relative aspect-[16/9] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-950 border-b border-zinc-200/80 dark:border-white/[0.08]"
       onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
       {/* ── Base static screenshot (Always present for instant load) ── */}
       <img
@@ -595,34 +576,31 @@ function TemplatePreviewThumbnail({
         <span className="text-[10px] text-zinc-500 mt-0.5">{template.badge}</span>
       </div>
 
-      {/* ── Looping Video Preview (Always in motion without hover) ── */}
+      {/* ── Looping Video Preview (Smooth Motion on hover) ── */}
       {template.previewVideo && !videoError && (
         <video
           ref={videoRef}
           src={template.previewVideo}
-          autoPlay
           loop
           muted
           playsInline
-          preload="metadata"
-          onLoadedData={() => {
-            setVideoLoaded(true);
-            videoRef.current?.play().catch(() => {});
-          }}
+          preload="none"
+          onLoadedData={() => setVideoLoaded(true)}
           onError={() => setVideoError(true)}
           className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
-            videoLoaded ? "opacity-100" : "opacity-0"
+            isHovered && videoLoaded ? "opacity-100" : "opacity-0"
           }`}
         />
       )}
 
-      {/* ── GIF Preview Alternative (Always in motion without hover) ── */}
+      {/* ── GIF Preview Alternative ── */}
       {template.previewGif && !template.previewVideo && (
         <img
           src={template.previewGif}
           alt={template.title}
-          loading="lazy"
-          className="absolute inset-0 w-full h-full object-cover object-top opacity-100 pointer-events-none"
+          className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
+            isHovered ? "opacity-100" : "opacity-0"
+          }`}
         />
       )}
 

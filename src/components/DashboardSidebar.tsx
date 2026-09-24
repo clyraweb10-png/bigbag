@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { useAuth, AuthUserMenu } from "@/components/auth/AuthProvider";
+import { extractCleanUserName } from "@/lib/user-name";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 import { SidebarCollapseIcon } from "@/components/SidebarIcons";
 import {
@@ -43,8 +44,9 @@ export function DashboardSidebar({
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
 
-  const displayName = user?.displayName || user?.email?.split("@")[0] || "Workspace";
-  const initial = (user?.displayName || user?.email || "C")[0]?.toUpperCase() ?? "C";
+  const rawDisplayName = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Workspace";
+  const displayName = extractCleanUserName(rawDisplayName) || rawDisplayName;
+  const initial = (displayName || "U")[0]?.toUpperCase() ?? "U";
 
   return (
     <>

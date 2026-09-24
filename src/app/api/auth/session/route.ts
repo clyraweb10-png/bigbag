@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE, authCookieOptions, createAuthSession, verifyAuthSession } from "@/lib/auth-session";
 import { attachLocalTenantCookie, tenantContextForIdentity, TENANT_COOKIE } from "@/lib/local-orchestrator/tenant-context";
 import { getSupabaseAdminClient, getSupabaseClient, getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase";
+import { extractCleanUserName } from "@/lib/user-name";
 
 export async function POST(request: NextRequest) {
   const supabase = getSupabaseAdminClient() || getSupabaseClient();
@@ -26,11 +27,14 @@ export async function POST(request: NextRequest) {
     }
 
     const user = data.user;
-    const displayName =
+    const rawDisplayName =
       (user.user_metadata?.full_name as string) ||
       (user.user_metadata?.name as string) ||
       user.email?.split("@")[0] ||
       null;
+    const displayName = rawDisplayName
+      ? extractCleanUserName(rawDisplayName) || rawDisplayName
+      : null;
     const photoURL =
       (user.user_metadata?.avatar_url as string) ||
       (user.user_metadata?.picture as string) ||
