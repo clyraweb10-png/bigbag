@@ -59,7 +59,7 @@ const {
   legacyStarterPageSource,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
-const { generationValidationIssues, validationRepairContext } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
+const { generationValidationIssues, seedRecordIntent, validationRepairContext } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { GENERATED_RUNTIME_CHECK_SCRIPT } = require("../src/lib/local-orchestrator/runtime-validator") as typeof import("../src/lib/local-orchestrator/runtime-validator");
 const { buildPexelsSearchPlan, resolvePexelsImagery } = require("../src/lib/local-orchestrator/pexels-imagery") as typeof import("../src/lib/local-orchestrator/pexels-imagery");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
@@ -1178,6 +1178,51 @@ test("generation validation rejects unrequested seed data but permits explicit s
   assert.equal(generationValidationIssues(files, [], { allowSeedData: true }).some((issue) => issue.includes("seed or fixture data")), false);
   assert.ok(generationValidationIssues([{ path: "src/fixtures.json", content: "[]" }])
     .some((issue) => issue.includes("without an explicit user request")));
+  const inlineSeed = [{
+    path: "src/components/StoreView.tsx",
+    content: `const SEED: Product[] = [{ name: "Invented coat", price: 42 }];
+const products = db.collection<Product>("products");
+for (const seed of SEED) await products.create(seed);`,
+  }];
+  assert.ok(generationValidationIssues(inlineSeed, ["src/App.tsx"], { allowSeedData: false })
+    .some((issue) => issue.includes("inline seed records")));
+  assert.equal(generationValidationIssues(inlineSeed, ["src/App.tsx"], { allowSeedData: true })
+    .some((issue) => issue.includes("inline seed records")), false);
+  assert.ok(generationValidationIssues([{
+    path: "src/components/StoreView.tsx",
+    content: `const seedProducts = [{ name: "Invented coat" }]; for (const product of seedProducts) await products.create({ ...product });`,
+  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")));
+  for (const body of [
+    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(product);`,
+    `const inventory = [{ name: "Invented coat" }]; inventory.map((product) => products.create(product));`,
+    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create({ ...product });`,
+    `const inventory = [{ name: "Invented coat" }]; inventory.map(({ name }) => products.create({ name }));`,
+  ]) {
+    assert.ok(generationValidationIssues([{ path: "src/components/StoreView.tsx", content: body }], ["src/App.tsx"], { allowSeedData: false })
+      .some((issue) => issue.includes("inline seed records")));
+  }
+  assert.equal(generationValidationIssues([{
+    path: "src/components/StoreView.tsx",
+    content: `const seed = crypto.getRandomValues(new Uint8Array(4));`,
+  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
+  assert.equal(generationValidationIssues([{
+    path: "src/components/Chart.tsx",
+    content: `const sampleData = [{ value: 4 }]; return sampleData.map(({ value }) => <span>{value}</span>);`,
+  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
+  assert.equal(generationValidationIssues([{
+    path: "src/components/StoreView.tsx",
+    content: `const inventory = [{ name: "Existing record" }]; function sync(inventory: Product[]) { for (const product of inventory) products.create(product); }`,
+  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
+  assert.equal(seedRecordIntent("Add five demo products to the catalog"), true);
+  assert.equal(seedRecordIntent("Create sample products and seed the inventory"), true);
+  assert.equal(seedRecordIntent("Seed the database with ten orders"), true);
+  assert.equal(seedRecordIntent("Build a mock app with real products"), null);
+  assert.equal(seedRecordIntent("Never seed demo products or invent catalog entries"), false);
+  assert.equal(seedRecordIntent("Seed data is not needed"), false);
+  assert.equal(seedRecordIntent("Never seed the database. Add sample products for the design"), false);
+  assert.equal(seedRecordIntent("Add persisted category filtering, without sample products"), false);
+  assert.equal(["Add sample products", "Remove sample products", "Change the header"]
+    .reduce((permitted, request) => seedRecordIntent(request) ?? permitted, false), false);
 });
 
 test("generation validation keeps authentication controlled by user intent", () => {
