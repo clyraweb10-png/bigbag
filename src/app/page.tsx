@@ -456,9 +456,7 @@ export function DashboardContent() {
         .filter(Boolean)
         .join(" ");
     if (!buildPrompt && attachedFiles.length === 0) return;
-    const words = buildPrompt.split(/\s+/).slice(0, 4).join("-");
-    const auto = normalizeId(words) || `app-${Math.random().toString(36).slice(2, 7)}`;
-    setBuildName(auto);
+    setBuildName("");
     setBuildError(null);
     setNameModalOpen(true);
   };
