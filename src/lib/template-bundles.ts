@@ -2396,15 +2396,43 @@ export const TEMPLATE_BUNDLES: Record<string, TemplateBundleFile[]> = {
   "budget-tracker": BUDGET_TRACKER_FILES,
 };
 
+import starterBundlesData from "./starter-bundles.json";
+
+const STARTER_BUNDLES = starterBundlesData as unknown as Record<
+  string,
+  { appCode: string; css: string; html: string }
+>;
+
 /**
  * Find the best bundle for a template by checking its id and name keywords.
  */
 export function findBundleForTemplate(templateId: string, templateName: string): TemplateBundleFile[] | null {
-  // Direct id match
-  if (TEMPLATE_BUNDLES[templateId]) return TEMPLATE_BUNDLES[templateId];
+  const normId = (templateId || "").trim().toLowerCase();
+  const normName = (templateName || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-  // Keyword match on normalized name
-  const normalized = templateName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  // 1. Check pre-generated starter bundles (covers all 93 templates)
+  const generated =
+    STARTER_BUNDLES[templateId] ||
+    STARTER_BUNDLES[normId] ||
+    STARTER_BUNDLES[normId.replace(/^(motion|antislop|uilib|preset)-/, "")] ||
+    STARTER_BUNDLES[templateName.toLowerCase()] ||
+    STARTER_BUNDLES[normName];
+
+  if (generated) {
+    return [
+      { path: "src/App.tsx", content: generated.appCode },
+      { path: "src/index.css", content: generated.css },
+      { path: "dist/index.html", content: generated.html },
+      { path: "index.html", content: generated.html },
+    ];
+  }
+
+  // 2. Direct id match in hand-crafted bundles
+  if (TEMPLATE_BUNDLES[templateId]) return TEMPLATE_BUNDLES[templateId];
+  if (TEMPLATE_BUNDLES[normId]) return TEMPLATE_BUNDLES[normId];
+
+  // 3. Keyword match on normalized name
+  const normalized = normName;
 
   const keywords: Array<[string, string]> = [
     ["saas", "saas-landing"],

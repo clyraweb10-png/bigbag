@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import fs from "node:fs";
+import path from "node:path";
 
 import {
     authFailed,
@@ -472,6 +474,23 @@ async function servePersistentDeployment(
     }
     if (!file && !requestedPath.split("/").at(-1)?.includes(".")) {
         file = await durableProjectStore.readDeploymentFile(projectId, "index.html");
+    }
+    if (!file) {
+        try {
+            const rootDir = localProjectStore.getWorkspaceDir(projectId);
+            const candidates = [
+                path.join(rootDir, "dist", requestedPath),
+                path.join(rootDir, "dist", "index.html"),
+                path.join(rootDir, "public", requestedPath),
+                path.join(rootDir, requestedPath),
+            ];
+            for (const c of candidates) {
+                if (fs.existsSync(c) && fs.statSync(c).isFile()) {
+                    file = { path: requestedPath, content: fs.readFileSync(c) };
+                    break;
+                }
+            }
+        } catch { /* ignore */ }
     }
     if (!file) {
         // For document requests (browser navigation), show a friendly boot page

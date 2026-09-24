@@ -151,21 +151,72 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // Add "files installed" message
-  const filesInstalledMsg: ConversationMessage = {
-    author: "agent",
-    message: bundle
-      ? `Template files installed (${bundle.length} files). Starting preview build…`
-      : "Starting preview build…",
-    messageType: "building",
-    createdAt: new Date().toISOString(),
-    generationEvent: { type: "build_started", status: "started" },
-  };
+  // ── Save deployment snapshot immediately for 0s instant preview ─────────
+  const htmlFile = bundle?.find(f => f.path === "dist/index.html" || f.path === "index.html");
+  if (htmlFile && durablePersistenceConfigured()) {
+    try {
+      const rec = localProjectStore.getRecord(projectId);
+      if (rec) {
+        await durableProjectStore.saveDeployment(rec, [
+          { path: "index.html", content: Buffer.from(htmlFile.content, "utf8") }
+        ]);
+      }
+    } catch (err) {
+      console.warn("[starter-install] Could not save deployment snapshot:", err);
+    }
+  }
+
+  // Pre-seed instant active status so preview is live from second 0
+  const previewPath = `/api/preview/${encodeURIComponent(projectId)}/`;
+  const initialDoneMessages: ConversationMessage[] = [
+    {
+      author: "agent",
+      message: `Template files installed (${bundle?.length ?? 0} files).`,
+      messageType: "building",
+      createdAt: new Date().toISOString(),
+      generationEvent: { type: "build_completed", status: "completed" },
+    },
+    {
+      author: "agent",
+      message: "Live preview is ready.",
+      messageType: "building",
+      createdAt: new Date().toISOString(),
+      generationEvent: {
+        type: "preview_ready",
+        status: "completed",
+        source: "runtime",
+      },
+    },
+    {
+      author: "agent",
+      message: `✅ **${templateName}** template installed. Preview is live! This is your independent copy — type below to customize it with AI.`,
+      messageType: "finished",
+      createdAt: new Date().toISOString(),
+      generationEvent: {
+        type: "generation_completed",
+        status: "completed",
+        generationId,
+      },
+    },
+  ];
+
   localProjectStore.update(projectId, {
-    conversation: [...initialMessages, filesInstalledMsg],
+    status: "done",
+    serverStatus: "Active",
+    previewUrl: previewPath,
+    deployment: {
+      status: "success",
+      createdAt: now,
+      versionId: randomUUID(),
+    },
+    conversation: [...initialMessages, ...initialDoneMessages],
   });
 
-  // ── Kick off background build (don't await — respond immediately) ─────────
+  if (durablePersistenceConfigured()) {
+    await localProjectStore.flush(projectId).catch(() => {});
+  }
+
+  // ── Kick off background dev server so interactive edits hot reload ─────────
   void (async () => {
     try {
       let previewUrl: string | null = null;
@@ -176,71 +227,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         previewUrl = await localSandboxManager.startDevServer(projectId);
       }
 
-      const current = localProjectStore.getRecord(projectId);
-      const doneMessages: ConversationMessage[] = [
-        {
-          author: "agent",
-          message: "Build succeeded! The live preview is ready.",
-          messageType: "building",
-          createdAt: new Date().toISOString(),
-          generationEvent: { type: "build_completed", status: "completed" },
-        },
-        {
-          author: "agent",
-          message: "Live preview is ready.",
-          messageType: "building",
-          createdAt: new Date().toISOString(),
-          generationEvent: {
-            type: "preview_ready",
-            status: "completed",
-            source: "runtime",
-          },
-        },
-        {
-          author: "agent",
-          message: `✅ **${templateName}** is live! This is a pre-built starter — type below to customise it with AI.`,
-          messageType: "finished",
-          createdAt: new Date().toISOString(),
-          generationEvent: {
-            type: "generation_completed",
-            status: "completed",
-            generationId,
-          },
-        },
-      ];
-
-      localProjectStore.update(projectId, {
-        status: "done",
-        serverStatus: "Active",
-        previewUrl: previewUrl ?? undefined,
-        conversation: [...(current?.conversation ?? []), ...doneMessages],
-      });
-
-      if (durablePersistenceConfigured()) {
-        await localProjectStore.flush(projectId).catch(() => {});
+      if (previewUrl) {
+        localProjectStore.update(projectId, {
+          previewUrl: previewUrl,
+        });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[starter-install] Build failed for ${projectId}:`, err);
-
-      const current = localProjectStore.getRecord(projectId);
-      localProjectStore.update(projectId, {
-        status: "done",
-        conversation: [
-          ...(current?.conversation ?? []),
-          {
-            author: "agent",
-            message: `⚠️ Preview build hit an issue: ${message}. You can still edit files or ask AI to fix it.`,
-            messageType: "finished",
-            createdAt: new Date().toISOString(),
-            generationEvent: {
-              type: "generation_completed",
-              status: "completed",
-              generationId,
-            },
-          },
-        ],
-      });
+      console.warn(`[starter-install] Background dev server notice for ${projectId}:`, err);
     }
   })();
 
