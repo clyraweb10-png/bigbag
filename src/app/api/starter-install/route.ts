@@ -98,7 +98,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const now = new Date().toISOString();
   const generationId = randomUUID();
 
+  const userPromptText = (prompt || "").trim() || `Create a ${templateName} app`;
+  const initialUserMessage: ConversationMessage = {
+    author: "user",
+    message: userPromptText,
+    messageType: "regular",
+    createdAt: now,
+  };
+
   const initialMessages: ConversationMessage[] = [
+    initialUserMessage,
     {
       author: "agent",
       message: `Installing **${templateName}** starter template…`,

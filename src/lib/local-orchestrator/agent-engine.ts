@@ -846,7 +846,11 @@ export const localAgentEngine = {
             e.type === "file" &&
             sourceExtensions.test(e.path) &&
             !e.path.includes("node_modules") &&
-            !e.path.startsWith(".")
+            !e.path.startsWith(".") &&
+            !e.path.startsWith("dist/") &&
+            !e.path.startsWith("build/") &&
+            !e.path.includes("/dist/") &&
+            !e.path.includes("/build/")
         );
 
         // Check if there is real code in the workspace (not just the initial placeholder)
@@ -856,6 +860,19 @@ export const localAgentEngine = {
             file.encoding === "utf8" &&
             !containsGenerationPlaceholder(file.content) &&
             !isRuntimeOwnedGeneratedPath(entry.path, file.content);
+        });
+
+        // Prioritize key application source files first so they fit in the context budget
+        nonPlaceholderEntries.sort((a, b) => {
+          const score = (p: string) => {
+            if (p === "src/App.tsx" || p === "src/App.jsx" || p === "src/app/page.tsx") return 0;
+            if (p.startsWith("src/") && (p.endsWith(".tsx") || p.endsWith(".jsx"))) return 1;
+            if (p === "src/index.css" || p === "src/globals.css") return 2;
+            if (p === "index.html") return 3;
+            if (p.endsWith(".json")) return 4;
+            return 5;
+          };
+          return score(a.path) - score(b.path);
         });
 
         const hasRealExistingCode = hasRealGeneratedSource(

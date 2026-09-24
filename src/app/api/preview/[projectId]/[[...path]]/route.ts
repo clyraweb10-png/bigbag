@@ -478,11 +478,12 @@ async function servePersistentDeployment(
     if (!file) {
         try {
             const rootDir = localProjectStore.getWorkspaceDir(projectId);
+            const hasExt = requestedPath.split("/").at(-1)?.includes(".");
             const candidates = [
                 path.join(rootDir, "dist", requestedPath),
-                path.join(rootDir, "dist", "index.html"),
                 path.join(rootDir, "public", requestedPath),
                 path.join(rootDir, requestedPath),
+                ...(!hasExt || requestedPath === "index.html" ? [path.join(rootDir, "dist", "index.html")] : []),
             ];
             for (const c of candidates) {
                 if (fs.existsSync(c) && fs.statSync(c).isFile()) {
