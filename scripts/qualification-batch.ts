@@ -125,7 +125,7 @@ ecommerceProjects.forEach((name, index) => {
     requiresAuth: true,
     requiresApi: true,
     edit: `Add persisted product search and category filtering to the ${name.toLowerCase()} while preserving cart quantities and order history.`,
-    prompt: `Build a production ${name} with real Supabase authentication, owner-scoped customers and orders, durable products and inventory, product detail, variants, pricing, search, filters, sorting, cart quantity updates, honest checkout states, responsive UI, and complete CRUD where appropriate. Never claim payment success without a configured test-mode payment provider. ${SECURITY_CONTRACT}`,
+    prompt: `Build a production ${name} with real Supabase authentication, owner-scoped customers and orders, durable products and inventory, product detail, variants, pricing, search, filters, sorting, cart quantity updates, honest checkout states, responsive UI, and complete CRUD where appropriate. Do not decrement stock or reserve inventory for an unpaid order when no payment provider is configured; do not decrement stock until a real payment succeeds. Never claim payment success without a configured test-mode payment provider. Include a semantic main landmark on signed-out and signed-in screens, including mobile. ${SECURITY_CONTRACT}`,
   });
 });
 
