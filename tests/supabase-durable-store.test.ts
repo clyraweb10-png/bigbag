@@ -190,6 +190,92 @@ test("Supabase PostgreSQL: qualification evidence persists by run and project", 
   }
 });
 
+test("Supabase PostgreSQL: qualification retries retain immutable first-attempt evidence", async () => {
+  const runId = `history-test-${randomUUID()}`;
+  const firstAttempt = {
+    projectNumber: 71,
+    projectName: "History retention",
+    category: "ECOMMERCE",
+    projectId: `qualification-p71-${runId}`,
+    generationId: randomUUID(),
+    statuses: { final: "FAIL" },
+    firstAttemptResult: "FAIL",
+    firstAttemptFailures: ["Generated seed records were not requested"],
+  };
+  const retry = {
+    ...firstAttempt,
+    projectId: `${firstAttempt.projectId}-1`,
+    generationId: randomUUID(),
+    statuses: { final: "PARTIAL" },
+    priorCampaignAttempts: [{ projectId: firstAttempt.projectId, result: "FAIL" }],
+  };
+  try {
+    await durableProjectStore.saveQualificationEvidence(runId, firstAttempt);
+    await durableProjectStore.saveQualificationEvidence(runId, retry);
+    const latest = await durableProjectStore.listQualificationEvidence(runId);
+    assert.deepEqual(latest.results, [retry]);
+    const history = await durableProjectStore.listQualificationAttemptHistory(runId, 71);
+    assert.deepEqual(history, [firstAttempt, retry]);
+    assert.deepEqual(await durableProjectStore.listQualificationAttemptHistory(runId, 70), []);
+  } finally {
+    await durableProjectStore.removeQualificationRun(runId);
+  }
+});
+
+test("Supabase PostgreSQL: concurrent qualification saves retain exactly one snapshot", async () => {
+  const runId = `parallel-history-test-${randomUUID()}`;
+  const evidence = {
+    projectNumber: 71,
+    projectName: "Concurrent history retention",
+    category: "ECOMMERCE",
+    projectId: `qualification-p71-${runId}`,
+    generationId: randomUUID(),
+    statuses: { final: "FAIL" },
+  };
+  const retry = {
+    ...evidence,
+    projectId: `${evidence.projectId}-1`,
+    generationId: randomUUID(),
+    statuses: { final: "PARTIAL" },
+  };
+  try {
+    await Promise.all([
+      durableProjectStore.saveQualificationEvidence(runId, evidence),
+      durableProjectStore.saveQualificationEvidence(runId, evidence),
+    ]);
+    await Promise.all([
+      durableProjectStore.saveQualificationEvidence(runId, retry),
+      durableProjectStore.saveQualificationEvidence(runId, retry),
+    ]);
+    assert.deepEqual(await durableProjectStore.listQualificationAttemptHistory(runId, 71), [evidence, retry]);
+    assert.deepEqual((await durableProjectStore.listQualificationEvidence(runId)).results, [retry]);
+  } finally {
+    await durableProjectStore.removeQualificationRun(runId);
+  }
+});
+
+test("Supabase PostgreSQL: qualification history retains a restored earlier state", async () => {
+  const runId = `history-transition-${randomUUID()}`;
+  const original = {
+    projectNumber: 71,
+    projectName: "Transition history",
+    category: "ECOMMERCE",
+    projectId: `qualification-p71-${runId}`,
+    generationId: randomUUID(),
+    statuses: { final: "FAIL" },
+  };
+  const changed = { ...original, statuses: { final: "PARTIAL" } };
+  try {
+    await durableProjectStore.saveQualificationEvidence(runId, original);
+    await durableProjectStore.saveQualificationEvidence(runId, changed);
+    await durableProjectStore.saveQualificationEvidence(runId, original);
+    assert.deepEqual(await durableProjectStore.listQualificationAttemptHistory(runId, 71), [original, changed, original]);
+  } finally {
+    await durableProjectStore.removeQualificationRun(runId);
+    assert.deepEqual(await durableProjectStore.listQualificationAttemptHistory(runId, 71), []);
+  }
+});
+
 test("Supabase PostgreSQL: qualification retries discover durable prior attempts", async () => {
   const runId = `attempt-test-${randomUUID()}-r`;
   const prefix = qualificationProjectId(runId, 67);

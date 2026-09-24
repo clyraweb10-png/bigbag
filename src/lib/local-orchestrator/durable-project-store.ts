@@ -143,6 +143,33 @@ async function ensureSchema(): Promise<Pool | null> {
           );
           CREATE INDEX IF NOT EXISTS builder_qualification_results_updated
             ON public.builder_qualification_results (updated_at DESC);
+          CREATE TABLE IF NOT EXISTS public.builder_qualification_history (
+            history_id TEXT PRIMARY KEY,
+            attempt_order BIGSERIAL NOT NULL,
+            run_id TEXT NOT NULL,
+            project_number INTEGER NOT NULL,
+            project_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+          );
+          ALTER TABLE public.builder_qualification_history ADD COLUMN IF NOT EXISTS attempt_order BIGSERIAL;
+          CREATE UNIQUE INDEX IF NOT EXISTS builder_qualification_history_order
+            ON public.builder_qualification_history (attempt_order);
+          CREATE INDEX IF NOT EXISTS builder_qualification_history_project_order
+            ON public.builder_qualification_history (run_id, project_number, attempt_order ASC);
+          INSERT INTO public.builder_qualification_history
+            (history_id, run_id, project_number, project_id, generation_id, evidence_json, recorded_at)
+          SELECT md5(result.run_id || ':' || result.project_number::text || ':' || result.evidence_json),
+            result.run_id, result.project_number, result.project_id, result.generation_id,
+            result.evidence_json, result.updated_at
+          FROM public.builder_qualification_results AS result
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.builder_qualification_history AS history
+            WHERE history.run_id = result.run_id AND history.project_number = result.project_number
+              AND history.evidence_json = result.evidence_json
+          )
+          ON CONFLICT (history_id) DO NOTHING;
           CREATE TABLE IF NOT EXISTS public.builder_qualification_benchmarks (
             run_id TEXT NOT NULL,
             benchmark_key TEXT NOT NULL,
@@ -758,8 +785,36 @@ export const durableProjectStore = {
       throw new Error("Invalid qualification project number");
     }
     const updatedAt = new Date().toISOString();
-    await pool.query(
-      `INSERT INTO public.builder_qualification_results
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), 0)", [runId]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), $2::integer)", [runId, evidence.projectNumber]);
+      const saveSnapshot = async (projectId: string, generationId: string, evidenceJson: string, recordedAt: string) => {
+        await client.query(
+          `INSERT INTO public.builder_qualification_history
+           (history_id, run_id, project_number, project_id, generation_id, evidence_json, recorded_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7
+           WHERE $6 IS DISTINCT FROM (
+             SELECT evidence_json FROM public.builder_qualification_history
+             WHERE run_id = $2 AND project_number = $3 ORDER BY attempt_order DESC LIMIT 1
+           )`,
+          [randomUUID(), runId, evidence.projectNumber, projectId, generationId, evidenceJson, recordedAt]
+        );
+      };
+      const existing = await client.query(
+        `SELECT project_id, generation_id, evidence_json, updated_at
+         FROM public.builder_qualification_results
+         WHERE run_id = $1 AND project_number = $2 FOR UPDATE`,
+        [runId, evidence.projectNumber]
+      );
+      if (existing.rows[0]) {
+        const prior = existing.rows[0];
+        await saveSnapshot(prior.project_id, prior.generation_id, prior.evidence_json, prior.updated_at);
+      }
+      await saveSnapshot(evidence.projectId, evidence.generationId, JSON.stringify(evidence), updatedAt);
+      await client.query(
+        `INSERT INTO public.builder_qualification_results
        (run_id, project_number, category, project_id, generation_id, final_status, evidence_json, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (run_id, project_number) DO UPDATE SET
@@ -769,17 +824,29 @@ export const durableProjectStore = {
          final_status = EXCLUDED.final_status,
          evidence_json = EXCLUDED.evidence_json,
          updated_at = EXCLUDED.updated_at`,
-      [
-        runId,
-        evidence.projectNumber,
-        evidence.category,
-        evidence.projectId,
-        evidence.generationId,
-        evidence.statuses.final || "FAIL",
-        JSON.stringify(evidence),
-        updatedAt,
-      ]
+        [runId, evidence.projectNumber, evidence.category, evidence.projectId, evidence.generationId,
+          evidence.statuses.final || "FAIL", JSON.stringify(evidence), updatedAt]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async listQualificationAttemptHistory(runId: string, projectNumber: number): Promise<QualificationEvidence[]> {
+    const pool = await requireSchema();
+    if (!/^[a-z0-9-]{1,120}$/i.test(runId) || !Number.isInteger(projectNumber) || projectNumber < 1 || projectNumber > 100) {
+      throw new Error("Invalid qualification history identity");
+    }
+    const res = await pool.query(
+      `SELECT evidence_json FROM public.builder_qualification_history
+       WHERE run_id = $1 AND project_number = $2 ORDER BY attempt_order ASC`,
+      [runId, projectNumber]
     );
+    return res.rows.map((row) => JSON.parse(rowText(row.evidence_json)) as QualificationEvidence);
   },
 
   async listQualificationEvidence(runId?: string): Promise<{ runId: string | null; results: QualificationEvidence[] }> {
@@ -857,7 +924,9 @@ export const durableProjectStore = {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), 0)", [runId]);
       await client.query("DELETE FROM public.builder_qualification_benchmarks WHERE run_id = $1", [runId]);
+      await client.query("DELETE FROM public.builder_qualification_history WHERE run_id = $1", [runId]);
       const res = await client.query("DELETE FROM public.builder_qualification_results WHERE run_id = $1", [runId]);
       await client.query("COMMIT");
       return res.rowCount ?? 0;
