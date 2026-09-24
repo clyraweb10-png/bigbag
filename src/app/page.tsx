@@ -25,7 +25,7 @@ import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
 import {
   Plus, Loader2, Trash2, ArrowRight, X, ArrowUpRight, CopyCheck, DownloadCloud, FileDown,
   Search, Grid2X2, Rows3, SlidersHorizontal, ChevronLeft, ChevronRight,
-  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, CodeXml, Lightbulb, Plug2,
+  AlertCircle, MoreVertical, AlertTriangle, ArrowLeft, Lightbulb, Plug2,
 } from "lucide-react";
 
 import {
@@ -55,18 +55,6 @@ const LANDING_SESSION_KEY_PREFIX = "bigbag:landing-conversation:v2";
 const DISMISSED_RECENT_KEY = "bigbag:dismissed-recent";
 
 
-// --- Deterministic gradient + initials for the placeholder thumbnail ---
-const GRADIENTS: [string, string][] = [
-  ["#6554E8", "#3F8CFF"], ["#FF6B6B", "#8C3F8D"], ["#18A981", "#245A73"],
-  ["#4037A4", "#18182A"], ["#D95872", "#532C68"], ["#3F8CFF", "#174B6C"],
-  ["#6A5DE8", "#D15A8B"], ["#159B89", "#283C78"],
-];
-function gradientFor(id: string): [string, string] {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return GRADIENTS[h % GRADIENTS.length];
-}
-
 function ProjectThumbnail({
   project, variant = "card",
 }: {
@@ -76,7 +64,6 @@ function ProjectThumbnail({
   const { projectId, previewImageUrl } = project;
   const name = project.label || projectId;
   const [imgState, setImgState] = useState<"idle" | "ready" | "failed">("idle");
-  const [c1, c2] = gradientFor(projectId);
   const isRow = variant === "row";
 
   // Prefer the locally-cached Firecrawl screenshot (most recent run) over the
@@ -85,6 +72,21 @@ function ProjectThumbnail({
   const [cachedScreenshot, setCachedScreenshot] = useState<string | null>(null);
   useEffect(() => {
     setCachedScreenshot(getCachedScreenshot(projectId));
+  }, [projectId]);
+
+  // Listen for new screenshots captured while this tab is open (e.g. after
+  // navigating back from the workspace). Storage events fire across tabs.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === `bigbag:preview-screenshot:${projectId}` && e.newValue) {
+        try {
+          const entry = JSON.parse(e.newValue) as { url: string };
+          if (entry.url) setCachedScreenshot(entry.url);
+        } catch { /* malformed entry */ }
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [projectId]);
 
   // The effective image to display — cached screenshot wins, then Totalum's.
@@ -106,23 +108,23 @@ function ProjectThumbnail({
 
   const hasImage = Boolean(effectiveImageUrl && imgState !== "failed");
 
+  // Dark neutral fallback — just the </> logo, no gradient, no project name.
   const placeholder = (
     <div
-      className="w-full h-full flex items-center justify-center relative overflow-hidden px-2"
-      style={{ background: `linear-gradient(135deg, ${c1}, ${c2})` }}
+      className="w-full h-full flex items-center justify-center"
+      style={{ background: "#111113" }}
     >
       <span
-        className={`font-semibold text-white/95 tracking-tight text-center leading-tight break-words ${isRow ? "text-[9px] line-clamp-2" : "text-[12px] line-clamp-3"}`}
-        title={name}
+        className={`font-mono font-bold select-none text-white/20 ${isRow ? "text-[10px]" : "text-2xl"}`}
+        aria-hidden="true"
       >
-        {name}
+        {"</>"}
       </span>
-      <CodeXml className={`absolute text-white/15 ${isRow ? "w-4 h-4 -right-0.5 -bottom-0.5" : "w-10 h-10 -right-1 -bottom-1"}`} />
     </div>
   );
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-muted/50">
+    <div className="w-full h-full relative overflow-hidden bg-[#111113]" title={name}>
       {hasImage ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -362,6 +364,13 @@ export function DashboardContent() {
     fetchData();
   }, [fetchData]);
 
+  // Auto-switch new users (no projects yet) to the Starter tab so they land on templates.
+  useEffect(() => {
+    if (!projectsLoading && projects.length === 0 && !projectsError) {
+      setDashTab("starter");
+    }
+  }, [projectsLoading, projects.length, projectsError]);
+
   useEffect(() => {
     try {
       const saved = localStorage.getItem(VIEW_MODE_KEY);
@@ -581,7 +590,7 @@ export function DashboardContent() {
 
       <div className={chatOpen ? "mx-auto flex h-[calc(100dvh-4rem)] max-w-5xl flex-col px-3 py-3 sm:px-6 sm:py-5" : "mx-auto max-w-6xl px-6 py-6"}>
         {/* Hero prompt */}
-        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || projectsLoading || keyConfigured === false ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
+        <div className={chatOpen ? "flex min-h-0 flex-1 flex-col" : hasProjects || projectsLoading || keyConfigured === false || dashTab === "starter" ? "mb-12 sm:mb-14" : "flex min-h-[55vh] flex-col items-center justify-center"}>
             <div className={chatOpen ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col" : "mx-auto w-full max-w-2xl"}>
               {!chatOpen && landingMessages.length === 0 && (
                 <div className="mb-8 text-center">
@@ -772,14 +781,20 @@ export function DashboardContent() {
           </div>
         )}
 
-        {/* Projects */}
-        {!chatOpen && !projectsLoading && hasProjects && (
+        {/* Projects + Starter — always visible for logged-in users */}
+        {!chatOpen && !projectsLoading && (
           <>
 
 
             {/* ── Tab switcher: Projects | Starter ── */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
               <div className="flex items-center gap-1 p-0.5 rounded-xl border border-border bg-card shadow-xs">
+                <button
+                  onClick={() => setDashTab("starter")}
+                  className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "starter" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  Starter
+                </button>
                 <button
                   onClick={() => setDashTab("projects")}
                   className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "projects" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
@@ -788,12 +803,6 @@ export function DashboardContent() {
                   <span className={`text-[10px] rounded-full px-1.5 py-0.5 transition-colors ${dashTab === "projects" ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"}`}>
                     {filtered.length}
                   </span>
-                </button>
-                <button
-                  onClick={() => setDashTab("starter")}
-                  className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "starter" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  Starter
                 </button>
               </div>
 
@@ -881,7 +890,15 @@ export function DashboardContent() {
 
             {/* ── Projects tab content ── */}
             {dashTab === "projects" && (<>
-            {filtered.length === 0 ? (
+            {!hasProjects ? (
+              <div className="text-center py-20 text-muted-foreground border border-dashed border-border rounded-2xl">
+                <div className="mb-4 flex justify-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary font-mono text-lg font-bold">{"</>"}</div>
+                </div>
+                <p className="text-sm font-semibold text-foreground mb-1">No projects yet</p>
+                <p className="text-xs text-muted-foreground mb-4">Start building from a prompt above, or pick a template from the <button onClick={() => setDashTab("starter")} className="underline hover:text-foreground transition-colors">Starter</button> tab.</p>
+              </div>
+            ) : filtered.length === 0 ? (
               <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-2xl">
                 <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No projects match &ldquo;{search}&rdquo;</p>

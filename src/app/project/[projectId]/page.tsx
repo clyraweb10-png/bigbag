@@ -68,6 +68,16 @@ function getPreviewUrlFromProject(proj: VcaasProject): string | null {
   return finalUrl;
 }
 
+/**
+ * Raw URL for screenshot capture — never the /api/preview/ proxy.
+ * Firecrawl must reach the live server directly, so we skip the proxy wrapper.
+ */
+function getRawPreviewUrlForScreenshot(proj: VcaasProject): string | null {
+  const field = proj.developmentUrlFieldToUse || "temporalDevelopmentProjectUrl";
+  const url = (proj as unknown as Record<string, unknown>)[field] || proj.temporalDevelopmentProjectUrl;
+  return (url as string) || null;
+}
+
 // True when the preview being shown is the cached snapshot (dev server not active).
 function isCachedPreview(proj: VcaasProject): boolean {
   return proj.developmentUrlFieldToUse === "cachedDevelopmentUrl";
@@ -665,10 +675,10 @@ export default function WorkspacePage() {
           // Fire-and-forget: capture a fresh screenshot via Firecrawl and cache it in
           // localStorage so the dashboard thumbnail stays up to date. We delay a few
           // seconds to let the preview server finish serving the newly built app.
-          const liveUrl = getPreviewUrlFromProject(proj);
-          if (liveUrl && !liveUrl.startsWith("/api/preview/")) {
+          const rawUrl = getRawPreviewUrlForScreenshot(proj);
+          if (rawUrl) {
             window.setTimeout(() => {
-              void captureProjectScreenshot(projectId, liveUrl);
+              void captureProjectScreenshot(projectId, rawUrl);
             }, 5_000);
           }
         }

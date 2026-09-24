@@ -49,7 +49,7 @@ const CONNECTED_SET_KEY = "bigbag:connected_connectors";
 
 function getStoredConnected(): Set<string> {
   if (typeof window === "undefined") {
-    return new Set(["google-search-console", "firecrawl", "google-sheets", "google-maps", "resend"]);
+    return new Set();
   }
   try {
     const raw = localStorage.getItem(CONNECTED_SET_KEY);
@@ -60,7 +60,7 @@ function getStoredConnected(): Set<string> {
   } catch {
     // fallback
   }
-  return new Set(["google-search-console", "firecrawl", "google-sheets", "google-maps", "resend"]);
+  return new Set();
 }
 
 function persistConnected(set: Set<string>) {
