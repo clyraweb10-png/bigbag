@@ -830,6 +830,14 @@ export function DashboardContent() {
                 <span className="text-xs text-muted-foreground bg-secondary rounded-full px-2.5 py-0.5 border border-border/50">
                   {filtered.length}
                 </span>
+                <button
+                  onClick={focusComposer}
+                  className="flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 border border-primary/25 hover:border-primary/45 h-6 px-2.5 rounded-full transition-all"
+                  title="Start a new project from the hero prompt"
+                >
+                  <Plus className="w-3 h-3" />
+                  Starter
+                </button>
               </div>
 
               <div className="flex-1 flex flex-wrap items-center gap-2 sm:justify-end">

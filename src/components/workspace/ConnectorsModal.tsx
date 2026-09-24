@@ -287,18 +287,6 @@ const CONNECTORS: Connector[] = [
     capabilities: ["Create and update CRM contacts", "Log deals and pipeline stages", "Trigger marketing workflows", "Sync form submissions"],
   },
   {
-    id: "google-slides",
-    name: "Google Slides",
-    description: "Create and manage Google Slides presentations",
-    categories: ["Google", "Productivity"],
-    color: "#FBBC04",
-    docsHint: "Enable Google Slides API in Google Cloud Console",
-    fields: [
-      { key: "apiKey", label: "API Key / Service Account", placeholder: "AIza...", secret: true },
-    ],
-    capabilities: ["Generate presentation decks dynamically", "Replace placeholder text and images", "Export slides as PDFs or images", "Auto-generate slide reports"],
-  },
-  {
     id: "perplexity",
     name: "Perplexity",
     description: "AI-powered search and answer engine",
@@ -367,71 +355,6 @@ const CONNECTORS: Connector[] = [
     capabilities: ["Fetch product catalog and variants", "Create and manage customer orders", "Sync inventory levels in real-time", "Trigger fulfillment updates"],
   },
   {
-    id: "woocommerce",
-    name: "WooCommerce",
-    description: "Products, orders, coupons",
-    categories: ["Ecommerce"],
-    color: "#7F54B3",
-    docsHint: "Create keys in WooCommerce → Settings → Advanced → REST API",
-    fields: [
-      { key: "siteUrl", label: "Site URL", placeholder: "https://yourstore.com" },
-      { key: "consumerKey", label: "Consumer Key", placeholder: "ck_..." },
-      { key: "consumerSecret", label: "Consumer Secret", placeholder: "cs_...", secret: true },
-    ],
-    capabilities: ["Read products and categories", "Process customer orders", "Apply discount coupons", "Sync store inventory"],
-  },
-  {
-    id: "chargebee",
-    name: "Chargebee",
-    description: "Subscription/invoice billing",
-    categories: ["Ecommerce", "Sales"],
-    color: "#FF6844",
-    docsHint: "Find in Chargebee Dashboard → Settings → Configure Chargebee → API Keys",
-    fields: [
-      { key: "apiKey", label: "API Key", placeholder: "...", secret: true },
-      { key: "site", label: "Site Name", placeholder: "your-site" },
-    ],
-    capabilities: ["Manage recurring plans", "Generate PDF invoices", "Handle upgrades and cancellations", "Customer self-service billing"],
-  },
-  {
-    id: "xero",
-    name: "Xero",
-    description: "Accounting, invoices, financial reports",
-    categories: ["Sales", "Ecommerce"],
-    color: "#13B5EA",
-    docsHint: "Create an OAuth 2.0 app at developer.xero.com → My Apps",
-    fields: [
-      { key: "clientId", label: "Client ID", placeholder: "..." },
-      { key: "clientSecret", label: "Client Secret", placeholder: "...", secret: true },
-    ],
-    capabilities: ["Create and send invoices", "Read bank transactions", "Sync customer contacts", "Pull balance sheet and P&L"],
-  },
-  {
-    id: "wix",
-    name: "Wix",
-    description: "Sites, ecommerce, bookings, CMS",
-    categories: ["Ecommerce"],
-    color: "#0C6EFC",
-    docsHint: "Find in Wix Dev Center → Manage API Keys",
-    fields: [
-      { key: "apiKey", label: "API Key", placeholder: "...", secret: true },
-      { key: "siteId", label: "Site ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
-    ],
-    capabilities: ["Read and update CMS collections", "Sync product catalogue", "Manage bookings and appointments", "Retrieve site analytics"],
-  },
-  {
-    id: "polar",
-    name: "Polar.sh",
-    description: "Revenue dashboards on billing data",
-    categories: ["Ecommerce", "Sales"],
-    color: "#5B67F2",
-    docsHint: "Find in Polar dashboard → Settings → API Tokens",
-    fields: [
-      { key: "apiKey", label: "Access Token", placeholder: "polar_at_...", secret: true },
-    ],
-    capabilities: ["Pull MRR, ARR, and churn metrics", "Display subscriber counts", "Track product performance", "Webhook events on changes"],
-  },
-  {
     id: "replicate",
     name: "Replicate",
     description: "Run AI models for images, video, audio, text",
@@ -442,18 +365,6 @@ const CONNECTORS: Connector[] = [
       { key: "apiKey", label: "API Token", placeholder: "r8_...", secret: true },
     ],
     capabilities: ["Generate images with FLUX & SD", "Transcribe audio with Whisper", "Run open-source LLMs", "Video generation models"],
-  },
-  {
-    id: "gemini-enterprise",
-    name: "Gemini Enterprise",
-    description: "Query/summarize across Google data sources",
-    categories: ["Google", "AI & Automation"],
-    color: "#4285F4",
-    docsHint: "Get a key at aistudio.google.com → Get API key",
-    fields: [
-      { key: "apiKey", label: "API Key", placeholder: "AIza...", secret: true },
-    ],
-    capabilities: ["Multi-modal reasoning with Gemini", "Large context analysis", "Structured function calling", "Search across Drive & Docs"],
   },
   {
     id: "n8n",
@@ -507,18 +418,6 @@ const CONNECTORS: Connector[] = [
       { key: "apiSecret", label: "API Secret", placeholder: "...", secret: true, optional: true },
     ],
     capabilities: ["Track visitor traffic & sessions", "Custom event conversion tracking", "E-commerce revenue analytics", "Audience breakdown reporting"],
-  },
-  {
-    id: "amplitude",
-    name: "Amplitude",
-    description: "Real user behaviour analytics",
-    categories: ["Marketing"],
-    color: "#1A66FF",
-    docsHint: "Find in Amplitude → Settings → Projects → API keys",
-    fields: [
-      { key: "apiKey", label: "API Key", placeholder: "...", secret: true },
-    ],
-    capabilities: ["Product analytics & funnels", "Retention cohort analysis", "User session journeys", "Feature adoption metrics"],
   },
   {
     id: "posthog",
@@ -599,18 +498,6 @@ const CONNECTORS: Connector[] = [
       { key: "clientSecret", label: "Client Secret", placeholder: "...", secret: true },
     ],
     capabilities: ["Access Microsoft Graph API", "Sync with OneDrive and SharePoint", "Read and send Outlook emails", "Corporate single sign-on"],
-  },
-  {
-    id: "microsoft-teams",
-    name: "Microsoft Teams",
-    description: "Channel messages and team bots",
-    categories: ["Microsoft", "Messaging", "Productivity"],
-    color: "#464EB8",
-    docsHint: "Create an incoming webhook or Azure bot in Teams Developer Portal",
-    fields: [
-      { key: "webhookUrl", label: "Incoming Webhook URL", placeholder: "https://yourorg.webhook.office.com/..." },
-    ],
-    capabilities: ["Post cards to Teams channels", "Automated alert notifications", "Interactive team bots", "Incident escalation feeds"],
   },
 ];
 
@@ -788,7 +675,7 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-2 gap-3">
                     {filtered.map((c) => (
                       <ConnectorCard
                         key={c.id}
@@ -852,24 +739,20 @@ function ConnectorCard({
   return (
     <button
       onClick={onClick}
-      className="flex items-center justify-between p-3 rounded-xl bg-[#222225] border border-white/5 hover:border-white/15 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer"
+      className="flex flex-col items-start p-3.5 rounded-xl bg-[#222225] border border-white/5 hover:border-white/15 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer relative"
     >
-      <div className="flex items-center gap-3 min-w-0 flex-1 mr-2">
-        <ConnectorBrandIcon id={c.id} size="md" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white group-hover:text-primary transition-colors truncate">
-            {c.name}
-          </p>
-          <p className="text-xs text-zinc-400 truncate mt-0.5">
-            {c.description}
-          </p>
-        </div>
-      </div>
       {connected && (
-        <span className="text-xs font-medium text-emerald-400 shrink-0 ml-2">
+        <span className="absolute top-2.5 right-2.5 text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-full">
           Enabled
         </span>
       )}
+      <ConnectorBrandIcon id={c.id} size="lg" className="mb-2.5" />
+      <p className="text-[13px] font-semibold text-white group-hover:text-primary transition-colors truncate w-full leading-tight">
+        {c.name}
+      </p>
+      <p className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2 leading-snug">
+        {c.description}
+      </p>
     </button>
   );
 }
