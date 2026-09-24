@@ -30,6 +30,40 @@ interface PreviewPanelProps {
   trustedEditor?: boolean;
 }
 
+function MobileDeviceShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="relative flex flex-col bg-[#0c0d10] border-[3px] border-[#222328] rounded-[46px] shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.08),inset_0_0_0_1px_rgba(255,255,255,0.06)] px-2.5 pt-2 pb-2.5 shrink-0 transition-all duration-300 mx-auto select-none"
+      style={{
+        width: "395px",
+        maxWidth: "calc(100% - 1.5rem)",
+        height: "760px",
+        maxHeight: "calc(100% - 1.5rem)",
+      }}
+    >
+      {/* Top phone bezel with speaker slit and front camera */}
+      <div className="relative h-8 w-full flex items-center justify-center shrink-0">
+        {/* Front camera lens */}
+        <div className="absolute left-8 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-[#16171b] border border-[#26282f] flex items-center justify-center shadow-inner">
+          <div className="w-1 h-1 rounded-full bg-[#0a0a0d]" />
+        </div>
+        {/* Centered earpiece speaker grill */}
+        <div className="w-14 h-1 rounded-full bg-[#23252a] border border-white/5 shadow-inner" />
+      </div>
+
+      {/* Screen container */}
+      <div className="relative flex-1 min-h-0 w-full rounded-[28px] overflow-hidden bg-white dark:bg-zinc-950 shadow-inner border border-black/10">
+        {children}
+      </div>
+
+      {/* Bottom phone bezel / chin with home indicator */}
+      <div className="h-7 w-full flex items-center justify-center shrink-0">
+        <div className="w-28 h-1 rounded-full bg-neutral-600/40" />
+      </div>
+    </div>
+  );
+}
+
 export function PreviewPanel({ previewUrl, loading, mobilePreview = false, iframePath = "/", cached = false, proxiedSrc, frameRef, trustedEditor = false }: PreviewPanelProps) {
   const [iframeLoading, setIframeLoading] = useState(true);
   const [editorChannel, setEditorChannel] = useState("");
@@ -40,6 +74,30 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
   const fullIframeUrl = iframeRoute && trustedEditor
     ? `${iframeRoute}${iframeRoute.includes("?") ? "&" : "?"}editor=1&__ve_channel=${encodeURIComponent(editorChannel)}`
     : iframeRoute;
+
+  const iframeContent = (
+    <>
+      {iframeLoading && (
+        <div className="absolute inset-0 z-10 bg-background transition-opacity duration-300 overflow-hidden">
+          <SkeletonAppPreview mobile={mobilePreview} />
+        </div>
+      )}
+      <iframe
+        /* ⚠️ REMOUNT WHEN THE ORIGIN CHANGES. Swapping the `src` between the direct
+           URL and the proxy without a new element leaves the old document (and its
+           injected agent, or lack of one) in place. */
+        key={proxiedSrc ? "proxy" : "direct"}
+        ref={frameRef}
+        name={editorChannel}
+        data-editor-channel={editorChannel}
+        src={editorChannel ? fullIframeUrl || undefined : undefined}
+        className="w-full h-full border-0"
+        sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+        title="Preview"
+        onLoad={() => setIframeLoading(false)}
+      />
+    </>
+  );
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -69,11 +127,15 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
                 </span>
                 <span>Building your app · preview will appear when ready</span>
               </div>
-              <div className={`transition-all duration-300 relative mx-auto ${
-                mobilePreview ? "w-[375px] h-[667px] rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-2xl bg-card" : "w-full h-full"
-              }`}>
-                <SkeletonAppPreview mobile={mobilePreview} />
-              </div>
+              {mobilePreview ? (
+                <MobileDeviceShell>
+                  <SkeletonAppPreview mobile={true} />
+                </MobileDeviceShell>
+              ) : (
+                <div className="w-full h-full">
+                  <SkeletonAppPreview mobile={false} />
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center text-center px-8">
@@ -83,29 +145,15 @@ export function PreviewPanel({ previewUrl, loading, mobilePreview = false, ifram
             </div>
           )
         ) : (
-          <div className={`bg-white transition-all duration-300 relative ${
-            mobilePreview ? "w-[375px] h-[667px] rounded-[2rem] border-[8px] border-gray-800 overflow-hidden shadow-2xl" : "w-full h-full"
-          }`}>
-            {iframeLoading && (
-              <div className="absolute inset-0 z-10 bg-background transition-opacity duration-300 overflow-hidden">
-                <SkeletonAppPreview mobile={mobilePreview} />
-              </div>
-            )}
-            <iframe
-              /* ⚠️ REMOUNT WHEN THE ORIGIN CHANGES. Swapping the `src` between the direct
-                 URL and the proxy without a new element leaves the old document (and its
-                 injected agent, or lack of one) in place. */
-              key={proxiedSrc ? "proxy" : "direct"}
-              ref={frameRef}
-              name={editorChannel}
-              data-editor-channel={editorChannel}
-              src={editorChannel ? fullIframeUrl || undefined : undefined}
-              className="w-full h-full border-0"
-              sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
-              title="Preview"
-              onLoad={() => setIframeLoading(false)}
-            />
-          </div>
+          mobilePreview ? (
+            <MobileDeviceShell>
+              {iframeContent}
+            </MobileDeviceShell>
+          ) : (
+            <div className="w-full h-full bg-white transition-all duration-300 relative">
+              {iframeContent}
+            </div>
+          )
         )}
       </div>
     </div>

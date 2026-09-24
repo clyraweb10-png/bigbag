@@ -39,5 +39,9 @@ export interface LocalProjectRecord {
     versionId?: string;
     errorMessage?: string;
   };
+  importInProgress?: {
+    startedAt: string;
+    errorMessage?: string;
+  } | null;
   conversation: ConversationMessage[];
 }

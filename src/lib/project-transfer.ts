@@ -24,25 +24,14 @@ import type { TranslationKey } from "@/i18n/types";
  * Pure module: no React, no fetch. Unit-tested by `src/lib/__tests__/transfer.test.ts`.
  */
 
-/** Credit costs, from `VCAAS_CREDIT_COSTS`. */
+/** Credit costs (free in local mode). */
 export const TRANSFER_COSTS = {
-    export: 2,
-    /** Creating the destination project is a real, separate charge. */
-    createProject: 1,
-    import: 6,
+    export: 0,
+    createProject: 0,
+    import: 0,
 } as const;
 
-/**
- * ⭐ A CLONE COSTS **NINE** CREDITS, NOT EIGHT.
- *
- * ⚠️ The brief says "be honest that a clone costs both operations" — but it is
- * three operations, not two. A clone must CREATE the destination project before
- * it can import into it, and `CREATE_PROJECT` is 1 credit. Quoting 2 + 6 = 8
- * would under-state the price of the flow users reach for most, which is exactly
- * the kind of small dishonesty that erodes trust in a credit balance.
- */
-export const CLONE_COST =
-    TRANSFER_COSTS.export + TRANSFER_COSTS.createProject + TRANSFER_COSTS.import;
+export const CLONE_COST = 0;
 
 /**
  * ⚠️⚠️ THE IN-DIALOG POLL IS GONE, AND SO ARE ITS TWO CONSTANTS.

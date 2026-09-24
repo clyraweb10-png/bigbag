@@ -37,7 +37,7 @@ import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADV
 import { SetupBanners } from "@/components/SetupBanners";
 import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitives";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
+import { UserAvatar, useAuth } from "@/components/auth/AuthProvider";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
 import { SidebarExpandIcon } from "@/components/SidebarIcons";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
@@ -587,6 +587,13 @@ export function DashboardContent() {
             localStorage.setItem(SIDEBAR_STORAGE_KEY, "false");
           } catch {}
         }}
+        onOpen={() => {
+          setSidebarOpen(true);
+          try {
+            localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
+          } catch {}
+        }}
+        onToggle={handleToggleSidebar}
         onConnectorsOpen={() => setConnectorsOpen(true)}
         onSearchFocus={() => {
           searchInputRef.current?.focus();
@@ -597,7 +604,7 @@ export function DashboardContent() {
 
       {/* Main content */}
       <div className={`flex-1 overflow-y-auto ${chatOpen ? "overflow-hidden" : ""}`}>
-        {/* Top bar: sidebar open button + theme toggle + auth menu */}
+        {/* Top bar: mobile sidebar open button + theme toggle */}
         {!chatOpen && (
           <div className="flex items-center justify-between gap-2 px-6 pt-4 pb-0">
             <div>
@@ -610,7 +617,7 @@ export function DashboardContent() {
                       localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
                     } catch {}
                   }}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/80 bg-card hover:bg-accent text-muted-foreground hover:text-foreground transition-all shadow-2xs text-xs font-medium cursor-pointer group"
+                  className="md:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/80 bg-card hover:bg-accent text-muted-foreground hover:text-foreground transition-all shadow-2xs text-xs font-medium cursor-pointer group"
                   title="Open sidebar (Ctrl+B)"
                   aria-label="Open sidebar"
                 >
@@ -621,7 +628,6 @@ export function DashboardContent() {
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle showLabel={false} />
-              <AuthUserMenu />
             </div>
           </div>
         )}
@@ -637,7 +643,7 @@ export function DashboardContent() {
                       localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
                     } catch {}
                   }}
-                  className="p-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  className="md:hidden p-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Open sidebar (Ctrl+B)"
                   aria-label="Open sidebar"
                 >
@@ -655,7 +661,6 @@ export function DashboardContent() {
             </div>
             <div className="flex items-center gap-2">
               <ThemeToggle showLabel={false} />
-              <AuthUserMenu />
             </div>
           </div>
         )}
@@ -858,14 +863,14 @@ export function DashboardContent() {
           <>
 
 
-            {/* ── Tab switcher: Projects | Starter ── */}
+            {/* ── Tab switcher: Projects | Templates ── */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
               <div className="flex items-center gap-1 p-0.5 rounded-xl border border-border bg-card shadow-xs">
                 <button
                   onClick={() => setDashTab("starter")}
                   className={`flex items-center gap-1.5 h-7 px-3.5 rounded-lg text-xs font-medium transition-all ${dashTab === "starter" ? "colourless-glass text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
                 >
-                  Starter
+                  Templates
                 </button>
                 <button
                   onClick={() => setDashTab("projects")}
@@ -968,7 +973,7 @@ export function DashboardContent() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary font-mono text-lg font-bold">{"</>"}</div>
                 </div>
                 <p className="text-sm font-semibold text-foreground mb-1">No projects yet</p>
-                <p className="text-xs text-muted-foreground mb-4">Start building from a prompt above, or pick a template from the <button onClick={() => setDashTab("starter")} className="underline hover:text-foreground transition-colors">Starter</button> tab.</p>
+                <p className="text-xs text-muted-foreground mb-4">Start building from a prompt above, or pick a template from the <button onClick={() => setDashTab("starter")} className="underline hover:text-foreground transition-colors">Templates</button> tab.</p>
               </div>
             ) : filtered.length === 0 ? (
               <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-2xl">

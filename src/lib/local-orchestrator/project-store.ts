@@ -52,12 +52,33 @@ export function persistentPreviewUrl(projectId: string): string {
   return base ? `${base}${persistentPreviewPath(projectId)}` : persistentPreviewPath(projectId);
 }
 
+import { STARTER_TEMPLATES } from "@/lib/starter-templates";
+
+export function resolveStarterPreviewImage(label?: string, description?: string, projectId?: string): string | null {
+  const normLabel = (label || "").trim().toLowerCase();
+  const normDesc = (description || "").trim().toLowerCase();
+  const normId = (projectId || "").trim().toLowerCase();
+  if (!normLabel && !normDesc && !normId) return null;
+
+  const found = STARTER_TEMPLATES.find((t) => {
+    const tId = t.id.toLowerCase();
+    const tTitle = t.title.toLowerCase();
+    return (
+      (tId && (normId === tId || normId.startsWith(`${tId}-`))) ||
+      (tTitle && (normLabel === tTitle || normDesc.includes(tTitle)))
+    );
+  });
+  return found?.previewImage ?? null;
+}
+
 export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
   const previewUrl = persistentPreviewPath(record.projectId);
   
   // Map local server status to VCaaS expected status
   let serverStatus: "Active" | "Starting" | "Creating" | "Archived" | "Unarchiving" | "Archiving";
-  if (record.serverStatus === "Active") {
+  if (record.importInProgress) {
+    serverStatus = "Starting";
+  } else if (record.serverStatus === "Active") {
     serverStatus = "Active";
   } else if (record.serverStatus === "Error") {
     serverStatus = "Starting"; // Treat errors as needing to start
@@ -76,6 +97,12 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
     agentProcessStatus: record.status,
     agentServerStatus: serverStatus,
     createdAt: record.createdAt,
+    importInProgress: record.importInProgress
+      ? {
+          startedAt: record.importInProgress.startedAt,
+          errorMessage: record.importInProgress.errorMessage,
+        }
+      : null,
     deployment: record.deployment
       ? {
           status: record.deployment.status,
@@ -88,7 +115,7 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
     cachedDevelopmentUrl: previewUrl,
     developmentUrlFieldToUse: "temporalDevelopmentProjectUrl",
     productionProjectUrl: record.productionProjectUrl,
-    previewImageUrl: record.screenshotUrl ?? null,
+    previewImageUrl: record.screenshotUrl || resolveStarterPreviewImage(record.label, record.description, record.projectId) || null,
     totalCreditsSpent: 0,
   };
 }
@@ -170,7 +197,7 @@ export const localProjectStore = {
       plan: "Local",
       createdAt: p.createdAt,
       lastModifiedAt: p.lastModifiedAt,
-      previewImageUrl: p.screenshotUrl ?? null,
+      previewImageUrl: p.screenshotUrl || resolveStarterPreviewImage(p.label, p.description, p.projectId) || null,
     }));
   },
 
@@ -203,7 +230,7 @@ export const localProjectStore = {
       .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
   },
 
-  create(body: { projectId: string; description: string; label?: string; tenantId: string; qualificationRunId?: string }): VcaasProject {
+  create(body: { projectId: string; description: string; label?: string; tenantId: string; qualificationRunId?: string; screenshotUrl?: string }): VcaasProject {
     const projects = readProjects();
     let id = body.projectId.toLowerCase().replace(/[^a-z0-9-]/g, "-");
     if (!id || id === "-") id = `app-${Date.now()}`;
@@ -223,6 +250,7 @@ export const localProjectStore = {
       label: body.label || body.description.slice(0, 30) || uniqueId,
       description: body.description,
       ...(body.qualificationRunId ? { qualificationRunId: body.qualificationRunId } : {}),
+      ...(body.screenshotUrl ? { screenshotUrl: body.screenshotUrl } : {}),
       createdAt: now,
       lastModifiedAt: now,
       port,

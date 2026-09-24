@@ -2423,7 +2423,6 @@ export function findBundleForTemplate(templateId: string, templateName: string):
       { path: "src/App.tsx", content: generated.appCode },
       { path: "src/index.css", content: generated.css },
       { path: "dist/index.html", content: generated.html },
-      { path: "index.html", content: generated.html },
     ];
   }
 

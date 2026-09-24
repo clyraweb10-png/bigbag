@@ -1157,7 +1157,8 @@ export default {
     write(dir, "index.html", runtimeIndex);
   } else {
     const currentIndex = fs.readFileSync(/* turbopackIgnore: true */ indexPath, "utf-8");
-    const updatedIndex = currentIndex.includes(RUNTIME_ENTRY_MARKER)
+    const hasStandaloneBabel = currentIndex.includes("text/babel") || currentIndex.includes("@babel/standalone");
+    const updatedIndex = (currentIndex.includes(RUNTIME_ENTRY_MARKER) || hasStandaloneBabel)
       ? runtimeIndex
       : ensureRuntimeIndexHtml(dir, currentIndex);
     if (updatedIndex !== currentIndex) write(dir, "index.html", updatedIndex);
@@ -1181,6 +1182,7 @@ export default defineConfig({
   plugins: [directLucideImports(), react()],
   build: { minify: false },
   server: { allowedHosts: [".e2b.app"], hmr: false },
+  css: { postcss: {} },
   resolve: {
     alias: { "@": path.resolve(configDir, "./src") },
   },
@@ -1269,6 +1271,12 @@ export default defineConfig({
       '$1\n  build: { minify: false },'
     );
   }
+  if (!/\bcss\s*:\s*\{[^}]*postcss/.test(updatedViteConfig)) {
+    updatedViteConfig = updatedViteConfig.replace(
+      /(server:\s*\{[^}]*\},?)/,
+      '$1\n  css: { postcss: {} },'
+    );
+  }
   if (updatedViteConfig !== currentViteConfig) {
     write(dir, "vite.config.ts", updatedViteConfig);
   }
@@ -1327,7 +1335,8 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
           lib: ["dom", "dom.iterable", "esnext"],
           allowJs: true,
           skipLibCheck: true,
-          strict: true,
+          strict: false,
+          noImplicitAny: false,
           noEmit: true,
           esModuleInterop: true,
           module: "esnext",

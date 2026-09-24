@@ -177,6 +177,14 @@ async function ensureSchema(): Promise<Pool | null> {
             updated_at TEXT NOT NULL,
             PRIMARY KEY (run_id, benchmark_key)
           );
+          CREATE TABLE IF NOT EXISTS public.builder_project_exports (
+            import_code TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            bundle BYTEA NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS builder_project_exports_created
+            ON public.builder_project_exports (created_at DESC);
         `);
       } finally {
         client.release();
@@ -632,6 +640,29 @@ export const durableProjectStore = {
     return { ...data, _id: recordId, createdAt: now, updatedAt: now };
   },
 
+  async upsertAppRecord(
+    projectId: string,
+    collectionName: string,
+    recordId: string,
+    value: Record<string, unknown>,
+    ownerId?: string | null
+  ): Promise<AppRecord> {
+    const pool = await requireSchema();
+    const collection = assertAppCollectionName(collectionName);
+    const now = new Date().toISOString();
+    const data = appRecordData(value);
+
+    await pool.query(
+      `INSERT INTO public.builder_app_records
+       (project_id, collection_name, record_id, owner_id, data_json, created_at, updated_at)
+       SELECT project_id, $1, $2, $3, $4, $5, $6 FROM public.builder_projects WHERE project_id = $7
+       ON CONFLICT (project_id, collection_name, record_id)
+       DO UPDATE SET data_json = EXCLUDED.data_json, updated_at = EXCLUDED.updated_at`,
+      [collection, recordId, ownerId || null, JSON.stringify(data), now, now, projectId]
+    );
+    return { ...data, _id: recordId, createdAt: now, updatedAt: now };
+  },
+
   async updateAppRecord(
     projectId: string,
     collectionName: string,
@@ -993,5 +1024,27 @@ export const durableProjectStore = {
     } finally {
       client.release();
     }
+  },
+
+  async saveProjectExport(importCode: string, projectId: string, bundle: Uint8Array | Buffer): Promise<void> {
+    const pool = await ensureSchema();
+    if (!pool) return;
+    await pool.query(
+      `INSERT INTO public.builder_project_exports (import_code, project_id, bundle, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (import_code) DO UPDATE SET bundle = EXCLUDED.bundle, created_at = EXCLUDED.created_at`,
+      [importCode, projectId, Buffer.from(bundle), new Date().toISOString()]
+    );
+  },
+
+  async loadProjectExport(importCode: string): Promise<Buffer | null> {
+    const pool = await ensureSchema();
+    if (!pool) return null;
+    const res = await pool.query<{ bundle: Buffer }>(
+      `SELECT bundle FROM public.builder_project_exports WHERE import_code = $1 LIMIT 1`,
+      [importCode]
+    );
+    if (res.rows.length === 0) return null;
+    return res.rows[0].bundle;
   },
 };

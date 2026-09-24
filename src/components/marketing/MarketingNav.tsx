@@ -9,7 +9,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 const NAV_LINKS = [
-  { label: "Starters", href: "/#starters" },
+  { label: "Templates", href: "/#starters" },
   { label: "Features", href: "/#features" },
   { label: "Pricing", href: "/pricing" },
   { label: "Solutions", href: "/solutions" },

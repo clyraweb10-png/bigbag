@@ -26,6 +26,7 @@ import {
   durablePersistenceConfigured,
 } from "@/lib/local-orchestrator/durable-project-store";
 import { findBundleForTemplate } from "@/lib/template-bundles";
+import { STARTER_TEMPLATES } from "@/lib/starter-templates";
 import type { ConversationMessage } from "@/lib/vcaas-types";
 import {
   attachLocalTenantCookie,
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const { tenantId } = tenantCtx;
 
   // ── Parse body ────────────────────────────────────────────────────────────
-  let body: { templateId?: string; templateName?: string; prompt?: string };
+  let body: { templateId?: string; templateName?: string; prompt?: string; previewImage?: string };
   try {
     body = await req.json();
   } catch {
@@ -79,12 +80,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const templateId   = (body.templateId   ?? "").trim();
   const templateName = (body.templateName ?? "New App").trim();
   const prompt       = (body.prompt       ?? templateName).trim();
+  const requestedPreviewImage = (body.previewImage ?? "").trim();
 
   if (!templateId) {
     return NextResponse.json({ ok: false, error: "templateId is required" }, { status: 400 });
   }
 
-  // ── Find the pre-built bundle ─────────────────────────────────────────────
+  // ── Find matching template and pre-built bundle ───────────────────────────
+  const matchingTemplate = STARTER_TEMPLATES.find(
+    (t) =>
+      t.id === templateId ||
+      t.id.toLowerCase() === templateId.toLowerCase() ||
+      t.title.toLowerCase() === templateName.toLowerCase()
+  );
+  const screenshotUrl = requestedPreviewImage || matchingTemplate?.previewImage || undefined;
   const bundle = findBundleForTemplate(templateId, templateName);
 
   // ── Create project record ─────────────────────────────────────────────────
@@ -127,11 +136,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     description: `Pre-built ${templateName} starter. Modify with AI to customise.`,
     label: templateName,
     tenantId,
+    screenshotUrl,
   });
 
   localProjectStore.update(projectId, {
     conversation: initialMessages,
     status: "init",
+    ...(screenshotUrl ? { screenshotUrl } : {}),
   });
 
   // Persist immediately so the workspace page can load it
@@ -211,9 +222,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   localProjectStore.update(projectId, {
     status: "done",
-    serverStatus: "Active",
+    serverStatus: "Starting",
     previewUrl: previewPath,
     conversation: [...initialMessages, ...initialDoneMessages],
+    ...(screenshotUrl ? { screenshotUrl } : {}),
   });
 
   if (durablePersistenceConfigured()) {
@@ -234,6 +246,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (previewUrl) {
         localProjectStore.update(projectId, {
           previewUrl: previewUrl,
+          serverStatus: "Active",
+          ...(screenshotUrl ? { screenshotUrl } : {}),
         });
       }
     } catch (err) {

@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-    AlertCircleIcon,
     CheckIcon,
     CopyIcon,
     DownloadIcon,
@@ -23,9 +22,7 @@ import type { TranslationKey } from "@/i18n";
 import { vcaasApi } from "@/lib/vcaas";
 import { writeOperation } from "@/lib/project-operation";
 import {
-    CLONE_COST,
     CLONE_STEPS,
-    TRANSFER_COSTS,
     errorKeyFor,
     hasCreatedProject,
     isBusyPhase,
@@ -82,20 +79,6 @@ import { cn } from "@/lib/utils";
  */
 
 // ─────────────────────────────── Shared bits ────────────────────────────────
-
-/** "Costs N credits" — always rendered next to the control that spends them. */
-function CostNotice({ credits, detailKey }: { credits: number; detailKey?: TranslationKey }) {
-    const t = useT();
-    return (
-        <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
-            <AlertCircleIcon className="mt-px size-3.5 shrink-0" aria-hidden />
-            <span>
-                {t("transfer.cost", { credits: String(credits) })}
-                {detailKey ? ` ${t(detailKey)}` : ""}
-            </span>
-        </p>
-    );
-}
 
 /** A failure, with the specific reason and no dead end. */
 function TransferError({
@@ -292,8 +275,6 @@ export function ExportProjectDialog({ open, onOpenChange, projectId }: ExportPro
                                 disabled={busy}
                             />
                         </div>
-
-                        <CostNotice credits={TRANSFER_COSTS.export} detailKey="transfer.export.rateLimit" />
                     </>
                 )}
 
@@ -434,11 +415,6 @@ export function ImportProjectDialog({
                             isMine={isMine}
                             disabled={transfer.busy}
                         />
-
-                        <CostNotice
-                            credits={TRANSFER_COSTS.createProject + TRANSFER_COSTS.import}
-                            detailKey="transfer.import.costDetail"
-                        />
                     </>
                 ) : null}
 
@@ -549,15 +525,6 @@ export function CloneProjectDialog({
                                 disabled={transfer.busy}
                             />
                         </div>
-
-                        {/*
-                          ⭐ NINE CREDITS, AND THE BREAKDOWN IS SHOWN.
-                          A clone is export (2) + create (1) + import (6). The brief
-                          says to be honest that it costs "both operations"; it is
-                          actually three, and quoting 8 would under-state the price
-                          of the flow people reach for most.
-                        */}
-                        <CostNotice credits={CLONE_COST} detailKey="transfer.clone.costBreakdown" />
 
                         <p className="text-muted-foreground text-xs">{t("transfer.clone.duration")}</p>
                     </>

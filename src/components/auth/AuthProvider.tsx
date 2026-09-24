@@ -431,12 +431,36 @@ export function UserAvatar({
 export function AuthUserMenu({
   className,
   showLabel = false,
+  collapsed = false,
 }: {
   className?: string;
   showLabel?: boolean;
+  collapsed?: boolean;
 } = {}) {
   const { user, signOutUser } = useAuth();
   const label = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Account";
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          void signOutUser().catch((signOutError) => {
+            toast.error(signOutError instanceof Error ? signOutError.message : "Sign out failed");
+          });
+        }}
+        title={`Sign out ${label}`}
+        aria-label={`Sign out ${label}`}
+        className={cn(
+          "w-9 h-9 rounded-full flex items-center justify-center hover:opacity-85 transition-opacity cursor-pointer mx-auto relative group outline-none",
+          className
+        )}
+      >
+        <UserAvatar user={user} className="h-7 w-7" />
+      </button>
+    );
+  }
+
   return (
     <Button
       variant="ghost"

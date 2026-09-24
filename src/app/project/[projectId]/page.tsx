@@ -1748,7 +1748,7 @@ export default function WorkspacePage() {
                 {/* ⭐ Logs open as a dialog from the address bar — the platform's placement. */}
                 <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-muted-foreground hover:text-foreground" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
                 <div className="w-px h-3.5 bg-border shrink-0" />
-                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0">{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}</button>
+                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0" title={mobilePreview ? "Switch to desktop view" : "Switch to mobile view"}>{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}</button>
                 <PathPicker
                   projectId={projectId}
                   path={iframePath}

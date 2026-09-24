@@ -98,11 +98,6 @@ function loadCreds(id: string): Record<string, string> | null {
   return null;
 }
 
-function maskValue(val: string): string {
-  if (val.length <= 8) return "••••••••";
-  return val.slice(0, 4) + "••••••••" + val.slice(-4);
-}
-
 /* ─────────────────── Categories List ─────────────────── */
 
 const CATEGORIES_NAV: Category[] = [

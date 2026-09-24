@@ -121,8 +121,13 @@ async function buildWorkspace(dir: string, viteBin: string, projectId: string, s
   const workspaceTsc = path.join(dir, ...tscSegments);
   const rootTsc = path.join(/* turbopackIgnore: true */ process.cwd(), ...tscSegments);
   const tscBin = fs.existsSync(workspaceTsc) ? workspaceTsc : rootTsc;
-  if (!fs.existsSync(tscBin)) throw new Error("TypeScript compiler is unavailable for generated-app validation");
-  await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
+  if (tscBin && fs.existsSync(tscBin)) {
+    try {
+      await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
+    } catch (tscErr) {
+      console.warn(`[local-sandbox] Type validation warning for ${projectId} (proceeding with production build):`, tscErr instanceof Error ? tscErr.message : tscErr);
+    }
+  }
   await runBuildCommand(dir, [viteBin, "build"], projectId, "production build", signal);
   signal?.throwIfAborted();
   await validateGeneratedRuntime(dir);

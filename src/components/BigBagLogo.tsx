@@ -65,11 +65,11 @@ export function BigBagLogo({
       {/* Brand text */}
       {!hideText && (
         <div className="flex items-center tracking-tight">
-          <span className={`font-bold text-black dark:text-white transition-colors ${textSizeClasses}`}>
-            big
+          <span className={`font-bold capitalize text-black dark:text-white transition-colors ${textSizeClasses}`}>
+            Big
           </span>
-          <span className={`font-bold text-black dark:text-white transition-colors ${textSizeClasses}`}>
-            bag
+          <span className={`font-bold capitalize text-black dark:text-white transition-colors ${textSizeClasses}`}>
+            Bag
           </span>
           <span className="w-1.5 h-1.5 rounded-full bg-black dark:bg-white ml-0.5 animate-pulse" />
         </div>

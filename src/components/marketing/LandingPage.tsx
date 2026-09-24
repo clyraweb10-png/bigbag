@@ -117,7 +117,7 @@ const PLANS = [
       "20 Pro credits + 5 daily credits",
       "Credit rollovers & top-ups",
       "Custom domains + SSL",
-      "Remove bigbag badge",
+      "Remove BigBag badge",
       "User roles & permissions",
       "Per-member credit limits",
       "Design systems",
@@ -339,26 +339,26 @@ export function LandingPageMarketing() {
               href="#starters"
               className="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
             >
-              <span>Explore pre-built starters</span>
+              <span>Explore pre-built templates</span>
               <ChevronDown className="w-3.5 h-3.5 transition-transform group-hover:translate-y-0.5" />
             </a>
           </div>
         </div>
       </section>
 
-      {/* ═══════ STARTERS (at 90vh) ═══════ */}
+      {/* ═══════ TEMPLATES (at 90vh) ═══════ */}
       <section id="starters" className="py-16 sm:py-24 border-t border-border bg-background relative">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="text-center mb-10">
             <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-secondary/50 px-3.5 py-1 text-xs font-medium text-foreground/80 mb-3">
               <Sparkles className="w-3.5 h-3.5 text-primary" />
-              <span>Starter Templates</span>
+              <span>Templates</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">
-              Production-ready starters to kickstart your build
+              Production-ready templates to kickstart your build
             </h2>
             <p className="mt-3 text-muted-foreground max-w-xl mx-auto text-sm sm:text-base">
-              Explore hand-crafted starters with live motion, modern tech stack, and full prompt specifications.
+              Explore hand-crafted templates with live motion, modern tech stack, and full prompt specifications.
             </p>
           </div>
 

@@ -225,6 +225,7 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
           templateId:   template.id,
           templateName: template.title,
           prompt:       template.prompt,
+          previewImage: template.previewImage,
         }),
       });
 
@@ -237,6 +238,14 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
       }
 
       const { projectId } = data.data;
+
+      // Seed screenshot in localStorage so dashboard immediately displays template thumbnail
+      if (template.previewImage) {
+        try {
+          const entry = { url: template.previewImage, capturedAt: Date.now() };
+          localStorage.setItem(`bigbag:preview-screenshot:${projectId}`, JSON.stringify(entry));
+        } catch { /* storage unavailable */ }
+      }
 
       // Store template context so the workspace page can show it in the chat composer.
       // We use a DIFFERENT key from pendingPrompt so the agent is NOT auto-fired.

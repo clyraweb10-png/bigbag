@@ -581,6 +581,14 @@ async function proxyLocalDevelopment(
             signal: AbortSignal.timeout(10_000),
         });
     } catch {
+        // If live port is temporarily unreachable, fall back to built/persistent deployment if present
+        try {
+            const fallback = await servePersistentDeployment(request, projectId, segments, writeCapability, guestCapability);
+            if (fallback.status !== 404 && fallback.status !== 503) {
+                return fallback;
+            }
+        } catch { /* proceed to boot page */ }
+
         const wantsDocument = request.method === "GET" &&
             (request.headers.get("accept") || "").includes("text/html");
         return wantsDocument
@@ -878,7 +886,7 @@ async function handle(
         // login form alone cannot authorize server-side reads or mutations.
         const usesDisposableE2b = process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b";
         const runningOrigin = localSandboxManager.getRunningOrigin(projectId) ||
-            (!usesDisposableE2b && localRecord?.serverStatus === "Active"
+            (!usesDisposableE2b && localRecord?.serverStatus === "Active" && localRecord?.port
                 ? `http://127.0.0.1:${localRecord.port}`
                 : null);
         const response = runningOrigin
