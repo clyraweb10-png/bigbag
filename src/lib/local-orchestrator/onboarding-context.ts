@@ -12,7 +12,10 @@ export type OnboardingQuestionKind =
   | "project_type"
   | "project_details"
   | "colour_direction"
-  | "reference_url";
+  | "reference_url"
+  | "multi_choice"
+  | "yes_no"
+  | "free_text";
 
 export interface PaletteDirection {
   id: string;
@@ -34,6 +37,13 @@ export interface ProjectContext {
   skippedQuestions: OnboardingQuestionKind[];
 }
 
+/** A generic choice option for single/multi-choice questions. */
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface OnboardingQuestion {
   kind: OnboardingQuestionKind;
   title: string;
@@ -43,6 +53,14 @@ export interface OnboardingQuestion {
   /** True only when the agent determined the name is still missing. */
   requestProjectName: boolean;
   paletteChoices: PaletteDirection[];
+  /** Generic options for single_choice / multi_choice question kinds. */
+  options?: QuestionOption[];
+  /** Whether an "other" free-text fallback should be shown on choice questions. */
+  allowOther?: boolean;
+  /** Field label override for text questions. */
+  fieldLabel?: string;
+  /** Whether the free-text field should be multiline (defaults to true). */
+  multiline?: boolean;
 }
 
 export interface OnboardingAnalysis {
@@ -61,7 +79,9 @@ export function questionAlreadyAnswered(
   if (kind === "colour_direction") {
     return Boolean(context.colourDirection || context.paletteSelection || context.customPaletteDirection);
   }
-  return Boolean(context.referenceUrl);
+  if (kind === "reference_url") return Boolean(context.referenceUrl);
+  // multi_choice, yes_no, free_text — considered answered when description is populated
+  return Boolean(context.projectDescription);
 }
 
 export const EMPTY_PROJECT_CONTEXT: ProjectContext = {
@@ -107,7 +127,8 @@ function isProjectType(value: unknown): value is ProjectTypeId {
 
 function isQuestionKind(value: unknown): value is OnboardingQuestionKind {
   return value === "project_type" || value === "project_details" ||
-    value === "colour_direction" || value === "reference_url";
+    value === "colour_direction" || value === "reference_url" ||
+    value === "multi_choice" || value === "yes_no" || value === "free_text";
 }
 
 export function mergeProjectContext(
@@ -169,6 +190,20 @@ export function parseOnboardingOutput(
     ? question.paletteChoices.map(cleanPalette).filter((item): item is PaletteDirection => Boolean(item)).slice(0, 5)
     : [];
 
+  // Parse generic options for multi_choice / single-choice-with-options
+  const parsedOptions: Array<{ id: string; label: string; description: string }> = [];
+  if (Array.isArray(question.options)) {
+    for (const opt of question.options.slice(0, 10)) {
+      if (opt && typeof opt === "object") {
+        const o = opt as Record<string, unknown>;
+        const id = cleanText(o.id, 64);
+        const label = cleanText(o.label, 100);
+        const description = cleanText(o.description, 200);
+        if (id && label) parsedOptions.push({ id, label, description: description || "" });
+      }
+    }
+  }
+
   return {
     context,
     nextQuestion: {
@@ -181,6 +216,10 @@ export function parseOnboardingOutput(
       optional: question.optional === true,
       requestProjectName: question.requestProjectName === true && !context.projectName,
       paletteChoices,
+      options: parsedOptions.length > 0 ? parsedOptions : undefined,
+      allowOther: question.allowOther !== false,
+      fieldLabel: cleanText(question.fieldLabel, 100) || undefined,
+      multiline: question.multiline !== false,
     },
   };
 }

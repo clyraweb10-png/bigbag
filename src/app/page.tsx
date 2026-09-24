@@ -44,6 +44,7 @@ import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
 import { getCachedScreenshot } from "@/lib/project-screenshot";
+import { StarterTemplateGallery } from "@/components/dashboard/StarterTemplateGallery";
 
 type ViewMode = "cards" | "table";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -1047,73 +1048,18 @@ export function DashboardContent() {
             )}
             </>)}
 
-            {/* ── Starter tab content ── */}
-            {dashTab === "starter" && (() => {
-              const STARTERS: { category: string; items: { title: string; desc: string; prompt: string; icon: string }[] }[] = [
-                {
-                  category: "Web Apps",
-                  items: [
-                    { icon: "🛒", title: "E-Commerce Store", desc: "Product catalogue, cart & checkout", prompt: "Build a modern e-commerce store with a product grid, shopping cart, and checkout form." },
-                    { icon: "📋", title: "Project Tracker", desc: "Kanban board with drag & drop", prompt: "Build a Kanban-style project tracker with drag-and-drop cards, columns (To Do, In Progress, Done) and task details." },
-                    { icon: "💬", title: "Chat Interface", desc: "Real-time messaging UI", prompt: "Build a modern chat application UI with a sidebar of conversations, message bubbles, and an input area." },
-                    { icon: "📊", title: "Analytics Dashboard", desc: "Charts, KPIs & data tables", prompt: "Build an analytics dashboard with KPI cards, line and bar charts using recharts, and a data table." },
-                  ],
-                },
-                {
-                  category: "Tools",
-                  items: [
-                    { icon: "📝", title: "Notes App", desc: "Create, edit & search notes", prompt: "Build a notes app where users can create, edit, delete and search through markdown notes." },
-                    { icon: "⏱️", title: "Pomodoro Timer", desc: "Focus & break timer", prompt: "Build a Pomodoro timer app with 25-min focus and 5-min break sessions, progress ring, and session history." },
-                    { icon: "💰", title: "Budget Tracker", desc: "Income, expenses & totals", prompt: "Build a personal budget tracker where users can log income and expenses, see totals and a breakdown chart." },
-                    { icon: "🎯", title: "Habit Tracker", desc: "Daily habits & streaks", prompt: "Build a habit tracker where users can add habits, check them off daily, and see a streak calendar." },
-                  ],
-                },
-                {
-                  category: "Landing Pages",
-                  items: [
-                    { icon: "🚀", title: "SaaS Landing", desc: "Hero, features & pricing", prompt: "Build a SaaS product landing page with a hero section, feature grid, pricing cards and a CTA." },
-                    { icon: "👤", title: "Portfolio", desc: "Developer personal site", prompt: "Build a developer portfolio site with an about section, project cards, skills list and a contact form." },
-                    { icon: "📰", title: "Blog", desc: "Article list & reader", prompt: "Build a blog with an article list page and an article reader with markdown content and a sidebar." },
-                    { icon: "🍕", title: "Restaurant Menu", desc: "Menu sections & order UI", prompt: "Build a restaurant menu site with category tabs, menu items with images and prices, and an order summary." },
-                  ],
-                },
-              ];
-              return (
-                <div className="space-y-8">
-                  {STARTERS.map((group) => (
-                    <div key={group.category}>
-                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">{group.category}</h3>
-                      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                        {group.items.map((item) => (
-                          <button
-                            key={item.title}
-                            type="button"
-                            onClick={() => {
-                              setFirstPrompt(item.prompt);
-                              setDashTab("projects");
-                              window.setTimeout(() => {
-                                heroTextareaRef.current?.focus();
-                                heroTextareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-                              }, 80);
-                            }}
-                            className="group text-left flex flex-col gap-2 rounded-2xl border border-border bg-card hover:border-primary/40 hover:bg-accent/50 hover:shadow-md transition-all duration-200 p-4 cursor-pointer"
-                          >
-                            <span className="text-2xl leading-none">{item.icon}</span>
-                            <div>
-                              <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{item.title}</p>
-                              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{item.desc}</p>
-                            </div>
-                            <span className="mt-auto inline-flex items-center gap-1 text-[11px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                              Use this template <ArrowRight className="w-3 h-3" />
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              );
-            })()}
+            {/* ── Starter tab content: Rich Template Gallery ── */}
+            {dashTab === "starter" && (
+              <StarterTemplateGallery
+                onSelectTemplate={(template) => {
+                  setFirstPrompt(template.prompt);
+                  try {
+                    sessionStorage.setItem("bigbag:pending-prompt", template.prompt);
+                  } catch {}
+                  openBuildModal(template.prompt);
+                }}
+              />
+            )}
           </>
         )}
       </div>

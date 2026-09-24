@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -24,7 +24,7 @@ import { toast } from "sonner";
 import { t } from "@/i18n";
 import { classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
-import { ProjectOnboardingDialog, type OnboardingAnswer } from "@/components/generate/ProjectOnboardingDialog";
+import { SmartQuestionCard, type OnboardingAnswer } from "@/components/generate/SmartQuestionCard";
 import {
   EMPTY_PROJECT_CONTEXT,
   mergeProjectContext,
@@ -39,12 +39,22 @@ type DirectBuildRequest = { instruction: string; projectId: string };
 
 const PROJECT_TYPE_QUESTION: OnboardingQuestion = {
   kind: "project_type",
-  title: "What would you like me to create?",
-  description: "Choose the closest starting point. I’ll only ask for details that are still missing.",
-  placeholder: "Describe the kind of project you have in mind…",
+  title: "What would you like me to build?",
+  description: "Choose the closest match — I\u2019ll only ask for details that genuinely matter.",
+  placeholder: "Describe the kind of project you have in mind\u2026",
   optional: true,
   requestProjectName: false,
   paletteChoices: [],
+  allowOther: true,
+  multiline: false,
+  options: [
+    { id: "website", label: "Website or landing page", description: "A public-facing site with sections, content, and a clear visitor action" },
+    { id: "web-app", label: "Web app or tool", description: "An interactive product with forms, dashboards, data, or workflows" },
+    { id: "store", label: "Online store", description: "A product catalog with a shopping experience and optional checkout" },
+    { id: "portfolio-blog", label: "Portfolio or blog", description: "A content-driven site presenting work, writing, or a personal brand" },
+    { id: "dashboard", label: "Dashboard or admin panel", description: "Data views, reports, and controls for internal or customer use" },
+    { id: "saas", label: "SaaS product", description: "A subscription service with accounts, billing, and core product features" },
+  ],
 };
 
 function normalizeId(name: string): string {
@@ -281,6 +291,48 @@ export default function GeneratePage() {
       setSourcePrompt(attachmentPrompt);
       setStage("planning");
       await requestOnboarding(attachmentPrompt, messages, projectContext);
+      return;
+    }
+
+    // Natural-language answer: if a question card is visible, treat the composer
+    // message as the answer and fold it into the context instead of starting a
+    // new plan/chat round. The card closes and context continues.
+    if (onboardingQuestion && onboardingOpen) {
+      const next: Message[] = [...messages, { role: "user", content: msg }];
+      setMessages(next);
+      setPrompt("");
+      // Apply the free-text answer to the appropriate context field based on kind
+      const kind = onboardingQuestion.kind;
+      let answerContext: Partial<typeof projectContext> = {};
+      if (kind === "project_type" || kind === "free_text" || kind === "multi_choice" || kind === "yes_no") {
+        // For type questions, set as custom type; for others, extend description
+        if (kind === "project_type") {
+          answerContext = { projectType: "custom", customProjectType: msg };
+        } else {
+          const existing = projectContext.projectDescription;
+          answerContext = {
+            projectDescription: existing ? `${existing}\n\n${msg}` : msg,
+          };
+        }
+      } else if (kind === "project_details") {
+        answerContext = {
+          projectDescription: msg,
+        };
+      } else if (kind === "colour_direction") {
+        answerContext = { colourDirection: msg, customPaletteDirection: msg };
+      } else if (kind === "reference_url") {
+        // Detect if it looks like a URL
+        answerContext = { referenceUrl: msg.startsWith("http") ? msg : null };
+      } else {
+        answerContext = { projectDescription: msg };
+      }
+      const nextContext = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
+        ...projectContext,
+        ...answerContext,
+        skippedQuestions: projectContext.skippedQuestions,
+      });
+      setProjectContext(nextContext);
+      void requestOnboarding(sourcePrompt, next, nextContext);
       return;
     }
 
@@ -548,7 +600,7 @@ export default function GeneratePage() {
       {/* ── Composer ── */}
       <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-6">
         <div className="mx-auto max-w-3xl">
-          <ProjectOnboardingDialog
+          <SmartQuestionCard
             open={onboardingOpen}
             question={onboardingQuestion}
             busy={onboardingRunning}
