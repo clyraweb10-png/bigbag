@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import {
-  LayoutDashboard, Search, Plug2, MessageSquare,
+  LayoutDashboard, Search, Plug2,
   Diamond, Plus, ChevronDown,
 } from "lucide-react";
 import { BigBagLogo } from "@/components/BigBagLogo";
@@ -50,9 +50,7 @@ export function DashboardSidebar({ projects, onConnectorsOpen, onSearchFocus, on
         <NavItem icon={<LayoutDashboard className="w-4 h-4" />} label="Dashboard" href="/" active />
         <NavItem icon={<Search className="w-4 h-4" />} label="Search" onClick={onSearchFocus} />
         <NavItem icon={<Plug2 className="w-4 h-4" />} label="Connectors" onClick={onConnectorsOpen} />
-        <div className="h-px bg-zinc-200 dark:bg-white/5 mx-2 my-1.5" />
-        <NavItem icon={<MessageSquare className="w-4 h-4" />} label="Chats" href="/generate" />
-        <NavItem icon={<Diamond className="w-4 h-4" />} label="Projects" href="#projects" />
+
       </nav>
 
       {/* Recents */}
