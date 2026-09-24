@@ -230,53 +230,17 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
                 onClick={() => !installingId && handleStartBuild(template)}
                 className={`group relative flex flex-col rounded-xl border border-zinc-200/90 dark:border-white/[0.1] bg-card dark:bg-[#111114] shadow-xs hover:border-zinc-400 dark:hover:border-zinc-500 hover:shadow-md transition-all duration-150 overflow-hidden ${installingId ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
-                {/* ── Preview Thumbnail (100% visible, no shadow, no effect) ── */}
-                <div className="relative aspect-[16/9] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-950 border-b border-zinc-200/80 dark:border-white/[0.08]">
-                  <img
-                    src={template.previewImage}
-                    alt={template.title}
-                    loading="lazy"
-                    onError={(e) => {
-                      const target = e.currentTarget;
-                      target.style.display = "none";
-                      const fallback = target.nextElementSibling;
-                      if (fallback) (fallback as HTMLElement).style.display = "flex";
-                    }}
-                    className="w-full h-full object-cover object-top block"
-                  />
-                  {/* Fallback Graphic */}
-                  <div
-                    style={{ display: "none" }}
-                    className="absolute inset-0 flex-col items-center justify-center p-4 bg-zinc-100 dark:bg-zinc-900 text-center"
-                  >
-                    <Layers className="w-8 h-8 text-zinc-400 dark:text-zinc-600 mb-2" />
-                    <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-300">{template.title}</span>
-                    <span className="text-[10px] text-zinc-500 mt-0.5">{template.badge}</span>
-                  </div>
-
-                  {/* Clean hover action buttons (no blur, no heavy dark overlay) */}
-                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      title={installing ? "Installing…" : "Continue & Build"}
-                      onClick={(e) => { e.stopPropagation(); !installingId && handleStartBuild(template, e); }}
-                      disabled={!!installingId}
-                      className="w-11 h-11 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-                    >
-                      {installing
-                        ? <Loader2 className="w-5 h-5 animate-spin" />
-                        : <ArrowRight className="w-5 h-5 stroke-[2.5]" />}
-                    </button>
-                    <button
-                      type="button"
-                      title="View Details"
-                      onClick={(e) => { e.stopPropagation(); setPreviewTemplate(template); }}
-                      className="w-9 h-9 rounded-full bg-white/95 hover:bg-white text-zinc-800 dark:bg-zinc-800/90 dark:hover:bg-zinc-700 dark:text-zinc-200 shadow-sm flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                {/* ── Preview Thumbnail with Motion Support ── */}
+                <TemplatePreviewThumbnail
+                  template={template}
+                  isInstalling={installing}
+                  installingId={installingId}
+                  onStartBuild={(e) => handleStartBuild(template, e)}
+                  onOpenDetails={(e) => {
+                    e.stopPropagation();
+                    setPreviewTemplate(template);
+                  }}
+                />
 
                 {/* ── Card Footer ── */}
                 <div className="p-3.5 flex items-center justify-between gap-3 bg-card dark:bg-[#111114]">
@@ -350,13 +314,38 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
                 </DialogDescription>
               </DialogHeader>
 
-              {/* Preview image */}
+              {/* Preview media */}
               <div className="relative rounded-xl overflow-hidden aspect-[16/9] border border-border dark:border-white/[0.08] bg-muted dark:bg-black my-2">
-                <img
-                  src={previewTemplate.previewImage}
-                  alt={previewTemplate.title}
-                  className="w-full h-full object-cover"
-                />
+                {previewTemplate.previewVideo ? (
+                  <video
+                    src={previewTemplate.previewVideo}
+                    poster={previewTemplate.previewImage}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    controls
+                    className="w-full h-full object-cover"
+                  />
+                ) : previewTemplate.previewGif ? (
+                  <img
+                    src={previewTemplate.previewGif}
+                    alt={previewTemplate.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={previewTemplate.previewImage}
+                    alt={previewTemplate.title}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+                {previewTemplate.previewVideo && (
+                  <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-medium text-white flex items-center gap-1.5 shadow-sm pointer-events-none">
+                    <Sparkles className="w-3 h-3 text-blue-400" />
+                    <span>Live Motion Hero Preview</span>
+                  </div>
+                )}
               </div>
 
               {/* Prompt Snippet */}
@@ -396,6 +385,135 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function TemplatePreviewThumbnail({
+  template,
+  isInstalling,
+  installingId,
+  onStartBuild,
+  onOpenDetails,
+}: {
+  template: StarterTemplate;
+  isInstalling: boolean;
+  installingId: string | null;
+  onStartBuild: (e: React.MouseEvent) => void;
+  onOpenDetails: (e: React.MouseEvent) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isHovered, setIsHovered] = useState(false);
+  const [videoLoaded, setVideoLoaded] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+
+  const hasMotion = !!(template.previewVideo || template.previewGif);
+
+  const handleMouseEnter = () => {
+    setIsHovered(true);
+    if (template.previewVideo && videoRef.current) {
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setIsHovered(false);
+    if (videoRef.current) {
+      videoRef.current.pause();
+      try {
+        videoRef.current.currentTime = 0;
+      } catch {}
+    }
+  };
+
+  return (
+    <div
+      className="relative aspect-[16/9] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-950 border-b border-zinc-200/80 dark:border-white/[0.08]"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* ── Base static screenshot (Always present for instant load) ── */}
+      <img
+        src={template.previewImage}
+        alt={template.title}
+        loading="lazy"
+        onError={(e) => {
+          const target = e.currentTarget;
+          target.style.display = "none";
+          const fallback = target.nextElementSibling;
+          if (fallback) (fallback as HTMLElement).style.display = "flex";
+        }}
+        className="w-full h-full object-cover object-top block"
+      />
+
+      {/* Fallback Graphic */}
+      <div
+        style={{ display: "none" }}
+        className="absolute inset-0 flex-col items-center justify-center p-4 bg-zinc-100 dark:bg-zinc-900 text-center"
+      >
+        <Layers className="w-8 h-8 text-zinc-400 dark:text-zinc-600 mb-2" />
+        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-300">{template.title}</span>
+        <span className="text-[10px] text-zinc-500 mt-0.5">{template.badge}</span>
+      </div>
+
+      {/* ── Looping Video Preview (Smooth Motion on hover) ── */}
+      {template.previewVideo && !videoError && (
+        <video
+          ref={videoRef}
+          src={template.previewVideo}
+          loop
+          muted
+          playsInline
+          preload="none"
+          onLoadedData={() => setVideoLoaded(true)}
+          onError={() => setVideoError(true)}
+          className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
+            isHovered && videoLoaded ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      )}
+
+      {/* ── GIF Preview Alternative ── */}
+      {template.previewGif && !template.previewVideo && (
+        <img
+          src={template.previewGif}
+          alt={template.title}
+          className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
+            isHovered ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      )}
+
+      {/* ── Subtle Motion Badge ── */}
+      {hasMotion && (
+        <div className="absolute top-2.5 right-2.5 z-10 px-2 py-0.5 rounded-full bg-black/60 dark:bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-semibold text-white/90 flex items-center gap-1 shadow-xs pointer-events-none transition-transform duration-200 group-hover:scale-105">
+          <Play className="w-2.5 h-2.5 fill-blue-400 text-blue-400" />
+          <span>Motion</span>
+        </div>
+      )}
+
+      {/* Clean hover action buttons */}
+      <div className="absolute inset-0 z-20 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center justify-center gap-3">
+        <button
+          type="button"
+          title={isInstalling ? "Installing…" : "Continue & Build"}
+          onClick={onStartBuild}
+          disabled={!!installingId}
+          className="w-11 h-11 rounded-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
+        >
+          {isInstalling
+            ? <Loader2 className="w-5 h-5 animate-spin" />
+            : <ArrowRight className="w-5 h-5 stroke-[2.5]" />}
+        </button>
+        <button
+          type="button"
+          title="View Details"
+          onClick={onOpenDetails}
+          className="w-9 h-9 rounded-full bg-white/95 hover:bg-white text-zinc-800 dark:bg-zinc-800/90 dark:hover:bg-zinc-700 dark:text-zinc-200 shadow-sm flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }

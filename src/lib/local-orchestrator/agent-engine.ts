@@ -165,7 +165,47 @@ RESPONSIVE FOLDING RULES:
 - Confirm no file is truncated and every source, CSS, and JSON file parses.
 - Confirm requested interactions and persistence are implemented rather than described.
 - If any check fails, repair it before returning. Never rely on a later retry.
+
+VISUAL POLISH, MOTION & CONTENT REALISM DIRECTIVES (STRICT):
+
+1. CONTENT REALISM — NO LAZY PLACEHOLDERS:
+   - STRICTLY BANNED: "Lorem ipsum", "John Doe", "Jane Smith", "Acme Corp", "Test Company", "Product 1", "Task 1", "Item 1", "$0.00", "0 users", "0%", "N/A", or any other generic zero-value filler.
+   - ALWAYS seed the application with 4–8 authentic, believable synthetic domain records complete with context-rich titles, realistic timestamps ("14 mins ago", "Yesterday at 3:45 PM", specific ISO dates), realistic prices, and semantic status badges.
+   - NEVER reuse the same corporate names across prompts. Generate creative, industry-appropriate synthetic entities:
+     * SaaS/DevTools: services like "auth-edge-router", "billing-webhook-listener", regions "us-east-1", latency "24ms", statuses "Healthy"/"Degraded"
+     * E-Commerce: products like "Structured Wool Chore Coat – $135.00", "Matte Ceramic Pour-Over Stand – $89.00", stock "Low Stock · 4 remaining"
+     * Finance: clients "Beacon Meridian Logistics", "Krypton Materials Group", invoice IDs "INV-2026-104", net-30 terms
+     * Health/Fitness: sessions "Zone 2 Endurance Run · 47 min", metrics "Avg HR: 142 bpm · Pace: 5:48/km"
+   - Metric cards and KPI strips MUST calculate values dynamically from the seed data — never hardcode totals that won't update when records change.
+
+2. MOTION & MICRO-INTERACTION DISCIPLINE:
+   - Cards and interactive list items: add animate-fade-up + stagger-1/2/3 classes on initial render.
+   - Hover states on cards: hover:-translate-y-0.5 hover:shadow-float transition-all duration-150.
+   - Button press: active:scale-[0.98] is already in Button; do NOT add extra motion on buttons.
+   - FORBIDDEN: infinite animations, spinning gradient blobs, bouncing text, full-page scale entrances, or animation applied to every minor element. Motion must serve feedback and hierarchy only.
+   - ALL animations must be wrapped in the CSS prefers-reduced-motion media query already defined in globals.css.
+
+3. DATA VISUALIZATION — USE BUILT-IN PRIMITIVES:
+   - Sparklines on MetricCard trend lines: use Sparkline component from @/components/ui/sparkline.
+   - Chart sections: wrap in ChartContainer (handles time range tabs, loading skeleton, empty state automatically).
+   - Bar charts: use SimpleBarChart from @/components/ui/chart-container — pure SVG, zero extra deps.
+   - Distribution breakdowns: use DistributionBar from @/components/ui/sparkline.
+   - NEVER import recharts, chart.js, d3, or any other charting library.
+
+4. RESILIENT MEDIA — USE ImageFrame:
+   - ALWAYS use ImageFrame from @/components/ui/image-frame for product images, hero images, blog covers, and avatars.
+   - ImageFrame handles: shimmer loading state, onError fallback with icon + text, aspect-ratio containment, and fade-in.
+   - Avatars: use ImageFrame with avatar={true} — auto-generates initials if image fails.
+   - Avatar groups: use AvatarGroup from @/components/ui/image-frame.
+   - NEVER leave raw <img> tags without onError handling.
+
+5. CONTEXTUAL POLISH BY ARCHETYPE:
+   - SaaS / Admin: Clean dense typography, MetricCard strips with Sparkline, ChartContainer with SimpleBarChart, table row hover states (hover:bg-[var(--muted)]/50), zero decorative gradients.
+   - Marketing / Landing: Expressive hero with subtle radial glow (bg-[var(--primary)] opacity-10 blur-3xl), HeroSection + FeatureGrid from @/components/layout/marketing-shell, interactive pricing tier toggle.
+   - E-Commerce: ProductCard + ImageFrame with aspect-square, Badge overlays ("Best Seller", "New Arrival", "Low Stock"), quantity steppers, cart drawer with real item list and subtotal.
+   - Editorial: ArticleHeader + ArticleBody from @/components/layout/editorial-shell, ImageFrame with aspect-video for cover, generous leading-7 body text.
 `;
+
 
 const RETRY_PROMPT = `Your previous response was incomplete or failed validation.
 Return ONLY complete corrected file blocks in this exact format - no explanations, thinking, summaries, or prose:

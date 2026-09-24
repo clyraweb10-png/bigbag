@@ -83,10 +83,11 @@ if (fs.existsSync(motionsitesPromptsDir)) {
     const localVid = path.join("E:\\New folder\\motionsites-prompt-collection\\assets\\videos", `${name}_0.mp4`);
     
     let previewVideo = undefined;
+    const staticVidPath = path.join(process.cwd(), "public", "templates", "videos", `${name}.mp4`);
     if (vMatch) {
       previewVideo = vMatch[0];
-    } else if (fs.existsSync(localVid)) {
-      previewVideo = `/api/template-video/${name}`;
+    } else if (fs.existsSync(staticVidPath) || fs.existsSync(localVid)) {
+      previewVideo = `/templates/videos/${name}.mp4`;
     }
 
     let previewGif = gMatch ? gMatch[0] : undefined;

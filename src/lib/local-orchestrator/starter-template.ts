@@ -1518,6 +1518,57 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
     0 12px 24px -4px rgba(0, 0, 0, 0.55),
     0 0 0 1px rgba(255, 255, 255, 0.07);
 }
+
+/* ── Motion System ─────────────────────────────────────────────────────── */
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1);    }
+}
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%);  }
+}
+
+.animate-fade-up   { animation: fade-up   0.25s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fade-in   { animation: fade-in   0.2s  ease-out both; }
+.animate-scale-in  { animation: scale-in  0.2s  cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Stagger siblings in lists and grids */
+.stagger-1 { animation-delay:  40ms; }
+.stagger-2 { animation-delay:  80ms; }
+.stagger-3 { animation-delay: 120ms; }
+.stagger-4 { animation-delay: 160ms; }
+
+/* Micro-interactions — hardware-accelerated only */
+.interactive {
+  transition: transform 150ms ease-out, box-shadow 150ms ease-out;
+}
+.interactive:hover  { transform: translateY(-2px); }
+.interactive:active { transform: translateY(0) scale(0.99); }
+
+/* Respect user motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:       0.01ms !important;
+    animation-iteration-count: 1     !important;
+    transition-duration:      0.01ms !important;
+    scroll-behavior:          auto   !important;
+  }
+}
 `
   );
 
@@ -2792,6 +2843,488 @@ export * from "./select";
 export * from "./breadcrumbs";
 export * from "./pagination";
 export * from "./form";
+export * from "./sparkline";
+export * from "./chart-container";
+export * from "./image-frame";
+`
+  );
+
+  write(
+    dir,
+    "src/components/ui/sparkline.tsx",
+    `import * as React from "react";
+import { cn } from "@/lib/utils";
+
+export interface SparklineProps {
+  /** Array of numeric data points */
+  data: number[];
+  /** Width of the SVG in px */
+  width?: number;
+  /** Height of the SVG in px */
+  height?: number;
+  /** Whether the trend is positive (green) or negative (red). Auto-detected if omitted. */
+  positive?: boolean;
+  /** Show a filled area under the line */
+  filled?: boolean;
+  className?: string;
+}
+
+export function Sparkline({
+  data,
+  width = 80,
+  height = 32,
+  positive,
+  filled = true,
+  className,
+}: SparklineProps) {
+  if (!data || data.length < 2) return null;
+
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const pad = 2;
+
+  const pts = data.map((v, i) => ({
+    x: pad + (i / (data.length - 1)) * (width - pad * 2),
+    y: pad + (1 - (v - min) / range) * (height - pad * 2),
+  }));
+
+  const polyline = pts.map((p) => \`\${p.x},\${p.y}\`).join(" ");
+  const area = [
+    \`\${pts[0].x},\${height - pad}\`,
+    ...pts.map((p) => \`\${p.x},\${p.y}\`),
+    \`\${pts[pts.length - 1].x},\${height - pad}\`,
+  ].join(" ");
+
+  const isPositive = positive ?? data[data.length - 1] >= data[0];
+  const color = isPositive ? "#10b981" : "#ef4444";
+  const fillId = React.useId();
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={\`0 0 \${width} \${height}\`}
+      className={cn("overflow-visible", className)}
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.20" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {filled && (
+        <polygon points={area} fill={\`url(#\${fillId})\`} />
+      )}
+      <polyline
+        points={polyline}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Terminal dot */}
+      <circle
+        cx={pts[pts.length - 1].x}
+        cy={pts[pts.length - 1].y}
+        r="2.5"
+        fill={color}
+      />
+    </svg>
+  );
+}
+
+/** Horizontal distribution / progress bar */
+export interface DistributionBarProps {
+  /** 0–100 percentage fill */
+  value: number;
+  max?: number;
+  color?: string;
+  label?: string;
+  className?: string;
+}
+
+export function DistributionBar({ value, max = 100, color, label, className }: DistributionBarProps) {
+  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+  return (
+    <div className={cn("space-y-1", className)}>
+      {label && (
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-[var(--muted-foreground)]">{label}</span>
+          <span className="font-medium text-[var(--foreground)]">{value.toLocaleString()}</span>
+        </div>
+      )}
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--muted)]">
+        <div
+          className="h-full rounded-full transition-all duration-500 ease-out"
+          style={{ width: \`\${pct}%\`, background: color ?? "var(--primary)" }}
+        />
+      </div>
+    </div>
+  );
+}
+`
+  );
+
+  write(
+    dir,
+    "src/components/ui/chart-container.tsx",
+    `import * as React from "react";
+import { cn } from "@/lib/utils";
+import { Skeleton } from "./skeleton";
+import { EmptyState } from "./empty-state";
+import { BarChart2 } from "lucide-react";
+
+export type TimeRange = "7D" | "30D" | "90D" | "1Y" | "ALL";
+
+export interface ChartContainerProps {
+  title: string;
+  /** Primary aggregate value to display prominently */
+  value?: string | number;
+  /** Percentage change e.g. +12.4 */
+  delta?: number;
+  /** Time range selector options */
+  ranges?: TimeRange[];
+  activeRange?: TimeRange;
+  onRangeChange?: (r: TimeRange) => void;
+  children?: React.ReactNode;
+  isLoading?: boolean;
+  isEmpty?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  className?: string;
+  headerRight?: React.ReactNode;
+}
+
+export function ChartContainer({
+  title,
+  value,
+  delta,
+  ranges = ["7D", "30D", "90D"],
+  activeRange,
+  onRangeChange,
+  children,
+  isLoading = false,
+  isEmpty = false,
+  emptyTitle = "No data",
+  emptyDescription = "Data will appear here once available.",
+  className,
+  headerRight,
+}: ChartContainerProps) {
+  const [localRange, setLocalRange] = React.useState<TimeRange>(activeRange ?? ranges[0]);
+  const currentRange = activeRange ?? localRange;
+
+  const isPositive = delta !== undefined ? delta >= 0 : true;
+
+  const handleRange = (r: TimeRange) => {
+    setLocalRange(r);
+    onRangeChange?.(r);
+  };
+
+  return (
+    <div className={cn("rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-card", className)}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 p-5 pb-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)] mb-1">{title}</p>
+          {value !== undefined && !isLoading && (
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-bold tracking-tight text-[var(--foreground)]">
+                {typeof value === "number" ? value.toLocaleString() : value}
+              </span>
+              {delta !== undefined && (
+                <span className={cn(
+                  "text-xs font-semibold",
+                  isPositive ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                )}>
+                  {isPositive ? "+" : ""}{delta.toFixed(1)}%
+                </span>
+              )}
+            </div>
+          )}
+          {isLoading && <Skeleton className="mt-1 h-7 w-24" />}
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {headerRight}
+          {ranges.length > 1 && (
+            <div className="flex items-center rounded-lg bg-[var(--muted)] p-0.5 gap-0.5">
+              {ranges.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => handleRange(r)}
+                  className={cn(
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                    currentRange === r
+                      ? "bg-[var(--card)] text-[var(--foreground)] shadow-subtle"
+                      : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  )}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Chart body */}
+      <div className="px-5 pb-5">
+        {isLoading ? (
+          <div className="space-y-2 pt-2">
+            <Skeleton className="h-32 w-full rounded-lg" />
+            <div className="flex justify-between">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-3 w-8" />
+              ))}
+            </div>
+          </div>
+        ) : isEmpty ? (
+          <EmptyState
+            icon={<BarChart2 className="h-6 w-6" />}
+            title={emptyTitle}
+            description={emptyDescription}
+            className="py-10"
+          />
+        ) : (
+          <div className="pt-2">{children}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Simple inline bar chart using SVG — no external deps */
+export interface BarChartData {
+  label: string;
+  value: number;
+  color?: string;
+}
+
+export interface SimpleBarChartProps {
+  data: BarChartData[];
+  height?: number;
+  showLabels?: boolean;
+  className?: string;
+}
+
+export function SimpleBarChart({ data, height = 120, showLabels = true, className }: SimpleBarChartProps) {
+  const max = Math.max(...data.map((d) => d.value), 1);
+  const barW = 100 / data.length;
+  const gap = 0.2;
+
+  return (
+    <div className={cn("w-full", className)}>
+      <svg
+        width="100%"
+        height={height}
+        viewBox={\`0 0 100 \${height}\`}
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        {data.map((d, i) => {
+          const barH = (d.value / max) * (height - 4);
+          const x = i * barW + gap / 2;
+          const w = barW - gap;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={height - barH}
+              width={w}
+              height={barH}
+              rx="1.5"
+              fill={d.color ?? "var(--primary)"}
+              opacity="0.85"
+            />
+          );
+        })}
+      </svg>
+      {showLabels && (
+        <div className="flex mt-1" style={{ gap: 0 }}>
+          {data.map((d, i) => (
+            <div
+              key={i}
+              className="flex-1 text-center text-[10px] text-[var(--muted-foreground)] truncate px-0.5"
+            >
+              {d.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+`
+  );
+
+  write(
+    dir,
+    "src/components/ui/image-frame.tsx",
+    `import * as React from "react";
+import { ImageOff } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export interface ImageFrameProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+  /** Aspect ratio class e.g. "aspect-square", "aspect-video", "aspect-[4/5]" */
+  aspect?: string;
+  /** Fallback icon when image fails — defaults to ImageOff */
+  fallbackIcon?: React.ReactNode;
+  /** Fallback text shown below the icon */
+  fallbackText?: string;
+  /** Initials to show for avatar-style fallbacks */
+  initials?: string;
+  /** Whether this is an avatar (circular) */
+  avatar?: boolean;
+  /** Size classes for avatar mode */
+  size?: "sm" | "md" | "lg" | "xl";
+  rounded?: string;
+  className?: string;
+}
+
+const avatarSizes = {
+  sm: "h-8 w-8 text-xs",
+  md: "h-10 w-10 text-sm",
+  lg: "h-12 w-12 text-base",
+  xl: "h-16 w-16 text-lg",
+};
+
+export function ImageFrame({
+  src,
+  alt = "",
+  aspect = "aspect-video",
+  fallbackIcon,
+  fallbackText,
+  initials,
+  avatar = false,
+  size = "md",
+  rounded = "rounded-lg",
+  className,
+  ...props
+}: ImageFrameProps) {
+  const [errored, setErrored] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+
+  // Reset state when src changes
+  React.useEffect(() => {
+    setErrored(false);
+    setLoaded(false);
+  }, [src]);
+
+  if (avatar) {
+    const sizeClass = avatarSizes[size];
+    return (
+      <div className={cn("relative shrink-0 overflow-hidden rounded-full bg-[var(--accent)]", sizeClass, className)}>
+        {src && !errored ? (
+          <img
+            src={src}
+            alt={alt}
+            className="h-full w-full object-cover"
+            onError={() => setErrored(true)}
+            {...props}
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center font-semibold text-[var(--accent-foreground)]">
+            {initials ?? (alt ? alt.charAt(0).toUpperCase() : "?")}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("relative overflow-hidden bg-[var(--muted)]", aspect, rounded, className)}>
+      {/* Skeleton shimmer while loading */}
+      {!loaded && !errored && src && (
+        <div className="absolute inset-0 animate-pulse bg-[var(--muted)]" />
+      )}
+
+      {src && !errored ? (
+        <img
+          src={src}
+          alt={alt}
+          className={cn(
+            "h-full w-full object-cover transition-opacity duration-300",
+            loaded ? "opacity-100" : "opacity-0"
+          )}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErrored(true)}
+          {...props}
+        />
+      ) : (
+        /* Elegant fallback */
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
+          <div className="text-[var(--muted-foreground)]">
+            {fallbackIcon ?? <ImageOff className="h-8 w-8 opacity-40" />}
+          </div>
+          {fallbackText && (
+            <p className="text-xs text-[var(--muted-foreground)] opacity-70 max-w-[12ch] leading-tight">
+              {fallbackText}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Curated Unsplash URL builder for domain-appropriate photography */
+export function unsplashUrl(
+  query: string,
+  opts: { w?: number; h?: number; q?: number } = {}
+): string {
+  const { w = 800, h, q = 80 } = opts;
+  const dim = h ? \`\${w}x\${h}\` : \`\${w}\`;
+  return \`https://source.unsplash.com/\${dim}/?\${encodeURIComponent(query)}&auto=format&fit=crop&q=\${q}\`;
+}
+
+/** Avatar group showing stacked avatar circles */
+export interface AvatarGroupProps {
+  users: Array<{ name: string; avatar?: string }>;
+  max?: number;
+  size?: "sm" | "md";
+  className?: string;
+}
+
+export function AvatarGroup({ users, max = 4, size = "sm", className }: AvatarGroupProps) {
+  const visible = users.slice(0, max);
+  const overflow = users.length - max;
+  const sizeClass = size === "sm" ? "h-7 w-7 text-[10px]" : "h-9 w-9 text-xs";
+
+  return (
+    <div className={cn("flex items-center", className)}>
+      {visible.map((u, i) => (
+        <div
+          key={i}
+          className={cn(
+            "relative shrink-0 overflow-hidden rounded-full border-2 border-[var(--card)] bg-[var(--accent)] font-semibold text-[var(--accent-foreground)] flex items-center justify-center",
+            sizeClass,
+            i > 0 && "-ml-2"
+          )}
+          title={u.name}
+        >
+          {u.avatar ? (
+            <img src={u.avatar} alt={u.name} className="h-full w-full object-cover" />
+          ) : (
+            u.name.charAt(0).toUpperCase()
+          )}
+        </div>
+      ))}
+      {overflow > 0 && (
+        <div
+          className={cn(
+            "relative shrink-0 -ml-2 rounded-full border-2 border-[var(--card)] bg-[var(--muted)] font-semibold text-[var(--muted-foreground)] flex items-center justify-center",
+            sizeClass
+          )}
+        >
+          +{overflow}
+        </div>
+      )}
+    </div>
+  );
+}
 `
   );
 
