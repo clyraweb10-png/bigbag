@@ -28,6 +28,85 @@ export const APPLICATION_ENTRYPOINT_PATHS = new Set([
 const FORBIDDEN_GENERATED_CHARACTERS = /[\u00a0\u200b-\u200d\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2060\ufeff]/u;
 const VITE_BUILT_IN_ENVIRONMENT_VARIABLES = new Set(["BASE_URL", "DEV", "MODE", "PROD", "SSR"]);
 
+export function seedRecordIntent(text: string): boolean | null {
+  const request = /\b(?:seed(?:ed|ing)?|demo|sample|fixture|mock)(?:\s+(?:the|a|my|some|[0-9]+|one|two|three|five|ten))?\s+(?:data|database|records|products?|inventory|catalog(?:ue)?|items?|users?|orders?)\b/gi;
+  let permitted: boolean | null = null;
+  let prohibited = false;
+  for (const match of text.matchAll(request)) {
+    const prefix = text.slice(Math.max(0, (match.index || 0) - 45), match.index);
+    const remainder = text.slice((match.index || 0) + match[0].length).split(/[.!?;\n]/, 1)[0];
+    const negatedBefore = /\b(?:no|never|without|avoid|don't|do not|must not|remove|delete|stop|disable|not)\s+(?:\w+\s+){0,4}$/i.test(prefix);
+    const negatedAfter = /^\s+(?:(?:is|are|was|were|should|must|can|will)\s+(?:not|never|unnecessary|unwanted|forbidden|prohibited)|(?:isn't|aren't|wasn't|weren't|shouldn't|mustn't|can't|won't))\b/i.test(remainder);
+    prohibited ||= negatedBefore || negatedAfter;
+    if (!negatedBefore && !negatedAfter) permitted = true;
+  }
+  return prohibited ? false : permitted;
+}
+
+function containsInlineSeedRecords(filePath: string, content: string): boolean {
+  if (!/\.[cm]?[jt]sx?$/.test(filePath)) return false;
+  const source = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function resolvesRecordArray(reference: ts.Identifier): boolean {
+    for (let scope: ts.Node | undefined = reference.parent; scope; scope = scope.parent) {
+      if (ts.isFunctionLike(scope) && scope.parameters.some((parameter) =>
+        ts.isIdentifier(parameter.name) && parameter.name.text === reference.text)) return false;
+      if (!ts.isBlock(scope) && !ts.isSourceFile(scope)) continue;
+      const declaration = scope.statements
+        .filter(ts.isVariableStatement)
+        .flatMap((statement) => [...statement.declarationList.declarations])
+        .find((entry) => ts.isIdentifier(entry.name) && entry.name.text === reference.text && entry.pos < reference.pos);
+      if (declaration) return Boolean(declaration.initializer && ts.isArrayLiteralExpression(declaration.initializer) &&
+        declaration.initializer.elements.some((element) => ts.isObjectLiteralExpression(element)));
+    }
+    return false;
+  }
+
+  function boundNames(binding: ts.BindingName): Set<string> {
+    if (ts.isIdentifier(binding)) return new Set([binding.text]);
+    return new Set(binding.elements.flatMap((element) =>
+      ts.isOmittedExpression(element) ? [] : [...boundNames(element.name)]));
+  }
+
+  function refersToRecord(argument: ts.Expression, recordNames: Set<string>): boolean {
+    while (ts.isAsExpression(argument) || ts.isTypeAssertionExpression(argument) ||
+      ts.isSatisfiesExpression(argument) || ts.isParenthesizedExpression(argument) || ts.isNonNullExpression(argument)) {
+      argument = argument.expression;
+    }
+    return ts.isIdentifier(argument) && recordNames.has(argument.text) ||
+      ts.isObjectLiteralExpression(argument) && argument.properties.some((property) =>
+        ts.isSpreadAssignment(property) && refersToRecord(property.expression, recordNames) ||
+        ts.isShorthandPropertyAssignment(property) && recordNames.has(property.name.text) ||
+        ts.isPropertyAssignment(property) && refersToRecord(property.initializer, recordNames));
+  }
+
+  function createsRecord(node: ts.Node, recordNames: Set<string>): boolean {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "create" &&
+      node.arguments.some((argument) => refersToRecord(argument, recordNames))) return true;
+    return Boolean(ts.forEachChild(node, (child) => createsRecord(child, recordNames) || undefined));
+  }
+
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (ts.isForOfStatement(node) && ts.isIdentifier(node.expression) && resolvesRecordArray(node.expression) &&
+      ts.isVariableDeclarationList(node.initializer)) {
+      found = node.initializer.declarations.some((declaration) =>
+        createsRecord(node.statement, boundNames(declaration.name)));
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      ["forEach", "map"].includes(node.expression.name.text) && ts.isIdentifier(node.expression.expression) &&
+      resolvesRecordArray(node.expression.expression)) {
+      found = node.arguments.some((argument) =>
+        (ts.isArrowFunction(argument) || ts.isFunctionExpression(argument)) &&
+        argument.parameters.some((parameter) => createsRecord(argument.body, boundNames(parameter.name))));
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return found;
+}
+
 function forbiddenCharacterIssue(filePath: string, content: string): string | null {
   const match = FORBIDDEN_GENERATED_CHARACTERS.exec(content);
   if (!match) return null;
@@ -677,6 +756,9 @@ export function generationValidationIssues(
       /(?:^|\/)(?:seed|seeds|fixtures?)(?:\.(?:[cm]?[jt]sx?|json)|\/)/i.test(file.path)
     ) {
       issues.push(`${file.path} adds seed or fixture data without an explicit user request for demo/seed data`);
+    }
+    if (options.allowSeedData !== true && containsInlineSeedRecords(file.path, file.content)) {
+      issues.push(`${file.path} adds inline seed records without an explicit user request for demo/seed data`);
     }
     if (
       options.allowAuthentication === false &&

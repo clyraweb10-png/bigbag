@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import type { LocalProjectRecord } from "./types";
+import { qualificationProjectId } from "../qualification-run";
 
 export type PersistedFile = { path: string; content: Uint8Array };
 export type AppRecord = Record<string, unknown> & {
@@ -142,6 +143,33 @@ async function ensureSchema(): Promise<Pool | null> {
           );
           CREATE INDEX IF NOT EXISTS builder_qualification_results_updated
             ON public.builder_qualification_results (updated_at DESC);
+          CREATE TABLE IF NOT EXISTS public.builder_qualification_history (
+            history_id TEXT PRIMARY KEY,
+            attempt_order BIGSERIAL NOT NULL,
+            run_id TEXT NOT NULL,
+            project_number INTEGER NOT NULL,
+            project_id TEXT NOT NULL,
+            generation_id TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            recorded_at TEXT NOT NULL
+          );
+          ALTER TABLE public.builder_qualification_history ADD COLUMN IF NOT EXISTS attempt_order BIGSERIAL;
+          CREATE UNIQUE INDEX IF NOT EXISTS builder_qualification_history_order
+            ON public.builder_qualification_history (attempt_order);
+          CREATE INDEX IF NOT EXISTS builder_qualification_history_project_order
+            ON public.builder_qualification_history (run_id, project_number, attempt_order ASC);
+          INSERT INTO public.builder_qualification_history
+            (history_id, run_id, project_number, project_id, generation_id, evidence_json, recorded_at)
+          SELECT md5(result.run_id || ':' || result.project_number::text || ':' || result.evidence_json),
+            result.run_id, result.project_number, result.project_id, result.generation_id,
+            result.evidence_json, result.updated_at
+          FROM public.builder_qualification_results AS result
+          WHERE NOT EXISTS (
+            SELECT 1 FROM public.builder_qualification_history AS history
+            WHERE history.run_id = result.run_id AND history.project_number = result.project_number
+              AND history.evidence_json = result.evidence_json
+          )
+          ON CONFLICT (history_id) DO NOTHING;
           CREATE TABLE IF NOT EXISTS public.builder_qualification_benchmarks (
             run_id TEXT NOT NULL,
             benchmark_key TEXT NOT NULL,
@@ -757,8 +785,36 @@ export const durableProjectStore = {
       throw new Error("Invalid qualification project number");
     }
     const updatedAt = new Date().toISOString();
-    await pool.query(
-      `INSERT INTO public.builder_qualification_results
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), 0)", [runId]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), $2::integer)", [runId, evidence.projectNumber]);
+      const saveSnapshot = async (projectId: string, generationId: string, evidenceJson: string, recordedAt: string) => {
+        await client.query(
+          `INSERT INTO public.builder_qualification_history
+           (history_id, run_id, project_number, project_id, generation_id, evidence_json, recorded_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7
+           WHERE $6 IS DISTINCT FROM (
+             SELECT evidence_json FROM public.builder_qualification_history
+             WHERE run_id = $2 AND project_number = $3 ORDER BY attempt_order DESC LIMIT 1
+           )`,
+          [randomUUID(), runId, evidence.projectNumber, projectId, generationId, evidenceJson, recordedAt]
+        );
+      };
+      const existing = await client.query(
+        `SELECT project_id, generation_id, evidence_json, updated_at
+         FROM public.builder_qualification_results
+         WHERE run_id = $1 AND project_number = $2 FOR UPDATE`,
+        [runId, evidence.projectNumber]
+      );
+      if (existing.rows[0]) {
+        const prior = existing.rows[0];
+        await saveSnapshot(prior.project_id, prior.generation_id, prior.evidence_json, prior.updated_at);
+      }
+      await saveSnapshot(evidence.projectId, evidence.generationId, JSON.stringify(evidence), updatedAt);
+      await client.query(
+        `INSERT INTO public.builder_qualification_results
        (run_id, project_number, category, project_id, generation_id, final_status, evidence_json, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (run_id, project_number) DO UPDATE SET
@@ -768,17 +824,29 @@ export const durableProjectStore = {
          final_status = EXCLUDED.final_status,
          evidence_json = EXCLUDED.evidence_json,
          updated_at = EXCLUDED.updated_at`,
-      [
-        runId,
-        evidence.projectNumber,
-        evidence.category,
-        evidence.projectId,
-        evidence.generationId,
-        evidence.statuses.final || "FAIL",
-        JSON.stringify(evidence),
-        updatedAt,
-      ]
+        [runId, evidence.projectNumber, evidence.category, evidence.projectId, evidence.generationId,
+          evidence.statuses.final || "FAIL", JSON.stringify(evidence), updatedAt]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async listQualificationAttemptHistory(runId: string, projectNumber: number): Promise<QualificationEvidence[]> {
+    const pool = await requireSchema();
+    if (!/^[a-z0-9-]{1,120}$/i.test(runId) || !Number.isInteger(projectNumber) || projectNumber < 1 || projectNumber > 100) {
+      throw new Error("Invalid qualification history identity");
+    }
+    const res = await pool.query(
+      `SELECT evidence_json FROM public.builder_qualification_history
+       WHERE run_id = $1 AND project_number = $2 ORDER BY attempt_order ASC`,
+      [runId, projectNumber]
     );
+    return res.rows.map((row) => JSON.parse(rowText(row.evidence_json)) as QualificationEvidence);
   },
 
   async listQualificationEvidence(runId?: string): Promise<{ runId: string | null; results: QualificationEvidence[] }> {
@@ -798,12 +866,67 @@ export const durableProjectStore = {
     };
   },
 
+  async listQualificationProjectAttempts(runId: string, projectNumber: number): Promise<LocalProjectRecord[]> {
+    const prefix = qualificationProjectId(runId, projectNumber);
+    const pool = await requireSchema();
+    const res = await pool.query(
+      `SELECT project_id, record_json FROM public.builder_projects
+       WHERE project_id = $1 OR project_id LIKE $2`,
+      [prefix, `${prefix}-%`]
+    );
+    const records = res.rows.map((row) => JSON.parse(rowText(row.record_json)) as LocalProjectRecord);
+    const legacyRetries = records.filter((record) => !record.qualificationRunId && record.projectId !== prefix &&
+      record.projectId.startsWith(`${prefix}-`) && /^\d+$/.test(record.projectId.slice(prefix.length + 1)));
+    const referencedIds = new Set<string>();
+    const ambiguousBase = /-\d+$/.test(runId) && records.some((record) => !record.qualificationRunId && record.projectId === prefix);
+    if (legacyRetries.length > 0 || ambiguousBase) {
+      const evidenceRes = await pool.query(
+        `SELECT evidence_json FROM public.builder_qualification_results
+         WHERE run_id = $1 AND project_number = $2`,
+        [runId, projectNumber]
+      );
+      if (evidenceRes.rows[0]) {
+        const evidence = JSON.parse(rowText(evidenceRes.rows[0].evidence_json)) as QualificationEvidence & {
+          priorCampaignAttempts?: Array<{ projectId?: string }>;
+        };
+        referencedIds.add(evidence.projectId);
+        for (const attempt of evidence.priorCampaignAttempts || []) {
+          if (typeof attempt.projectId === "string") referencedIds.add(attempt.projectId);
+        }
+      }
+    }
+    return records
+      .filter((record) => record.qualificationRunId
+        ? record.qualificationRunId === runId && (record.projectId === prefix ||
+          (record.projectId.startsWith(`${prefix}-`) && /^\d+$/.test(record.projectId.slice(prefix.length + 1))))
+        : (record.projectId === prefix && (!ambiguousBase || referencedIds.has(prefix))) || referencedIds.has(record.projectId))
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  },
+
+  async reserveQualificationProjectId(record: LocalProjectRecord): Promise<boolean> {
+    const match = /^qualification-p(\d+)-/.exec(record.projectId);
+    const prefix = qualificationProjectId(record.qualificationRunId || "", Number(match?.[1]));
+    if (record.projectId !== prefix && !(record.projectId.startsWith(`${prefix}-`) &&
+      /^\d+$/.test(record.projectId.slice(prefix.length + 1)))) {
+      throw new Error("Invalid qualification project identity");
+    }
+    const pool = await requireSchema();
+    const res = await pool.query(
+      `INSERT INTO public.builder_projects (project_id, tenant_id, record_json, updated_at)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (project_id) DO NOTHING`,
+      [record.projectId, record.tenantId, JSON.stringify(record), record.lastModifiedAt || record.createdAt]
+    );
+    return res.rowCount === 1;
+  },
+
   async removeQualificationRun(runId: string): Promise<number> {
     const pool = await requireSchema();
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), 0)", [runId]);
       await client.query("DELETE FROM public.builder_qualification_benchmarks WHERE run_id = $1", [runId]);
+      await client.query("DELETE FROM public.builder_qualification_history WHERE run_id = $1", [runId]);
       const res = await client.query("DELETE FROM public.builder_qualification_results WHERE run_id = $1", [runId]);
       await client.query("COMMIT");
       return res.rowCount ?? 0;

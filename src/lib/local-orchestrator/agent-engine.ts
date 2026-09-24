@@ -19,6 +19,7 @@ import {
   generationValidationIssues,
   isRuntimeOwnedGeneratedPath,
   normalizeGeneratedPath,
+  seedRecordIntent,
   validationRepairContext,
   type GeneratedSourceFile,
 } from "./generation-validator";
@@ -1127,7 +1128,10 @@ export const localAgentEngine = {
           ? undefined
           : existingEnvironmentExample;
         const initialGeneration = !isFollowUp;
-        const explicitlyRequestedSeedData = /\b(?:seed(?:ed|ing)?|demo\s+data|sample\s+data|fixture\s+data|mock\s+data)\b/i.test(prompt);
+        const explicitlyRequestedSeedData = [record.description || "", ...priorMessages
+          .filter((message) => message.author === "user")
+          .map((message) => message.message), prompt]
+          .reduce((permitted, request) => seedRecordIntent(request) ?? permitted, false);
         const explicitlyRequestedAuthentication = promptRequestsAuthentication(prompt);
         let effectiveExistingPaths = existingPaths.filter((entry) => !finalDeletions.has(entry));
         let validationIssues = generationValidationIssues(files, effectiveExistingPaths, {
@@ -1135,7 +1139,7 @@ export const localAgentEngine = {
           requireEntrypointFirst: initialGeneration,
           existingEnvironmentExample: effectiveExistingEnvironmentExample,
           existingSources: existingSources.filter((file) => !finalDeletions.has(file.path)),
-          allowSeedData: !initialGeneration || explicitlyRequestedSeedData,
+          allowSeedData: explicitlyRequestedSeedData,
           allowAuthentication: !initialGeneration || explicitlyRequestedAuthentication,
         });
 
@@ -1200,7 +1204,7 @@ export const localAgentEngine = {
               requireEntrypointFirst: initialGeneration,
               existingEnvironmentExample: effectiveExistingEnvironmentExample,
               existingSources: existingSources.filter((file) => !finalDeletions.has(file.path)),
-              allowSeedData: !initialGeneration || explicitlyRequestedSeedData,
+              allowSeedData: explicitlyRequestedSeedData,
               allowAuthentication: !initialGeneration || explicitlyRequestedAuthentication,
             });
             if (validationIssues.length === 0) {
@@ -1219,7 +1223,7 @@ export const localAgentEngine = {
           effectiveExistingPaths,
           effectiveExistingEnvironmentExample,
           existingSources.filter((file) => !finalDeletions.has(file.path)),
-          !initialGeneration || explicitlyRequestedSeedData,
+          explicitlyRequestedSeedData,
           !initialGeneration || explicitlyRequestedAuthentication
         );
 
@@ -1575,7 +1579,7 @@ export const localAgentEngine = {
                 availableWorkspaceSources(projectId).filter(
                   (file) => !repairDeletions.has(file.path)
                 ),
-                !initialGeneration || explicitlyRequestedSeedData,
+                explicitlyRequestedSeedData,
                 !initialGeneration || explicitlyRequestedAuthentication
               );
 

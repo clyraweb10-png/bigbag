@@ -6,6 +6,7 @@ export interface LocalProjectRecord {
   tenantId: string;
   label?: string;
   description: string;
+  qualificationRunId?: string;
   /** True when generated-app data must be authorized by a real end-user session. */
   requiresEndUserAuth?: boolean;
   createdAt: string;
