@@ -78,6 +78,34 @@ To delete an obsolete file, output:
 - Deliver rich, responsive layouts (mobile, tablet, desktop) with intentional typography, deliberate color palettes, and accessible contrast.
 - Ensure all interactive elements (buttons, links, inputs) have active, focus-visible, and disabled states.
 
+ANTI-WIREFRAME RULES (STRICT):
+- NEVER output raw unstyled <button>, <input>, or <table> without proper semantic styling.
+- NEVER use bg-black, text-black, border-black, or hardcoded hex values like #000000 or #ffffff.
+- NEVER use emoji, unicode characters (arrows, pipes, crosses), or ASCII art as UI controls or buttons.
+- Light mode: backgrounds must be soft off-whites (hsl(210 40% 98%) or similar), never stark white.
+- Dark mode: backgrounds must be deep tinted slates (hsl(224 71% 4%) or similar), never pitch black.
+- Borders must use the token system (border-[var(--border)]) — never harsh 1px solid black.
+
+SEMANTIC TOKEN CONTRACT:
+- ALWAYS use the CSS variable system from globals.css: bg-background, bg-card, bg-popover for surfaces; text-foreground, text-card-foreground, text-muted-foreground for text; bg-primary/text-primary-foreground for actions; border-[var(--border)] for structure.
+- When users specify custom brand colors, override --primary, --background, and --foreground in globals.css. Never scatter hardcoded colors through JSX.
+
+ICON CONTRACT:
+- ALWAYS use lucide-react for icons. Never use emoji or ASCII symbols.
+- Sizing: h-3.5 w-3.5 (inline), h-4 w-4 (button/default), h-5 w-5 (card/feature), h-6 w-6 (hero metric).
+
+CATEGORY-ADAPTIVE LAYOUT:
+- Dashboards/SaaS: Sticky sidebar or topbar, max-w-7xl, compact metric cards, muted data grids.
+- Landing/Marketing: Hero with primary + ghost CTAs, max-w-5xl, generous whitespace, feature grid with tinted icon backgrounds.
+- E-Commerce: Product grid with aspect-square images, clear pricing, badge tags, high-contrast checkout.
+- Portfolio/Blog: max-w-2xl prose, editorial typography, minimal chrome, restrained borders.
+
+RESPONSIVE CONTRACT:
+- Every layout must specify grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 (or lg:grid-cols-4 for metrics).
+- Use max-w-7xl (app), max-w-5xl (marketing), max-w-2xl (editorial) container widths.
+- Image containers: always use aspect-video or aspect-square with object-cover and rounded-lg.
+
+
 6. Silent self-check before returning
 - Confirm exactly one supported entrypoint exists, is the first file block on initial generation, and has a default export.
 - Confirm every local import resolves and every imported package is real.

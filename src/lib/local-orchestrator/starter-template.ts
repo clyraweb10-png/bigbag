@@ -1340,32 +1340,173 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
     "src/app/globals.css",
     `@import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════
+   BIGBAG SEMANTIC TOKEN SYSTEM — HSL
+   Full surface hierarchy + semantic roles for generated apps.
+   The AI resolves custom palette choices into these variables.
+   ═══════════════════════════════════════════════════════════════════ */
+
 :root {
-  --background: 248 250 252;
-  --foreground: 15 23 42;
-  --primary: 79 70 229;
-  --primary-foreground: 255 255 255;
-  --muted: 241 245 249;
-  --muted-foreground: 100 116 139;
-  --border: 226 232 240;
-  --ring: 79 70 229;
+  /* Radius scale */
+  --radius: 0.75rem;
+
+  /* ── 3-tier surface depth ───────────────────────────────────────── */
+  /* Base canvas: soft off-white, never stark #fff */
+  --background: hsl(210 40% 98%);
+  --foreground: hsl(222 47% 11%);
+
+  /* Elevated surface: white cards on the canvas */
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(222 47% 11%);
+
+  /* Floating overlay: dropdowns, popovers, dialogs */
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(222 47% 11%);
+
+  /* ── Semantic roles ─────────────────────────────────────────────── */
+  --primary: hsl(239 84% 67%);
+  --primary-foreground: hsl(0 0% 100%);
+
+  --secondary: hsl(214 32% 94%);
+  --secondary-foreground: hsl(222 47% 20%);
+
+  --muted: hsl(214 32% 94%);
+  --muted-foreground: hsl(215 16% 47%);
+
+  --accent: hsl(239 84% 95%);
+  --accent-foreground: hsl(239 84% 30%);
+
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+
+  /* ── Structure ──────────────────────────────────────────────────── */
+  /* Muted border: never harsh 1px solid black wireframe */
+  --border: hsl(214 32% 91%);
+  --input: hsl(214 32% 91%);
+  --ring: hsl(239 84% 67%);
 }
 
-body {
-  color: rgb(var(--foreground));
-  background: rgb(var(--background));
-  min-height: 100vh;
+.dark {
+  /* Base canvas: deep tinted slate, never pure #000000 */
+  --background: hsl(224 71% 4%);
+  --foreground: hsl(213 31% 91%);
+
+  /* Elevated surface in dark mode */
+  --card: hsl(224 45% 8%);
+  --card-foreground: hsl(213 31% 91%);
+
+  /* Floating overlay in dark mode */
+  --popover: hsl(224 45% 10%);
+  --popover-foreground: hsl(213 31% 91%);
+
+  --primary: hsl(239 84% 67%);
+  --primary-foreground: hsl(0 0% 100%);
+
+  --secondary: hsl(222 47% 14%);
+  --secondary-foreground: hsl(213 31% 91%);
+
+  --muted: hsl(223 47% 11%);
+  --muted-foreground: hsl(215 16% 57%);
+
+  --accent: hsl(239 84% 20%);
+  --accent-foreground: hsl(239 84% 85%);
+
+  --destructive: hsl(0 72% 61%);
+  --destructive-foreground: hsl(0 0% 100%);
+
+  --border: hsl(216 34% 17%);
+  --input: hsl(216 34% 17%);
+  --ring: hsl(239 84% 67%);
 }
 
+/* ── Tailwind 4 theme bridge ────────────────────────────────────── */
 @theme inline {
-  --color-background: rgb(var(--background));
-  --color-foreground: rgb(var(--foreground));
-  --color-primary: rgb(var(--primary));
-  --color-primary-foreground: rgb(var(--primary-foreground));
-  --color-muted: rgb(var(--muted));
-  --color-muted-foreground: rgb(var(--muted-foreground));
-  --color-border: rgb(var(--border));
-  --color-ring: rgb(var(--ring));
+  /* Radius */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Color tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* ── Base styles ────────────────────────────────────────────────── */
+@layer base {
+  * {
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    min-height: 100vh;
+    font-family: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.6;
+  }
+}
+
+/* ── Elevation & shadow utilities ───────────────────────────────── */
+.shadow-subtle {
+  box-shadow:
+    0 1px 2px 0 rgba(0, 0, 0, 0.04),
+    0 1px 3px 0 rgba(0, 0, 0, 0.06);
+}
+
+.shadow-card {
+  box-shadow:
+    0 1px 3px 0 rgba(0, 0, 0, 0.06),
+    0 4px 8px -2px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.shadow-float {
+  box-shadow:
+    0 4px 6px -2px rgba(0, 0, 0, 0.05),
+    0 12px 24px -4px rgba(0, 0, 0, 0.10),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.dark .shadow-subtle {
+  box-shadow:
+    0 1px 2px 0 rgba(0, 0, 0, 0.30),
+    0 1px 3px 0 rgba(0, 0, 0, 0.40);
+}
+
+.dark .shadow-card {
+  box-shadow:
+    0 1px 3px 0 rgba(0, 0, 0, 0.35),
+    0 4px 8px -2px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.dark .shadow-float {
+  box-shadow:
+    0 4px 6px -2px rgba(0, 0, 0, 0.45),
+    0 12px 24px -4px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 `
   );
@@ -1403,7 +1544,7 @@ export function cn(...inputs: ClassValue[]) {
 import { cn } from "@/lib/utils";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "default" | "outline" | "ghost" | "secondary";
+  variant?: "default" | "outline" | "ghost" | "secondary" | "destructive" | "link";
   size?: "default" | "sm" | "lg" | "icon";
 }
 
@@ -1416,15 +1557,17 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
-        variant === "default" && "bg-indigo-600 text-white hover:bg-indigo-500",
-        variant === "outline" && "border border-slate-300 bg-white hover:bg-slate-50 text-slate-900",
-        variant === "ghost" && "hover:bg-slate-100 text-slate-900",
-        variant === "secondary" && "bg-slate-100 text-slate-900 hover:bg-slate-200",
+        "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 whitespace-nowrap",
+        variant === "default" && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-subtle",
+        variant === "secondary" && "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--muted)]",
+        variant === "outline" && "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
+        variant === "ghost" && "bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
+        variant === "destructive" && "bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90",
+        variant === "link" && "bg-transparent text-[var(--primary)] underline-offset-4 hover:underline p-0 h-auto",
         size === "default" && "h-10 px-4 py-2",
-        size === "sm" && "h-9 px-3",
-        size === "lg" && "h-11 px-8",
-        size === "icon" && "h-10 w-10",
+        size === "sm" && "h-8 px-3 text-xs",
+        size === "lg" && "h-11 px-8 text-base",
+        size === "icon" && "h-10 w-10 p-0",
         className
       )}
       {...props}
@@ -1441,7 +1584,12 @@ export function Button({
 import { cn } from "@/lib/utils";
 
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-xl border border-slate-200 bg-white text-slate-950 shadow-sm", className)} {...props} />;
+  return (
+    <div
+      className={cn("rounded-xl border border-[var(--border)] bg-[var(--card)] text-[var(--card-foreground)] shadow-card", className)}
+      {...props}
+    />
+  );
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -1449,11 +1597,11 @@ export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDiv
 }
 
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h3 className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />;
+  return <h3 className={cn("text-base font-semibold leading-none tracking-tight", className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn("text-sm text-slate-500", className)} {...props} />;
+  return <p className={cn("text-sm text-[var(--muted-foreground)] leading-relaxed", className)} {...props} />;
 }
 
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
