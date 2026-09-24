@@ -570,10 +570,10 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
       */}
       <DialogContent
         showCloseButton={false}
-        className="bg-[#18181b] border border-white/10 max-w-4xl w-full h-[620px] max-h-[88vh] overflow-hidden p-0 flex rounded-2xl shadow-2xl"
+        className="bg-[#18181b] border border-white/10 max-w-5xl w-full h-[700px] max-h-[90vh] overflow-hidden p-0 flex rounded-2xl shadow-2xl"
       >
         {/* Left panel: Search & Categories */}
-        <div className="w-56 shrink-0 flex flex-col border-r border-white/8 bg-[#141416]/60 overflow-hidden">
+        <div className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#141416]/60 overflow-hidden">
           {/* Search box */}
           <div className="px-3 pt-3.5 pb-2 shrink-0">
             <div className="relative">
@@ -725,7 +725,7 @@ function CategoryItem({
   );
 }
 
-/* ─────────────────── ConnectorCard (matches 3rd Image) ─────────────────── */
+/* ─────────────────── ConnectorCard (matches reference Image 2) ─────────────────── */
 
 function ConnectorCard({
   c,
@@ -739,20 +739,22 @@ function ConnectorCard({
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-start p-3.5 rounded-xl bg-[#222225] border border-white/5 hover:border-white/15 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer relative"
+      className="flex items-center gap-3.5 px-4 py-3.5 rounded-xl bg-[#222225] border border-white/5 hover:border-white/15 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer relative"
     >
       {connected && (
-        <span className="absolute top-2.5 right-2.5 text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-full">
+        <span className="absolute top-2 right-2 text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-full">
           Enabled
         </span>
       )}
-      <ConnectorBrandIcon id={c.id} size="lg" className="mb-2.5" />
-      <p className="text-[13px] font-semibold text-white group-hover:text-primary transition-colors truncate w-full leading-tight">
-        {c.name}
-      </p>
-      <p className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2 leading-snug">
-        {c.description}
-      </p>
+      <ConnectorBrandIcon id={c.id} size="lg" className="shrink-0" />
+      <div className="min-w-0 flex-1 pr-6">
+        <p className="text-[13px] font-semibold text-white group-hover:text-primary transition-colors leading-tight">
+          {c.name}
+        </p>
+        <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug line-clamp-2">
+          {c.description}
+        </p>
+      </div>
     </button>
   );
 }

@@ -774,54 +774,6 @@ export function DashboardContent() {
         {/* Projects */}
         {!chatOpen && !projectsLoading && hasProjects && (
           <>
-            {/* ── Recent Projects strip (last 5) ── */}
-            {projects.length > 0 && !search.trim() && (() => {
-              const recentItems = [...projects]
-                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                .filter((p) => !dismissedRecent.has(p.projectId))
-                .slice(0, 5);
-              if (recentItems.length === 0) return null;
-              return (
-                <div className="mb-8">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-semibold text-foreground">Recent Projects</h2>
-                    <span className="text-[10px] text-muted-foreground">Last 5</span>
-                  </div>
-                  <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x scroll-smooth">
-                    {recentItems.map((p) => (
-                      <div key={p.projectId} className="snap-start shrink-0 w-44 group relative">
-                        <Link href={`/project/${p.projectId}`} className="block h-full">
-                          <div className="bg-card border border-border rounded-xl overflow-hidden hover:border-primary/50 hover:shadow-md transition-all duration-200 h-full flex flex-col">
-                            <div className="h-24 relative overflow-hidden bg-muted/40">
-                              <ProjectThumbnail project={p} />
-                              <div className="absolute inset-0 bg-black/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
-                            </div>
-                            <div className="p-2.5">
-                              <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
-                                {p.label || p.projectId}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">
-                                {new Date(p.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                              </p>
-                            </div>
-                          </div>
-                        </Link>
-                        {/* Dismiss button — outside the Link to avoid nested-anchor */}
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); dismissRecent(p.projectId); }}
-                          title="Remove from recent"
-                          className="absolute top-1.5 right-1.5 z-10 h-5 w-5 flex items-center justify-center rounded-full bg-background/80 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all backdrop-blur-sm border border-border/60 shadow-sm"
-                          aria-label={`Remove ${p.label || p.projectId} from recent`}
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
 
 
             {/* ── Tab switcher: Projects | Starter ── */}
