@@ -43,6 +43,7 @@ import { DashboardSidebar } from "@/components/DashboardSidebar";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
+import { getCachedScreenshot } from "@/lib/project-screenshot";
 
 type ViewMode = "cards" | "table";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
@@ -50,6 +51,7 @@ type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
 const PAGE_SIZE = 20;
 const VIEW_MODE_KEY = "bigbag:dashboard-view";
 const LANDING_SESSION_KEY_PREFIX = "bigbag:landing-conversation:v2";
+const DISMISSED_RECENT_KEY = "bigbag:dismissed-recent";
 
 
 // --- Deterministic gradient + initials for the placeholder thumbnail ---
@@ -76,21 +78,32 @@ function ProjectThumbnail({
   const [c1, c2] = gradientFor(projectId);
   const isRow = variant === "row";
 
-  // Try loading previewImageUrl as an image (upstream Totalum screenshot)
+  // Prefer the locally-cached Firecrawl screenshot (most recent run) over the
+  // Totalum-supplied previewImageUrl (retaken by account-backend, may lag).
+  // Initialised as null to be SSR-safe; populated on first client render.
+  const [cachedScreenshot, setCachedScreenshot] = useState<string | null>(null);
+  useEffect(() => {
+    setCachedScreenshot(getCachedScreenshot(projectId));
+  }, [projectId]);
+
+  // The effective image to display — cached screenshot wins, then Totalum's.
+  const effectiveImageUrl = cachedScreenshot ?? previewImageUrl ?? null;
+
+  // Try loading effectiveImageUrl as an image
   useEffect(() => {
     setImgState("idle");
-    if (!previewImageUrl) return;
+    if (!effectiveImageUrl) return;
     let cancelled = false;
     const img = new Image();
-    img.src = previewImageUrl;
+    img.src = effectiveImageUrl;
     img
       .decode()
       .then(() => { if (!cancelled) setImgState("ready"); })
       .catch(() => { if (!cancelled) setImgState("failed"); });
     return () => { cancelled = true; };
-  }, [previewImageUrl]);
+  }, [effectiveImageUrl]);
 
-  const hasImage = Boolean(previewImageUrl && imgState !== "failed");
+  const hasImage = Boolean(effectiveImageUrl && imgState !== "failed");
 
   const placeholder = (
     <div
@@ -113,7 +126,7 @@ function ProjectThumbnail({
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={previewImageUrl}
+            src={effectiveImageUrl!}
             alt={name}
             loading="lazy"
             decoding="async"
@@ -127,6 +140,7 @@ function ProjectThumbnail({
     </div>
   );
 }
+
 
 function normalizeId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 35);
@@ -250,6 +264,12 @@ export function DashboardContent() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const [dismissedRecent, setDismissedRecent] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(DISMISSED_RECENT_KEY);
+      return saved ? new Set<string>(JSON.parse(saved) as string[]) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
 
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -508,6 +528,15 @@ export function DashboardContent() {
     setDeleting(false);
   };
 
+  const dismissRecent = (projectId: string) => {
+    setDismissedRecent((prev) => {
+      const next = new Set(prev);
+      next.add(projectId);
+      try { localStorage.setItem(DISMISSED_RECENT_KEY, JSON.stringify([...next])); } catch { /* storage unavailable */ }
+      return next;
+    });
+  };
+
   const hasProjects = projects.length > 0;
 
   return (
@@ -745,41 +774,54 @@ export function DashboardContent() {
         {!chatOpen && !projectsLoading && hasProjects && (
           <>
             {/* ── Recent Projects strip (last 5) ── */}
-            {projects.length > 0 && !search.trim() && (
-              <div className="mb-8">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-foreground">Recent Projects</h2>
-                  <span className="text-[10px] text-muted-foreground">Last 5</span>
-                </div>
-                <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x scroll-smooth">
-                  {[...projects]
-                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                    .slice(0, 5)
-                    .map((p) => (
-                      <Link
-                        key={p.projectId}
-                        href={`/project/${p.projectId}`}
-                        className="snap-start shrink-0 w-44 group"
-                      >
-                        <div className="bg-card border border-border rounded-xl overflow-hidden hover:border-primary/50 hover:shadow-md transition-all duration-200 h-full flex flex-col">
-                          <div className="h-24 relative overflow-hidden bg-muted/40">
-                            <ProjectThumbnail project={p} />
-                            <div className="absolute inset-0 bg-black/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
+            {projects.length > 0 && !search.trim() && (() => {
+              const recentItems = [...projects]
+                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                .filter((p) => !dismissedRecent.has(p.projectId))
+                .slice(0, 5);
+              if (recentItems.length === 0) return null;
+              return (
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-semibold text-foreground">Recent Projects</h2>
+                    <span className="text-[10px] text-muted-foreground">Last 5</span>
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x scroll-smooth">
+                    {recentItems.map((p) => (
+                      <div key={p.projectId} className="snap-start shrink-0 w-44 group relative">
+                        <Link href={`/project/${p.projectId}`} className="block h-full">
+                          <div className="bg-card border border-border rounded-xl overflow-hidden hover:border-primary/50 hover:shadow-md transition-all duration-200 h-full flex flex-col">
+                            <div className="h-24 relative overflow-hidden bg-muted/40">
+                              <ProjectThumbnail project={p} />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-primary/5 transition-colors pointer-events-none" />
+                            </div>
+                            <div className="p-2.5">
+                              <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                                {p.label || p.projectId}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {new Date(p.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                              </p>
+                            </div>
                           </div>
-                          <div className="p-2.5">
-                            <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
-                              {p.label || p.projectId}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground mt-0.5">
-                              {new Date(p.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                            </p>
-                          </div>
-                        </div>
-                      </Link>
+                        </Link>
+                        {/* Dismiss button — outside the Link to avoid nested-anchor */}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); dismissRecent(p.projectId); }}
+                          title="Remove from recent"
+                          className="absolute top-1.5 right-1.5 z-10 h-5 w-5 flex items-center justify-center rounded-full bg-background/80 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all backdrop-blur-sm border border-border/60 shadow-sm"
+                          aria-label={`Remove ${p.label || p.projectId} from recent`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
                     ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
+
 
             {/* Toolbar: title, search, sort, view toggle, import, connect, new */}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">

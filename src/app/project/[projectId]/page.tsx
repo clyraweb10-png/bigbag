@@ -51,6 +51,7 @@ import { t as translate } from "@/i18n";
 import { approvedBuildInstruction, classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
 import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
+import { captureProjectScreenshot } from "@/lib/project-screenshot";
 
 // Pick the correct development preview URL following the Totalum API docs:
 // use `developmentUrlFieldToUse` to decide between the live server URL and the
@@ -659,7 +660,19 @@ export default function WorkspacePage() {
       if (terminal) {
         setRunStartedAt(null); setExpectedMinutes(null);
         const proj = await fetchProject(); await fetchConversation();
-        if (proj && mountedRef.current) setPreviewKey((k) => k + 1); return;
+        if (proj && mountedRef.current) {
+          setPreviewKey((k) => k + 1);
+          // Fire-and-forget: capture a fresh screenshot via Firecrawl and cache it in
+          // localStorage so the dashboard thumbnail stays up to date. We delay a few
+          // seconds to let the preview server finish serving the newly built app.
+          const liveUrl = getPreviewUrlFromProject(proj);
+          if (liveUrl && !liveUrl.startsWith("/api/preview/")) {
+            window.setTimeout(() => {
+              void captureProjectScreenshot(projectId, liveUrl);
+            }, 5_000);
+          }
+        }
+        return;
       }
     }
     pollingRef.current = setTimeout(pollAgentOnce, 10000);
@@ -1664,24 +1677,21 @@ export default function WorkspacePage() {
           </div>
           {/* RIGHT: preview width */}
           <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
-            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
+            <div className={`flex items-center gap-1 shrink-0 p-1 rounded-full border ${btnBorder} bg-card shadow-xs`}>
               {TABS.map((tab, idx) => {
                 const isActive = activeTab === tab.id;
                 return (
-                  <div key={tab.id} className="flex items-center">
-                    {idx === 2 && activeTab !== "code" && (
-                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
-                    )}
-                    {idx === 1 && activeTab === "code" && (
-                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
+                  <div key={tab.id} className="flex items-center gap-1">
+                    {idx > 0 && (
+                      <div className="w-px h-3.5 bg-border shrink-0" aria-hidden="true" />
                     )}
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={
                         isActive
-                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
-                          : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-foreground transition-all shrink-0 cursor-pointer"
+                          : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
                       }
                       title={tab.label}
                     >

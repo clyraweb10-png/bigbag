@@ -4074,7 +4074,7 @@ export const en = {
       fileCount: "{count} files",
       files: "Files",
       breadcrumb: "File path",
-      askAi: "Ask AI to edit",
+      askAi: "Edit with AI",
       askAiPrompt: "In {path}, ",
       download: "Download this file",
       githubConnect: "Sync with GitHub",
