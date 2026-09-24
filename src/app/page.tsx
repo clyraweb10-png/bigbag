@@ -688,7 +688,7 @@ export function DashboardContent() {
                     value={firstPrompt}
                     onChange={(e) => setFirstPrompt(e.target.value)}
                     placeholder={chatOpen ? "Ask a question, or describe what to build…" : "Ask a question, or describe the app you want to build…"}
-                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[104px] max-h-44" : landingMessages.length ? "min-h-[82px]" : "min-h-[112px] sm:min-h-[132px]"}`}
+                    className={`w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground ${chatOpen ? "min-h-[83px] max-h-36" : landingMessages.length ? "min-h-[66px]" : "min-h-[90px] sm:min-h-[106px]"}`}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submitLandingMessage(); } }}
                     onPaste={handleHeroPaste}
                   />

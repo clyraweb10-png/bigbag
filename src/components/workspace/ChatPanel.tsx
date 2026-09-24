@@ -663,7 +663,7 @@ export function ChatPanel({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_GROUPS);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, isBuilding]);
-  useEffect(() => { if (textareaRef.current) { textareaRef.current.style.height = "auto"; textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + "px"; } }, [prompt]);
+  useEffect(() => { if (textareaRef.current) { textareaRef.current.style.height = "auto"; textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + "px"; } }, [prompt]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   const handleSend = () => { if (!prompt.trim() && attachedFiles.length === 0) return; onSend(attachedFiles.length > 0 ? attachedFiles : undefined, runOptions); setAttachedFiles([]); };
@@ -861,7 +861,7 @@ export function ChatPanel({
         <div className="rounded-2xl border border-border overflow-hidden transition-all focus-within:ring-2 focus-within:ring-ring focus-within:border-primary/50 shadow-xs bg-card dark:bg-[#444444]">
           <textarea data-chat-input ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
             placeholder={isBuilding ? "Agent is working..." : "Ask anything..."}
-            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-muted-foreground min-h-[48px] max-h-[200px] px-4 pt-3.5 pb-1 leading-relaxed text-foreground"
+            className="w-full bg-transparent border-0 resize-none text-base outline-none placeholder:text-muted-foreground min-h-[48px] max-h-[160px] px-4 pt-3.5 pb-1 leading-relaxed text-foreground"
             disabled={isBuilding} rows={1} />
           <div className="flex items-center justify-between px-2 pb-2">
             {/*

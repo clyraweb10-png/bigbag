@@ -87,6 +87,17 @@ function saveCreds(id: string, data: Record<string, string>) {
   }
 }
 
+function loadCreds(id: string): Record<string, string> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LS_KEY(id));
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function maskValue(val: string): string {
   if (val.length <= 8) return "••••••••";
   return val.slice(0, 4) + "••••••••" + val.slice(-4);
@@ -570,10 +581,91 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
       */}
       <DialogContent
         showCloseButton={false}
-        className="bg-[#18181b] border border-white/10 max-w-5xl w-full h-[700px] max-h-[90vh] overflow-hidden p-0 flex rounded-2xl shadow-2xl"
+        className="bg-[#18181b] border border-white/10 w-[95vw] max-w-5xl sm:max-w-5xl md:max-w-5xl lg:max-w-5xl h-[700px] max-h-[90vh] overflow-hidden p-0 gap-0 flex flex-col md:flex-row rounded-2xl shadow-2xl"
       >
+        {/* Mobile top filter bar: visible on mobile (< md), hidden on md+ */}
+        {!selected && (
+          <div className="md:hidden border-b border-white/8 bg-[#141416]/80 p-3 shrink-0 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Plug className="w-4 h-4 text-zinc-400" />
+                <DialogTitle className="text-sm font-semibold text-white">
+                  Connectors
+                </DialogTitle>
+                <span className="text-[11px] text-zinc-500 font-medium">({filtered.length})</span>
+              </div>
+              <button
+                onClick={handleClose}
+                className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  if (activeCategory !== "All") setActiveCategory("All");
+                }}
+                placeholder="Search connectors..."
+                className="w-full h-8 pl-8 pr-2.5 text-xs rounded-lg border border-white/10 bg-[#222225] text-white placeholder:text-zinc-500 outline-none focus:border-white/20 transition-all"
+              />
+            </div>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+              <button
+                onClick={() => {
+                  setActiveCategory("All");
+                  setSearch("");
+                }}
+                className={`px-2.5 py-1 rounded-full whitespace-nowrap text-xs transition-colors shrink-0 ${
+                  activeCategory === "All" && !search.trim()
+                    ? "bg-white text-zinc-950 font-semibold"
+                    : "bg-white/5 text-zinc-400 hover:text-white"
+                }`}
+              >
+                All ({CONNECTORS.length})
+              </button>
+              <button
+                onClick={() => {
+                  setActiveCategory("Enabled");
+                  setSearch("");
+                }}
+                className={`px-2.5 py-1 rounded-full whitespace-nowrap text-xs transition-colors shrink-0 ${
+                  activeCategory === "Enabled"
+                    ? "bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30"
+                    : "bg-white/5 text-zinc-400 hover:text-white"
+                }`}
+              >
+                Enabled ({enabledCount})
+              </button>
+              {CATEGORIES_NAV.map((cat) => {
+                const count = CONNECTORS.filter((c) => c.categories.includes(cat)).length;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => {
+                      setActiveCategory(cat);
+                      setSearch("");
+                    }}
+                    className={`px-2.5 py-1 rounded-full whitespace-nowrap text-xs transition-colors shrink-0 ${
+                      activeCategory === cat
+                        ? "bg-white text-zinc-950 font-semibold"
+                        : "bg-white/5 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    {cat} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Left panel: Search & Categories */}
-        <div className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#141416]/60 overflow-hidden">
+        <div className="hidden md:flex w-64 shrink-0 flex-col border-r border-white/8 bg-[#141416]/60 overflow-hidden">
           {/* Search box */}
           <div className="px-3 pt-3.5 pb-2 shrink-0">
             <div className="relative">
@@ -646,13 +738,14 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
             />
           ) : (
             <>
-              {/* Header with single close button */}
-              <div className="flex items-center justify-between px-6 py-3.5 border-b border-white/8 shrink-0">
+              {/* Desktop Header with single close button (hidden on mobile) */}
+              <div className="hidden md:flex items-center justify-between px-6 py-3.5 border-b border-white/8 shrink-0">
                 <div className="flex items-center gap-2.5">
                   <Plug className="w-4 h-4 text-zinc-400" />
                   <DialogTitle className="text-sm font-semibold text-white">
                     Connectors
                   </DialogTitle>
+                  <span className="text-[11px] text-zinc-500 font-medium">({filtered.length})</span>
                 </div>
                 <button
                   onClick={handleClose}
@@ -675,7 +768,7 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {filtered.map((c) => (
                       <ConnectorCard
                         key={c.id}
@@ -738,23 +831,25 @@ function ConnectorCard({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="flex items-center gap-3.5 px-4 py-3.5 rounded-xl bg-[#222225] border border-white/5 hover:border-white/15 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer relative"
+      className="flex items-start sm:items-center gap-3.5 p-3.5 sm:px-4 sm:py-3.5 rounded-xl bg-[#222225] border border-white/5 hover:border-white/20 hover:bg-[#28282c] transition-all text-left group w-full cursor-pointer relative shadow-sm"
     >
-      {connected && (
-        <span className="absolute top-2 right-2 text-[10px] font-semibold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded-full">
-          Enabled
-        </span>
-      )}
-      <ConnectorBrandIcon id={c.id} size="lg" className="shrink-0" />
-      <div className="min-w-0 flex-1 pr-6">
-        <p className="text-[13px] font-semibold text-white group-hover:text-primary transition-colors leading-tight">
+      <ConnectorBrandIcon id={c.id} size="lg" className="shrink-0 mt-0.5 sm:mt-0" />
+      <div className="min-w-0 flex-1 pr-14 sm:pr-16">
+        <p className="text-[13px] font-semibold text-white group-hover:text-primary transition-colors leading-tight truncate">
           {c.name}
         </p>
-        <p className="text-[11px] text-zinc-400 mt-0.5 leading-snug line-clamp-2">
+        <p className="text-[11px] text-zinc-400 mt-1 leading-snug line-clamp-2">
           {c.description}
         </p>
       </div>
+      {connected && (
+        <span className="absolute top-3 right-3 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          Enabled
+        </span>
+      )}
     </button>
   );
 }
@@ -778,7 +873,7 @@ function CredentialsPanel({
   onConnected,
   onDisconnected,
 }: CredPanelProps) {
-  const [form, setForm] = useState<Record<string, string>>({});
+  const [form, setForm] = useState<Record<string, string>>(() => loadCreds(connector.id) || {});
   const [showFields, setShowFields] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -805,6 +900,7 @@ function CredentialsPanel({
 
   const handleDisconnect = () => {
     removeCreds(connector.id);
+    setForm({});
     toast.success(`${connector.name} disconnected`);
     onDisconnected(connector.id);
   };
@@ -822,11 +918,12 @@ function CredentialsPanel({
         </button>
         <ConnectorBrandIcon id={connector.id} size="sm" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">{connector.name}</p>
+          <DialogTitle className="text-sm font-semibold text-white">{connector.name}</DialogTitle>
           <p className="text-xs text-zinc-400 truncate">{connector.description}</p>
         </div>
         {connected && (
-          <span className="text-xs font-medium text-emerald-400 shrink-0 mr-2">
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full shrink-0 mr-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
             Enabled
           </span>
         )}
