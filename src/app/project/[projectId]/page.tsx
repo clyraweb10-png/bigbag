@@ -708,24 +708,27 @@ export default function WorkspacePage() {
     if (res.ok && res.data) {
       if (res.data.status === "success") {
         setDeploying(false);
+        const wasPublishing = operation.isActive("publish");
         operation.end("publish");
-        toast.success("Published successfully!");
-        const proj = await fetchProject();
-        /**
-         * ⭐ THE ONE OPERATION THAT EARNS A DIALOG. The whole point of publishing is the
-         * ADDRESS — to click, to copy, to send to somebody — and a toast that disappears
-         * in four seconds is the wrong place for it.
-         */
-        setPublishedHost(getPublishedHost(proj, projectId));
-        // Surface the deploy result in the chat and pull the latest conversation.
-        const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.local`;
-        setMessages((prev) => [...prev, {
-          author: "agent",
-          message: `${"🚀 Your app is now live at"} https://${liveUrl}`,
-          messageType: "finished",
-          createdAt: new Date().toISOString(),
-        }]);
-        fetchConversation();
+        if (wasPublishing) {
+          toast.success("Published successfully!");
+          const proj = await fetchProject();
+          /**
+           * ⭐ THE ONE OPERATION THAT EARNS A DIALOG. The whole point of publishing is the
+           * ADDRESS — to click, to copy, to send to somebody — and a toast that disappears
+           * in four seconds is the wrong place for it.
+           */
+          setPublishedHost(getPublishedHost(proj, projectId));
+          // Surface the deploy result in the chat and pull the latest conversation.
+          const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.local`;
+          setMessages((prev) => [...prev, {
+            author: "agent",
+            message: `${"🚀 Your app is now live at"} https://${liveUrl}`,
+            messageType: "finished",
+            createdAt: new Date().toISOString(),
+          }]);
+          fetchConversation();
+        }
         return;
       }
       if (res.data.status === "error") { setDeploying(false); operation.end("publish"); toast.error("Deployment failed"); return; }
@@ -741,7 +744,10 @@ export default function WorkspacePage() {
       setLoading(false);
 
       if (proj?.agentProcessStatus === "init") startAgentPolling();
-      if (proj?.deployment?.status === "deploying") { setDeploying(true); pollDeployOnce(); }
+      if (proj?.deployment?.status === "deploying" && operation.isActive("publish")) {
+        setDeploying(true);
+        pollDeployOnce();
+      }
 
       void Promise.all([fetchGithubStatus(), vcaasApi.rebuild.status(projectId)]).then(([, rebuildStatus]) => {
         if (cancelled || !rebuildStatus) return;

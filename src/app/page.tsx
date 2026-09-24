@@ -36,10 +36,10 @@ import { toast } from "sonner";
 import { uploadFilesToProjectDetailed, splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { SetupBanners } from "@/components/SetupBanners";
 import { SkeletonProjectGrid, SkeletonProjectTable } from "@/components/primitives";
-import { BigBagLogo } from "@/components/BigBagLogo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AuthUserMenu, UserAvatar, useAuth } from "@/components/auth/AuthProvider";
 import { DashboardSidebar } from "@/components/DashboardSidebar";
+import { SidebarExpandIcon } from "@/components/SidebarIcons";
 import type { VcaasProjectSummary } from "@/lib/vcaas-types";
 
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
@@ -52,7 +52,7 @@ type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc";
 const PAGE_SIZE = 20;
 const VIEW_MODE_KEY = "bigbag:dashboard-view";
 const LANDING_SESSION_KEY_PREFIX = "bigbag:landing-conversation:v2";
-const DISMISSED_RECENT_KEY = "bigbag:dismissed-recent";
+const SIDEBAR_STORAGE_KEY = "bigbag:dashboard-sidebar-open";
 
 
 function ProjectThumbnail({
@@ -268,12 +268,45 @@ export function DashboardContent() {
   const [deleting, setDeleting] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [dashTab, setDashTab] = useState<"projects" | "starter">("projects");
-  const [dismissedRecent, setDismissedRecent] = useState<Set<string>>(() => {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(DISMISSED_RECENT_KEY);
-      return saved ? new Set<string>(JSON.parse(saved) as string[]) : new Set<string>();
-    } catch { return new Set<string>(); }
-  });
+      const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+      if (saved !== null) {
+        setSidebarOpen(saved === "true");
+      } else if (window.innerWidth < 768) {
+        setSidebarOpen(false);
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        e.preventDefault();
+        handleToggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleToggleSidebar]);
 
 
   const heroTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -537,15 +570,6 @@ export function DashboardContent() {
     setDeleting(false);
   };
 
-  const dismissRecent = (projectId: string) => {
-    setDismissedRecent((prev) => {
-      const next = new Set(prev);
-      next.add(projectId);
-      try { localStorage.setItem(DISMISSED_RECENT_KEY, JSON.stringify([...next])); } catch { /* storage unavailable */ }
-      return next;
-    });
-  };
-
   const hasProjects = projects.length > 0;
 
   return (
@@ -556,6 +580,13 @@ export function DashboardContent() {
       {/* Sidebar */}
       <DashboardSidebar
         projects={projects}
+        isOpen={sidebarOpen}
+        onClose={() => {
+          setSidebarOpen(false);
+          try {
+            localStorage.setItem(SIDEBAR_STORAGE_KEY, "false");
+          } catch {}
+        }}
         onConnectorsOpen={() => setConnectorsOpen(true)}
         onSearchFocus={() => {
           searchInputRef.current?.focus();
@@ -566,23 +597,66 @@ export function DashboardContent() {
 
       {/* Main content */}
       <div className={`flex-1 overflow-y-auto ${chatOpen ? "overflow-hidden" : ""}`}>
-        {/* Thin top bar: theme toggle + auth menu */}
+        {/* Top bar: sidebar open button + theme toggle + auth menu */}
         {!chatOpen && (
-          <div className="flex items-center justify-end gap-2 px-6 pt-4 pb-0">
-            <ThemeToggle showLabel={false} />
-            <AuthUserMenu />
+          <div className="flex items-center justify-between gap-2 px-6 pt-4 pb-0">
+            <div>
+              {!sidebarOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSidebarOpen(true);
+                    try {
+                      localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
+                    } catch {}
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/80 bg-card hover:bg-accent text-muted-foreground hover:text-foreground transition-all shadow-2xs text-xs font-medium cursor-pointer group"
+                  title="Open sidebar (Ctrl+B)"
+                  aria-label="Open sidebar"
+                >
+                  <SidebarExpandIcon className="w-4 h-4 text-foreground/80 group-hover:text-foreground" />
+                  <span className="hidden sm:inline">Sidebar</span>
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <ThemeToggle showLabel={false} />
+              <AuthUserMenu />
+            </div>
           </div>
         )}
         {chatOpen && (
-          <div className="flex h-16 items-center px-6 border-b border-border/80 bg-background/88 backdrop-blur-xl">
-            <button
-              type="button"
-              onClick={() => setChatOpen(false)}
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-3.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </button>
+          <div className="flex h-16 items-center justify-between px-6 border-b border-border/80 bg-background/88 backdrop-blur-xl">
+            <div className="flex items-center gap-2">
+              {!sidebarOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSidebarOpen(true);
+                    try {
+                      localStorage.setItem(SIDEBAR_STORAGE_KEY, "true");
+                    } catch {}
+                  }}
+                  className="p-2 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Open sidebar (Ctrl+B)"
+                  aria-label="Open sidebar"
+                >
+                  <SidebarExpandIcon className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setChatOpen(false)}
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-card px-3.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <ThemeToggle showLabel={false} />
+              <AuthUserMenu />
+            </div>
           </div>
         )}
 

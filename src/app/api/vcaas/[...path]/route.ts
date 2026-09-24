@@ -432,7 +432,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       );
     }
     if (subRoute === "deployments/deploy" && method === "POST") {
-      const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+      const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, isDeploy: true });
       return NextResponse.json(
         { ok: true, data: { started: true, status: "success", previewUrl } },
         { status: 200 }

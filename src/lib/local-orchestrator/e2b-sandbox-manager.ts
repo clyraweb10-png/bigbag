@@ -49,6 +49,8 @@ type StartOptions = {
   /** Re-sync, compile, and restart even when the current preview is healthy. */
   rebuild?: boolean;
   signal?: AbortSignal;
+  /** Set to true only when explicitly publishing to production */
+  isDeploy?: boolean;
 };
 
 type SharedE2BState = {
@@ -173,7 +175,7 @@ class E2BSandboxManager {
 
   public getPreviewUrl(projectId: string): string | null {
     const record = localProjectStore.getRecord(projectId);
-    return record?.deployment?.status === "success" ? persistentPreviewPath(projectId) : null;
+    return record?.previewUrl || (record?.serverStatus === "Active" ? persistentPreviewPath(projectId) : null);
   }
 
   public async syncFile(projectId: string, relativePath: string, content: string): Promise<void> {
@@ -371,9 +373,11 @@ class E2BSandboxManager {
     localSandboxManager.ensureProjectTemplate(projectId);
 
     if (!this.isE2BEnabled()) {
-      localProjectStore.update(projectId, {
-        deployment: { status: "deploying", createdAt: new Date().toISOString() },
-      });
+      if (options.isDeploy) {
+        localProjectStore.update(projectId, {
+          deployment: { status: "deploying", createdAt: new Date().toISOString() },
+        });
+      }
       try {
         if (options.rebuild) {
           await this.stopDevServer(projectId);
@@ -385,21 +389,27 @@ class E2BSandboxManager {
         }
         localProjectStore.update(projectId, {
           previewUrl,
-          deployment: {
-            status: "success",
-            createdAt: new Date().toISOString(),
-            versionId: randomUUID(),
-          },
+          serverStatus: "Active",
+          ...(options.isDeploy ? {
+            deployment: {
+              status: "success",
+              createdAt: new Date().toISOString(),
+              versionId: randomUUID(),
+            },
+            productionProjectUrl: persistentPreviewUrl(projectId),
+          } : {}),
         });
         return previewUrl;
       } catch (error) {
-        if (!options.signal?.aborted) localProjectStore.update(projectId, {
-          deployment: {
-            status: "error",
-            createdAt: new Date().toISOString(),
-            errorMessage: errorText(error),
-          },
-        });
+        if (!options.signal?.aborted && options.isDeploy) {
+          localProjectStore.update(projectId, {
+            deployment: {
+              status: "error",
+              createdAt: new Date().toISOString(),
+              errorMessage: errorText(error),
+            },
+          });
+        }
         throw error;
       }
     }
@@ -417,7 +427,7 @@ class E2BSandboxManager {
         if (this.initializing.get(projectId)?.promise === ongoing.promise) {
           this.initializing.delete(projectId);
         }
-        return this.startDevServer(projectId, { rebuild: true, signal: options.signal });
+        return this.startDevServer(projectId, { rebuild: true, signal: options.signal, isDeploy: options.isDeploy });
       };
       return ongoing.promise.then(rebuildAfterOngoing, rebuildAfterOngoing);
     }
@@ -437,7 +447,9 @@ class E2BSandboxManager {
 
         localProjectStore.update(projectId, {
           serverStatus: "Starting",
-          deployment: { status: "deploying", createdAt: new Date().toISOString() },
+          ...(options.isDeploy ? {
+            deployment: { status: "deploying", createdAt: new Date().toISOString() },
+          } : {}),
         });
         // This is the durability boundary: the complete source is outside E2B
         // before any disposable build worker is created.
@@ -454,23 +466,22 @@ class E2BSandboxManager {
           try {
             const build = await this.compileAndStart(projectId, sandbox, signal);
             signal.throwIfAborted();
-            const deployment = {
-              status: "success" as const,
-              createdAt: new Date().toISOString(),
-              versionId: randomUUID(),
-            };
             const current = localProjectStore.getRecord(projectId);
             if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
-            const deploymentFields = {
+            const deploymentFields: Record<string, unknown> = {
               serverStatus: "Active" as const,
               previewUrl: persistentPreviewPath(projectId),
-              productionProjectUrl: persistentPreviewUrl(projectId),
               sandboxId: undefined,
-              deployment,
             };
-            // Never advertise a successful preview before the transactional
-            // artifact snapshot commits. An aborted transaction keeps the last
-            // deployed version visible (or keeps this project unready).
+            if (options.isDeploy) {
+              deploymentFields.deployment = {
+                status: "success" as const,
+                createdAt: new Date().toISOString(),
+                versionId: randomUUID(),
+              };
+              deploymentFields.productionProjectUrl = persistentPreviewUrl(projectId);
+            }
+            // Save the compiled files for persistent preview
             await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
             signal.throwIfAborted();
             localProjectStore.update(projectId, deploymentFields);
@@ -491,11 +502,13 @@ class E2BSandboxManager {
         if (!signal.aborted) localProjectStore.update(projectId, {
           serverStatus: "Error",
           sandboxId: undefined,
-          deployment: {
-            status: "error",
-            createdAt: new Date().toISOString(),
-            errorMessage: errorText(error),
-          },
+          ...(options.isDeploy ? {
+            deployment: {
+              status: "error",
+              createdAt: new Date().toISOString(),
+              errorMessage: errorText(error),
+            },
+          } : {}),
         });
         throw error;
       }

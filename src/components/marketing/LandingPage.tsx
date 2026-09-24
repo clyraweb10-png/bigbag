@@ -7,13 +7,14 @@ import { MarketingNav } from "@/components/marketing/MarketingNav";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import {
   ArrowRight, Loader2, Check, Zap, Eye, Globe, GitBranch, Database, Wand2,
-  ArrowUpRight, Users, Code2, Shield, ChevronRight,
+  ArrowUpRight, Users, Code2, Shield, ChevronRight, ChevronDown, Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { filesFromClipboard } from "@/lib/attachments";
 import { splitBySize, MAX_UPLOAD_MB, TOO_LARGE_ADVICE } from "@/lib/upload";
 import { AttachChainIcon } from "@/components/prompt/ComposerIcons";
+import { StarterTemplateGallery } from "@/components/dashboard/StarterTemplateGallery";
 
 /* ─── Prompt example chips ─── */
 const EXAMPLE_PROMPTS = [
@@ -234,8 +235,8 @@ export function LandingPageMarketing() {
     <div className="min-h-screen bg-background text-foreground">
       <MarketingNav />
 
-      {/* ═══════ HERO ═══════ */}
-      <section className="relative pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
+      {/* ═══════ HERO (90vh) ═══════ */}
+      <section className="relative min-h-[90vh] flex flex-col justify-center items-center pt-28 pb-14 sm:pt-36 sm:pb-20 overflow-hidden">
         {/* Subtle grid bg */}
         <div className="studio-grid absolute inset-0 -z-10 pointer-events-none" />
 
@@ -333,7 +334,35 @@ export function LandingPageMarketing() {
             <p className="mt-4 text-xs text-muted-foreground">
               No credit card required · Free to start · Deploy in minutes
             </p>
+
+            <a
+              href="#starters"
+              className="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
+            >
+              <span>Explore pre-built starters</span>
+              <ChevronDown className="w-3.5 h-3.5 transition-transform group-hover:translate-y-0.5" />
+            </a>
           </div>
+        </div>
+      </section>
+
+      {/* ═══════ STARTERS (at 90vh) ═══════ */}
+      <section id="starters" className="py-16 sm:py-24 border-t border-border bg-background relative">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-secondary/50 px-3.5 py-1 text-xs font-medium text-foreground/80 mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              <span>Starter Templates</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground">
+              Production-ready starters to kickstart your build
+            </h2>
+            <p className="mt-3 text-muted-foreground max-w-xl mx-auto text-sm sm:text-base">
+              Explore hand-crafted starters with live motion, modern tech stack, and full prompt specifications.
+            </p>
+          </div>
+
+          <StarterTemplateGallery />
         </div>
       </section>
 

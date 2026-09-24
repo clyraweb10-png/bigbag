@@ -10,6 +10,7 @@ import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
 import { oauthCallbackUrl, resolveAppOrigin } from "@/lib/auth-redirect";
+import { cn } from "@/lib/utils";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface AuthUser {
@@ -414,7 +415,7 @@ export function UserAvatar({
   className?: string;
 }) {
   const label = user?.displayName || user?.email || "Account";
-  const initials = label.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const initials = (label.trim()[0] || "U").toUpperCase();
   return user?.photoURL ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className={`${className} rounded-full object-cover ring-2 ring-card`} />
@@ -425,7 +426,13 @@ export function UserAvatar({
   );
 }
 
-export function AuthUserMenu() {
+export function AuthUserMenu({
+  className,
+  showLabel = false,
+}: {
+  className?: string;
+  showLabel?: boolean;
+} = {}) {
   const { user, signOutUser } = useAuth();
   const label = user?.displayName || user?.email || "Account";
   return (
@@ -436,10 +443,13 @@ export function AuthUserMenu() {
         toast.error(signOutError instanceof Error ? signOutError.message : "Sign out failed");
       }); }}
       title={`Sign out ${label}`}
-      className="h-10 gap-2.5 rounded-full border border-border bg-card px-1.5 pr-3 text-xs text-foreground shadow-sm hover:bg-accent"
+      className={cn(
+        "h-10 gap-2.5 rounded-full border border-border bg-card px-1.5 pr-3 text-xs text-foreground shadow-sm hover:bg-accent",
+        className
+      )}
     >
       <UserAvatar user={user} className="h-7 w-7" />
-      <span className="hidden max-w-32 truncate sm:inline">{label}</span>
+      <span className={cn(showLabel ? "inline" : "hidden sm:inline", "max-w-32 truncate")}>{label}</span>
       <LogOut className="h-3.5 w-3.5" />
     </Button>
   );

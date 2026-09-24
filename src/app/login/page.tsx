@@ -74,10 +74,20 @@ export default function LoginPage() {
       if (requestedPath) {
         destination = requestedPath;
       } else {
-        const pending = sessionStorage.getItem("bigbag:pending-prompt");
-        if (pending) {
-          sessionStorage.removeItem("bigbag:pending-prompt");
-          destination = `/generate?prompt=${encodeURIComponent(pending)}`;
+        const starterTarget = sessionStorage.getItem("bigbag:target-starter-template");
+        if (starterTarget) {
+          try {
+            const parsed = JSON.parse(starterTarget) as { id: string; action?: string };
+            if (parsed.id) {
+              destination = `/dashboard?tab=starter&template=${parsed.id}${parsed.action ? `&action=${parsed.action}` : ""}`;
+            }
+          } catch {}
+        } else {
+          const pending = sessionStorage.getItem("bigbag:pending-prompt");
+          if (pending) {
+            sessionStorage.removeItem("bigbag:pending-prompt");
+            destination = `/generate?prompt=${encodeURIComponent(pending)}`;
+          }
         }
       }
 

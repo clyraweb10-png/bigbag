@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search,
@@ -30,6 +30,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
+import { useAuth } from "@/components/auth/AuthProvider";
+
 interface StarterTemplateGalleryProps {
   /** Legacy prop kept for compatibility — no longer used for template installs */
   onSelectTemplate?: (template: StarterTemplate) => void;
@@ -37,9 +39,13 @@ interface StarterTemplateGalleryProps {
 
 export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: StarterTemplateGalleryProps) {
   const router = useRouter();
+  const { user, status } = useAuth();
+  const isAuthenticated = status === "authenticated" && !!user;
+
   const [activeCategory, setActiveCategory] = useState<StarterCategory>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<StarterTemplate | null>(null);
   /** ID of template currently being installed (shows spinner) */
   const [installingId, setInstallingId] = useState<string | null>(null);
@@ -73,8 +79,101 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
     });
   }, [activeCategory, searchQuery]);
 
+  // Handle post-login scroll and highlight (without auto-starting creation)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let targetId: string | null = null;
+    let targetAction: "copy" | "create" | null = null;
+
+    try {
+      const params = new URLSearchParams(window.location.search);
+      targetId = params.get("template");
+      targetAction = (params.get("action") as "copy" | "create" | null) || null;
+
+      const stored = sessionStorage.getItem("bigbag:target-starter-template");
+      if (stored) {
+        const parsed = JSON.parse(stored) as { id: string; action?: "copy" | "create" };
+        if (parsed.id) {
+          targetId = targetId || parsed.id;
+          targetAction = targetAction || parsed.action || null;
+        }
+        sessionStorage.removeItem("bigbag:target-starter-template");
+      }
+    } catch {}
+
+    if (!targetId) return;
+
+    const targetTemplate = STARTER_TEMPLATES.find((t) => t.id === targetId);
+    if (!targetTemplate) return;
+
+    // Ensure category is "All" so the card is visible in the grid
+    setActiveCategory("All");
+    setSearchQuery("");
+    setHighlightedId(targetId);
+
+    // Scroll smoothly to the target template
+    const scrollTimer = window.setTimeout(() => {
+      const element = document.getElementById(`starter-template-${targetId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 350);
+
+    // If user intended to copy the prompt, perform copy now
+    if (targetAction === "copy") {
+      try {
+        navigator.clipboard.writeText(targetTemplate.prompt);
+        setCopiedId(targetTemplate.id);
+        toast.success(`Copied "${targetTemplate.title}" prompt to clipboard!`);
+        window.setTimeout(() => {
+          setCopiedId((curr) => (curr === targetTemplate.id ? null : curr));
+        }, 3000);
+      } catch {}
+    } else {
+      // Intended to create/select — scroll only, do NOT start creating automatically
+      toast.info(`Selected "${targetTemplate.title}"`, {
+        description: "Click the arrow when you are ready to build.",
+      });
+    }
+
+    // Clean up URL parameters cleanly
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("template");
+      url.searchParams.delete("action");
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
+
+    // Fade highlight after 4.5 seconds
+    const fadeTimer = window.setTimeout(() => {
+      setHighlightedId((curr) => (curr === targetId ? null : curr));
+    }, 4500);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(fadeTimer);
+    };
+  }, []);
+
   const handleCopyPrompt = (template: StarterTemplate, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (!isAuthenticated) {
+      try {
+        sessionStorage.setItem(
+          "bigbag:target-starter-template",
+          JSON.stringify({ id: template.id, action: "copy" })
+        );
+      } catch {}
+      toast.info("Please sign in to copy this prompt", {
+        description: `We'll bring you right back to "${template.title}".`,
+      });
+      router.push(
+        `/login?next=${encodeURIComponent(`/dashboard?tab=starter&template=${template.id}&action=copy#starter-template-${template.id}`)}`
+      );
+      return;
+    }
+
     if (!template.prompt) return;
     try {
       navigator.clipboard.writeText(template.prompt);
@@ -99,6 +198,22 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
    */
   const handleStartBuild = async (template: StarterTemplate, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (!isAuthenticated) {
+      try {
+        sessionStorage.setItem(
+          "bigbag:target-starter-template",
+          JSON.stringify({ id: template.id, action: "create" })
+        );
+      } catch {}
+      toast.info("Please sign in to start with this template", {
+        description: `We'll bring you right back to "${template.title}".`,
+      });
+      router.push(
+        `/login?next=${encodeURIComponent(`/dashboard?tab=starter&template=${template.id}&action=create#starter-template-${template.id}`)}`
+      );
+      return;
+    }
+
     if (installingId) return; // debounce
 
     setInstallingId(template.id);
@@ -227,8 +342,13 @@ export function StarterTemplateGallery({ onSelectTemplate: _onSelectTemplate }: 
             return (
               <div
                 key={template.id}
+                id={`starter-template-${template.id}`}
                 onClick={() => !installingId && handleStartBuild(template)}
-                className={`group relative flex flex-col rounded-xl border border-zinc-200/90 dark:border-white/[0.1] bg-card dark:bg-[#111114] shadow-xs hover:border-zinc-400 dark:hover:border-zinc-500 hover:shadow-md transition-all duration-150 overflow-hidden ${installingId ? "cursor-not-allowed" : "cursor-pointer"}`}
+                className={`group relative flex flex-col rounded-xl border transition-all duration-300 overflow-hidden bg-card dark:bg-[#111114] ${
+                  highlightedId === template.id
+                    ? "border-blue-500 ring-2 ring-blue-500/80 ring-offset-2 ring-offset-background shadow-xl shadow-blue-500/25 scale-[1.01]"
+                    : "border-zinc-200/90 dark:border-white/[0.1] hover:border-zinc-400 dark:hover:border-zinc-500 shadow-xs hover:shadow-md"
+                } ${installingId ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
                 {/* ── Preview Thumbnail with Motion Support ── */}
                 <TemplatePreviewThumbnail
@@ -402,35 +522,54 @@ function TemplatePreviewThumbnail({
   onStartBuild: (e: React.MouseEvent) => void;
   onOpenDetails: (e: React.MouseEvent) => void;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isHovered, setIsHovered] = useState(false);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [videoError, setVideoError] = useState(false);
 
   const hasMotion = !!(template.previewVideo || template.previewGif);
 
-  const handleMouseEnter = () => {
-    setIsHovered(true);
-    if (template.previewVideo && videoRef.current) {
-      videoRef.current.play().catch(() => {});
-    }
-  };
+  // Auto-play looping video continuously when visible (always in motion without mouse hover)
+  useEffect(() => {
+    const video = videoRef.current;
+    const container = containerRef.current;
+    if (!video || !template.previewVideo || videoError) return;
 
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-    if (videoRef.current) {
-      videoRef.current.pause();
-      try {
-        videoRef.current.currentTime = 0;
-      } catch {}
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== "undefined" && container) {
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              video.play().catch(() => {});
+            } else {
+              video.pause();
+            }
+          });
+        },
+        { rootMargin: "150px 0px" }
+      );
+      observer.observe(container);
+    } else {
+      video.play().catch(() => {});
+    }
+
+    return () => {
+      observer?.disconnect();
+    };
+  }, [template.previewVideo, videoError]);
+
+  const handleMouseEnter = () => {
+    if (template.previewVideo && videoRef.current && videoRef.current.paused) {
+      videoRef.current.play().catch(() => {});
     }
   };
 
   return (
     <div
+      ref={containerRef}
       className="relative aspect-[16/9] w-full overflow-hidden bg-zinc-100 dark:bg-zinc-950 border-b border-zinc-200/80 dark:border-white/[0.08]"
       onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       {/* ── Base static screenshot (Always present for instant load) ── */}
       <img
@@ -456,31 +595,34 @@ function TemplatePreviewThumbnail({
         <span className="text-[10px] text-zinc-500 mt-0.5">{template.badge}</span>
       </div>
 
-      {/* ── Looping Video Preview (Smooth Motion on hover) ── */}
+      {/* ── Looping Video Preview (Always in motion without hover) ── */}
       {template.previewVideo && !videoError && (
         <video
           ref={videoRef}
           src={template.previewVideo}
+          autoPlay
           loop
           muted
           playsInline
-          preload="none"
-          onLoadedData={() => setVideoLoaded(true)}
+          preload="metadata"
+          onLoadedData={() => {
+            setVideoLoaded(true);
+            videoRef.current?.play().catch(() => {});
+          }}
           onError={() => setVideoError(true)}
           className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
-            isHovered && videoLoaded ? "opacity-100" : "opacity-0"
+            videoLoaded ? "opacity-100" : "opacity-0"
           }`}
         />
       )}
 
-      {/* ── GIF Preview Alternative ── */}
+      {/* ── GIF Preview Alternative (Always in motion without hover) ── */}
       {template.previewGif && !template.previewVideo && (
         <img
           src={template.previewGif}
           alt={template.title}
-          className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 pointer-events-none ${
-            isHovered ? "opacity-100" : "opacity-0"
-          }`}
+          loading="lazy"
+          className="absolute inset-0 w-full h-full object-cover object-top opacity-100 pointer-events-none"
         />
       )}
 

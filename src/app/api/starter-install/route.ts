@@ -213,11 +213,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     status: "done",
     serverStatus: "Active",
     previewUrl: previewPath,
-    deployment: {
-      status: "success",
-      createdAt: now,
-      versionId: randomUUID(),
-    },
     conversation: [...initialMessages, ...initialDoneMessages],
   });
 

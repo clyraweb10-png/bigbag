@@ -13,6 +13,13 @@ function getAuthDestination(searchParams: URLSearchParams): string {
   const next = safeAuthReturnPath(searchParams.get("next"), "");
   if (next) return next;
   try {
+    const starterTarget = sessionStorage.getItem("bigbag:target-starter-template");
+    if (starterTarget) {
+      const parsed = JSON.parse(starterTarget) as { id: string; action?: string };
+      if (parsed.id) {
+        return `/dashboard?tab=starter&template=${parsed.id}${parsed.action ? `&action=${parsed.action}` : ""}`;
+      }
+    }
     const pending = sessionStorage.getItem("bigbag:pending-prompt");
     if (pending) {
       sessionStorage.removeItem("bigbag:pending-prompt");
