@@ -1197,6 +1197,8 @@ for (const seed of SEED) await products.create(seed);`,
     `const inventory = [{ name: "Invented coat" }]; inventory.map((product) => products.create(product));`,
     `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create({ ...product });`,
     `const inventory = [{ name: "Invented coat" }]; inventory.map(({ name }) => products.create({ name }));`,
+    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(product as unknown as Product);`,
+    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(({ ...product }) as Product);`,
   ]) {
     assert.ok(generationValidationIssues([{ path: "src/components/StoreView.tsx", content: body }], ["src/App.tsx"], { allowSeedData: false })
       .some((issue) => issue.includes("inline seed records")));

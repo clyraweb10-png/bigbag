@@ -68,11 +68,15 @@ function containsInlineSeedRecords(filePath: string, content: string): boolean {
   }
 
   function refersToRecord(argument: ts.Expression, recordNames: Set<string>): boolean {
+    while (ts.isAsExpression(argument) || ts.isTypeAssertionExpression(argument) ||
+      ts.isSatisfiesExpression(argument) || ts.isParenthesizedExpression(argument) || ts.isNonNullExpression(argument)) {
+      argument = argument.expression;
+    }
     return ts.isIdentifier(argument) && recordNames.has(argument.text) ||
       ts.isObjectLiteralExpression(argument) && argument.properties.some((property) =>
-        ts.isSpreadAssignment(property) && ts.isIdentifier(property.expression) && recordNames.has(property.expression.text) ||
+        ts.isSpreadAssignment(property) && refersToRecord(property.expression, recordNames) ||
         ts.isShorthandPropertyAssignment(property) && recordNames.has(property.name.text) ||
-        ts.isPropertyAssignment(property) && ts.isIdentifier(property.initializer) && recordNames.has(property.initializer.text));
+        ts.isPropertyAssignment(property) && refersToRecord(property.initializer, recordNames));
   }
 
   function createsRecord(node: ts.Node, recordNames: Set<string>): boolean {
