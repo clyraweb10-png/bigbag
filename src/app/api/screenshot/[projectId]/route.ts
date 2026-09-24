@@ -7,6 +7,10 @@
  * project's live preview URL, then returns the screenshot URL so the caller
  * can cache it in localStorage for the dashboard thumbnail.
  *
+ * In local orchestrator mode the URL is also persisted to the project record,
+ * so the dashboard list endpoint can include it in `previewImageUrl` without
+ * any localStorage dependency.
+ *
  * Authentication: the session cookie is verified by the provider-backed route
  * layer. No Totalum project access is checked here because the preview URL is
  * provided by the caller and is validated as a public URL before fetch.
@@ -18,6 +22,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { publicUrlRejectionReason } from "@/lib/safe-url";
+import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
+import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 
 const FIRECRAWL_ENDPOINT = "https://api.firecrawl.dev/v2/scrape";
 
@@ -32,7 +38,7 @@ export async function POST(
 
   const apiKey = process.env.FIRECRAWL_API_KEY?.trim();
   if (!apiKey) {
-    // Not configured — degrade gracefully so the dashboard just shows the gradient.
+    // Not configured — degrade gracefully so the dashboard just shows the placeholder.
     return NextResponse.json({ ok: false, error: "FIRECRAWL_API_KEY not configured" }, { status: 200 });
   }
 
@@ -88,6 +94,16 @@ export async function POST(
 
     const screenshotUrl = payload.data.screenshot;
     console.info(`[screenshot] Captured preview for project "${projectId}": ${screenshotUrl.slice(0, 80)}…`);
+
+    // In local orchestrator mode, persist the screenshot URL to the project record
+    // so the dashboard list includes it as previewImageUrl (survives page reloads).
+    if (isLocalOrchestratorEnabled()) {
+      try {
+        localProjectStore.saveScreenshotUrl(projectId, screenshotUrl);
+      } catch (saveErr) {
+        console.warn(`[screenshot] Could not save screenshot URL for "${projectId}":`, saveErr);
+      }
+    }
 
     return NextResponse.json({ ok: true, data: { screenshotUrl } });
   } catch (err) {

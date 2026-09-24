@@ -69,13 +69,27 @@ function getPreviewUrlFromProject(proj: VcaasProject): string | null {
 }
 
 /**
- * Raw URL for screenshot capture — never the /api/preview/ proxy.
- * Firecrawl must reach the live server directly, so we skip the proxy wrapper.
+ * Absolute URL for Firecrawl screenshot capture.
+ * - Cloud mode: the API returns a fully-qualified public URL (e.g. *.totalum.app).
+ * - Local mode: `temporalDevelopmentProjectUrl` is `/api/preview/[id]/` (relative).
+ *   We prepend the app's public origin so Firecrawl can reach it.
  */
 function getRawPreviewUrlForScreenshot(proj: VcaasProject): string | null {
   const field = proj.developmentUrlFieldToUse || "temporalDevelopmentProjectUrl";
-  const url = (proj as unknown as Record<string, unknown>)[field] || proj.temporalDevelopmentProjectUrl;
-  return (url as string) || null;
+  const raw = ((proj as unknown as Record<string, unknown>)[field] ?? proj.temporalDevelopmentProjectUrl) as string | null | undefined;
+  if (!raw) return null;
+  // Already an absolute URL — return as-is.
+  if (/^https?:\/\//i.test(raw)) return raw;
+  // Relative path (local mode proxy) — make it absolute using the current origin.
+  try {
+    const origin = typeof window !== "undefined"
+      ? window.location.origin
+      : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "");
+    if (!origin) return null;
+    return `${origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
+  } catch {
+    return null;
+  }
 }
 
 // True when the preview being shown is the cached snapshot (dev server not active).

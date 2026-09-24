@@ -77,6 +77,20 @@ if (fs.existsSync(motionsitesPromptsDir)) {
 
     const imagePath = `/templates/${name}.png`;
 
+    // Video/Motion preview matching
+    const vMatch = promptText.match(/https:\/\/[^\s"'\\)]+\.(mp4|webm)/);
+    const gMatch = promptText.match(/https:\/\/[^\s"'\\)]+\.gif/);
+    const localVid = path.join("E:\\New folder\\motionsites-prompt-collection\\assets\\videos", `${name}_0.mp4`);
+    
+    let previewVideo = undefined;
+    if (vMatch) {
+      previewVideo = vMatch[0];
+    } else if (fs.existsSync(localVid)) {
+      previewVideo = `/api/template-video/${name}`;
+    }
+
+    let previewGif = gMatch ? gMatch[0] : undefined;
+
     templates.push({
       id: `motion-${name.toLowerCase().replace(/[_\s]+/g, "-")}`,
       name,
@@ -85,6 +99,8 @@ if (fs.existsSync(motionsitesPromptsDir)) {
       badge,
       description: desc,
       previewImage: imagePath,
+      ...(previewVideo ? { previewVideo } : {}),
+      ...(previewGif ? { previewGif } : {}),
       prompt: promptText,
       stack: ["React", "Tailwind CSS", "Framer Motion", "Lucide React"],
       tags: [category, badge, "Motion"],
@@ -229,6 +245,8 @@ export interface StarterTemplate {
   badge: string;
   description: string;
   previewImage: string;
+  previewVideo?: string;
+  previewGif?: string;
   prompt: string;
   stack?: string[];
   tags?: string[];

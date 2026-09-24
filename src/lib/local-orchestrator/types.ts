@@ -29,6 +29,8 @@ export interface LocalProjectRecord {
   rebuildStartedAt?: string;
   rebuildOperationId?: string;
   previewUrl?: string;
+  /** Firecrawl screenshot URL, persisted after a successful capture. */
+  screenshotUrl?: string;
   productionProjectUrl?: string;
   sandboxId?: string;
   deployment?: {

@@ -88,6 +88,7 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
     cachedDevelopmentUrl: previewUrl,
     developmentUrlFieldToUse: "temporalDevelopmentProjectUrl",
     productionProjectUrl: record.productionProjectUrl,
+    previewImageUrl: record.screenshotUrl ?? null,
     totalCreditsSpent: 0,
   };
 }
@@ -169,6 +170,7 @@ export const localProjectStore = {
       plan: "Local",
       createdAt: p.createdAt,
       lastModifiedAt: p.lastModifiedAt,
+      previewImageUrl: p.screenshotUrl ?? null,
     }));
   },
 
@@ -182,6 +184,17 @@ export const localProjectStore = {
   getRecord(projectId: string): LocalProjectRecord | null {
     const projects = readProjects();
     return projects[projectId] || null;
+  },
+
+  /** Persist a Firecrawl screenshot URL so the dashboard thumbnail survives page reloads. */
+  saveScreenshotUrl(projectId: string, screenshotUrl: string): void {
+    const projects = readProjects();
+    const record = projects[projectId];
+    if (!record) return;
+    record.screenshotUrl = screenshotUrl;
+    record.lastModifiedAt = new Date().toISOString();
+    saveProjects(projects);
+    void queueRecordWrite(record);
   },
 
   findRecordsByProjectIdPrefix(projectIdPrefix: string): LocalProjectRecord[] {

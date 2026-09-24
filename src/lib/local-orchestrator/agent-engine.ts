@@ -55,9 +55,9 @@ To delete an obsolete file, output:
 ### Delete: path/to/file.tsx
 
 4. Full-stack behavior and dependencies
-- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js.
+- Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js, @radix-ui/react-dialog, @radix-ui/react-dropdown-menu, @radix-ui/react-select, @radix-ui/react-tabs, @radix-ui/react-tooltip, @radix-ui/react-checkbox, @radix-ui/react-switch, @radix-ui/react-label, @radix-ui/react-separator.
 - For charts and analytics visualization, use lightweight semantic HTML, CSS, or inline SVG. Do not import recharts or another charting library; its module graph exceeds the production sandbox capacity. Preserve accessible labels and data tables alongside visual charts.
-- Pre-existing UI primitives: @/components/ui/button, @/components/ui/card, and @/lib/utils (cn).
+- Pre-existing UI primitives: Button, Card (with variants), Input, Textarea, Label, Select, Checkbox, Switch, Separator, Badge, Skeleton, SkeletonCard, Alert, EmptyState, MetricCard, Table (with TableHeader/Body/Row/Head/Cell), Dialog (with DialogContent/Header/Footer/Title/Description), Sheet (with SheetContent/Header/Footer), DropdownMenu (with DropdownMenuContent/Item/Label/Separator), Tabs (with TabsList/Trigger/Content), Tooltip (with TooltipProvider/Content), Breadcrumbs, Pagination, FormField/FormLabel/FormMessage/FormDescription — all in @/components/ui/. Always import from @/components/ui/ or @/components/ui/index. Layout shells: DashboardShell, MarketingShell+HeroSection+FeatureGrid, StorefrontShell+ProductCard, EditorialShell+ArticleHeader+ArticleBody, FocusShell+StepProgress — all in @/components/layout/. Always use a shell; never build layout chrome from scratch.
 - For durable database storage, use exactly: \`import db from "@/lib/db"; const items = db.collection<ItemRecord>("items"); const { records } = await items.list(); await items.create(data); await items.update(record._id, data); await items.remove(record._id);\`. Always supply the application's record type as the collection generic; do not cast generic \`DbRecord\` results into domain records.
 - Database records receive server-owned \`_id\`, \`createdAt\`, and \`updatedAt\` fields. The timestamps are ISO strings. Include those fields with those types in record interfaces when used, and never send or redefine them as numeric application fields.
 - When the request needs persisted records, implement real initial loading plus create/update/delete flows through that database client. Show honest loading, empty, and recoverable error states. Do not substitute hardcoded rows for requested persistence.
@@ -105,9 +105,61 @@ RESPONSIVE CONTRACT:
 - Use max-w-7xl (app), max-w-5xl (marketing), max-w-2xl (editorial) container widths.
 - Image containers: always use aspect-video or aspect-square with object-cover and rounded-lg.
 
+COMPONENT COMPOSITION RULES (STRICT):
+- NEVER use raw <button>, <input>, <select>, <dialog>, or <table> when primitives exist in @/components/ui/.
+- Modals: always Dialog or Sheet (never inline unstyled popups).
+- Filter/segment controls: always Tabs or grouped Button variants (never plain unstyled buttons).
+- Status indicators: always Badge with semantic variant (success/warning/destructive/secondary/outline).
+- Metrics/KPIs: always MetricCard with trend and icon.
+- Data lists: always Table with TableHeader/Body/Row/Head/Cell, hover rows, proper text alignment.
+- Async loading: always Skeleton or SkeletonCard (never blank white regions).
+- Empty lists: always EmptyState with icon, title, description, and a CTA action.
+- Form errors: always FormMessage under the field.
+- Action overflow menus: always DropdownMenu.
+
+DENSITY INTELLIGENCE:
+- High-Density (DevTools/Admin/Trading): compact padding p-3/p-4, text-xs/text-sm, h-8 inputs, dense Table rows, minimal decorative elements.
+- Balanced (CRM/Productivity/Project Mgmt): standard p-5/p-6, text-sm/text-base, h-9 inputs, balanced MetricCard grids, collapsible sidebar.
+- Spacious (Marketing/Landing/Onboarding): generous py-16 sm:py-24 section padding, text-3xl to text-5xl headings, h-11 buttons, ample whitespace.
+- E-Commerce: image-dominant product cards (aspect-square), badge ribbons, sticky cart/checkout summaries, clear price emphasis.
+
+STATE DISCIPLINE:
+- Every data-fetching view must include: loaded state with 3-5 realistic seed items, a loading skeleton, and an EmptyState for the empty case.
+- Destructive actions (delete, cancel, remove) must always use a Dialog confirmation step.
+- All inputs must show FormMessage validation on error.
+- All interactive buttons must have: hover state, focus-visible ring, disabled state, and active:scale-[0.98].
+
+PAGE COMPOSITION & ARCHETYPE LAYOUT INTELLIGENCE (STRICT):
+
+ARCHETYPE DETECTION — always choose the correct layout shell from @/components/layout/:
+- SaaS / Admin / Dashboard / Analytics: Use DashboardShell. Left sidebar (desktop) + sticky topbar with search & user menu. Dense data tables, KPI metric strips (MetricCard grid), asymmetric 2-column main area (primary 70% workspace + 30% feed/quick-actions). NEVER use this for landing pages or portfolios.
+- Landing / Marketing / Product page: Use MarketingShell + HeroSection + FeatureGrid. Sticky glass navbar, centered hero with badge + headline + dual CTAs + product preview, alternating section backgrounds (bg-background / bg-card), feature grids, social proof, FAQ accordion, multi-column footer. NEVER include data tables or admin sidebars.
+- E-Commerce / Storefront / Catalog: Use StorefrontShell + ProductCard. Sticky header with cart Sheet drawer, desktop filter sidebar + bottom-sheet on mobile, responsive product grid (grid-cols-2 md:grid-cols-3 lg:grid-cols-4). NEVER use analytics graphs or sidebar navigation.
+- Editorial / Blog / Portfolio / Documentation: Use EditorialShell + ArticleHeader + ArticleBody. max-w-3xl reading column, prominent hero image, author byline, distraction-free typography. NEVER add analytics or e-commerce chrome.
+- Auth / Onboarding / Settings / Checkout: Use FocusShell + StepProgress. Desktop split-screen (left visual, right form), single centered column on mobile. StepProgress for multi-step flows.
+- Web Tool / AI Canvas: Single-purpose full-viewport layout — prominent input/generation bar at top or center, live output workspace, collapsible parameters panel on the right or bottom.
+
+NEVER DEFAULT EVERY APP TO A SAAS DASHBOARD:
+- A recipe app is not a dashboard. A portfolio is not a dashboard. A landing page is not a dashboard.
+- Match the structural language of the domain. A recipe book gets editorial layout. A product hunt clone gets a storefront. A personal site gets marketing layout.
+
+COMPOSITION DISCIPLINE — BREAK THE CARD GRID TRAP:
+- NEVER fill an entire screen with endless identical bordered card boxes.
+- Every page must combine at least 2 different layout patterns: e.g., a hero strip + feature grid; a metric strip + data table; a sidebar list + detail panel; a full-width section + asymmetric 70/30 split below.
+- Asymmetric balance: prefer 60/40 or 70/30 column splits over rigid 50/50 rows.
+- Visual hierarchy: identify the single most important element per page and give it distinct prominence (elevated surface, primary color accent, or larger type). Secondary elements use flat rows or muted metadata.
+- Container widths: max-w-7xl for app/dashboards, max-w-5xl for marketing sections, max-w-3xl for articles and forms. Never use a single uniform width for every section.
+
+RESPONSIVE FOLDING RULES:
+- Metric grids: grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 (never 4-col on mobile).
+- Desktop data tables → stacked mobile cards or overflow-x-auto with scroll indicator on small screens.
+- Multi-step wizards: horizontal step dots on desktop → "Step 2 of 4" compact text on mobile.
+- Sidebars: hidden on mobile (Sheet drawer trigger), visible lg:flex on desktop.
+- All navigation links: min-h-[44px] touch targets on mobile.
 
 6. Silent self-check before returning
 - Confirm exactly one supported entrypoint exists, is the first file block on initial generation, and has a default export.
+
 - Confirm every local import resolves and every imported package is real.
 - Confirm no forbidden Unicode punctuation or invisible characters exist.
 - Confirm no file is truncated and every source, CSS, and JSON file parses.
