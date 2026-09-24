@@ -407,8 +407,38 @@ function visualQualityIssues(filePath: string, content: string): string[] {
       }
     }
   }
+
+  // ── Part 5: Design-system QA extensions ──────────────────────────────────
+
+  if (/\.(?:tsx?|jsx?)$/.test(filePath)) {
+    // E-series: Banned placeholder strings (extends containsGenerationPlaceholder)
+    const BANNED_PLACEHOLDERS = [
+      "John Doe", "Jane Smith", "Acme Corp", "Test Company",
+      "Product 1", "Product 2", "Item 1", "Item 2", "Task 1", "Task 2",
+      "User 1", "User 2", "test@test.com", "foo@bar.com",
+    ] as const;
+    for (const banned of BANNED_PLACEHOLDERS) {
+      if (content.includes(banned)) {
+        issues.push(`${filePath} contains banned placeholder content: "${banned}" — replace with authentic synthetic domain data`);
+      }
+    }
+
+    // A-series: Banned charting library imports
+    const bannedChartMatch = content.match(/from\s+['"](?:recharts|chart\.js|d3|victory|nivo|apexcharts|highcharts)['"]/);
+    if (bannedChartMatch) {
+      issues.push(`${filePath} imports a banned charting library (${bannedChartMatch[0]}) — use Sparkline, SimpleBarChart, ChartContainer, or DistributionBar from @/components/ui/ instead`);
+    }
+
+    // A-series: Raw hex colors in Tailwind utility classes bypass design tokens
+    const hexClassMatch = content.match(/className\s*=\s*[`"'][^`"']*(?:text|bg|border)-\[#[0-9a-fA-F]{3,6}\][^`"']*[`"']/);
+    if (hexClassMatch) {
+      issues.push(`${filePath} uses a raw hex color in a Tailwind class name — use var(--token) references like bg-[var(--primary)] instead`);
+    }
+  }
+
   return issues;
 }
+
 
 function resolvesLocalRuntimeModule(filePath: string, specifier: string, target: "auth" | "db"): boolean {
   if (specifier === `@/lib/${target}`) return true;

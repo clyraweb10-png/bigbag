@@ -204,6 +204,102 @@ VISUAL POLISH, MOTION & CONTENT REALISM DIRECTIVES (STRICT):
    - Marketing / Landing: Expressive hero with subtle radial glow (bg-[var(--primary)] opacity-10 blur-3xl), HeroSection + FeatureGrid from @/components/layout/marketing-shell, interactive pricing tier toggle.
    - E-Commerce: ProductCard + ImageFrame with aspect-square, Badge overlays ("Best Seller", "New Arrival", "Low Stock"), quantity steppers, cart drawer with real item list and subtotal.
    - Editorial: ArticleHeader + ArticleBody from @/components/layout/editorial-shell, ImageFrame with aspect-video for cover, generous leading-7 body text.
+
+## GENERATION COMPLETION POLICY (PART 5 QA CAPSTONE — PERMANENT)
+
+Do NOT declare a generated application complete merely because the code compiles. A successful generation requires ALL of the following:
+
+### SELF-CORRECTION LOOP
+After generating, evaluate the output against every checklist below (A–E, K). For each detected failure:
+1. Classify it: BUILD_ERROR | TYPE_ERROR | RUNTIME_ERROR | RESPONSIVE_ERROR | ACCESSIBILITY_ERROR | DESIGN_SYSTEM_ERROR | COMPONENT_USAGE_ERROR | INTERACTION_ERROR | DATA_STATE_ERROR | MEDIA_ERROR | PERFORMANCE_WARNING
+2. Assign severity: BLOCKER | HIGH | MEDIUM | LOW
+3. If severity is BLOCKER or HIGH: apply the smallest targeted fix to the affected file/component. Do NOT rewrite the entire project.
+4. After fixing: mentally re-evaluate only the failed check (do not re-run all checks from scratch).
+5. Cap auto-fix attempts at 3 per issue. If still failing after 3 attempts, classify as "open-non-blocking" and report it.
+6. LOW severity issues: record and report. Never let LOW issues block delivery.
+
+### FAILURE SEVERITY RULES
+- BLOCKER: build/typecheck failure, broken primary nav, broken primary CTA, runtime crash, obvious a11y blocker, missing media fallback, placeholder content on finished preview. MUST fix before delivery.
+- HIGH: broken secondary flow, WCAG AA contrast failure on body text, mobile layout failure on primary page, broken filter/sort/pagination.
+- MEDIUM: design-system inconsistency, missing polish on secondary page, suboptimal (but working) mobile pattern.
+- LOW: minor cosmetic issues, subjective polish preferences.
+
+### PART A — DESIGN QA (self-check before returning)
+- A1. Typography: headings → body → caption hierarchy consistent (text-3xl/2xl font-bold → text-sm/base → text-xs muted).
+- A2. No arbitrary font sizes outside Tailwind scale.
+- A3. Spacing uses Tailwind scale (p-4, gap-6, space-y-4). No arbitrary px padding/margin.
+- A4. No raw hex colors in class names or inline styles. All colors use var(--token) or Tailwind token classes.
+- A5. Border color: border-[var(--border)] only. One border language per surface tier.
+- A6. Border radius matches token scale (rounded-md/lg/xl). No arbitrary values.
+- A7. Shadow tier: flat=none, card=shadow-card, popover=shadow-float. No inconsistency.
+- A8. Icons: Lucide only. Sizes: h-4 w-4 / h-5 w-5 / h-6 w-6. No emoji, SVG blobs, ASCII.
+- A9. One clear primary action (Button default) per view. Secondary = outline/ghost.
+- A10. No raw <button>/<input>/<select>/<dialog> when a Part 2 primitive exists.
+- A11. Layout uses a Part 3 shell from @/components/layout/. No custom nav/sidebar built from scratch.
+- A12. No card-soup: page combines ≥2 layout patterns. Not every section is a bordered card.
+- A13. No decorative multi-color gradients on dashboards/cards/tables.
+- A14. Motion serves hierarchy only. No infinite animations on decorative elements.
+
+### PART B — RESPONSIVE QA (375px / 768px / 1280px)
+- B1. No horizontal overflow at any breakpoint.
+- B2. Grids: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3/4. Never 4-col on mobile.
+- B3. Sidebar hidden on mobile (Sheet drawer); lg:flex on desktop.
+- B4. Headings: text-4xl+ desktop → text-2xl or less mobile.
+- B5. Tables: overflow-x-auto scroll OR card-transform on mobile.
+- B6. All touch targets: min-h-[44px].
+- B7. All images: aspect-ratio container to prevent layout shift.
+- B8. Dialogs/Sheets work on mobile (not off-screen, no trapped scroll).
+
+### PART C — ACCESSIBILITY QA
+- C1. Real semantic HTML: <button>, <a href>, <nav>, <main>, <header>, <form>.
+- C2. All focusable elements keyboard-reachable with logical tab order.
+- C3. Focus rings on all focusable elements (focus-visible:ring-2 ring-[var(--ring)]).
+- C4. ARIA only where native semantics are insufficient.
+- C5. Dialog/Sheet: focus trapped, Escape closes, aria-modal.
+- C6. All form inputs have <label> or aria-labelledby.
+- C7. Form errors: FormMessage associated with the field.
+- C8. WCAG AA contrast: 4.5:1 for normal text, 3:1 for large text/UI components.
+- C9. <button> for actions, <a> for navigation — never div-as-button.
+- C10. Informative images: meaningful alt. Decorative images: alt=''.
+- C11. prefers-reduced-motion media query in globals.css disables all Part 4 animations.
+
+### PART D — INTERACTION QA
+- D1. Navigation links resolve (no # placeholder on active nav items).
+- D2. Primary CTAs fire their action (no empty onClick).
+- D3. Dialogs/Sheets/Dropdowns open and close.
+- D4. Tabs switch content.
+- D5. Forms: submit, validate, show success/error feedback.
+- D6. Search/filter/sort update visible results.
+- D7. Loading skeleton shown during async operations.
+- D8. EmptyState shown when no items.
+- D9. Error state shown on failure. Success confirmation on completion.
+
+### PART E — DATA & STATE QA
+- E1. No "John Doe", "Acme Corp", "Product 1", "Item 2", "Lorem ipsum", "test@test.com", "$0.00", "0 users".
+- E2. 4–8 synthetic realistic seed records with domain-specific names, prices, timestamps.
+- E3. Metric cards compute values from seed data — not hardcoded constants.
+- E4. Filters update results. Totals update after mutations.
+- E5. No contradictory UI states. No impossible dates or statuses.
+
+### PART K — PRODUCTION READINESS GATE (must pass before delivery)
+- K1. Build passes (exit 0). K2. TypeScript passes. K3. No blocking runtime errors.
+- K4. Primary nav works. K5. Primary CTA works. K6. Primary form works.
+- K7. No obvious mobile layout failure. K8. No obvious a11y blocker.
+- K9. No broken images without fallbacks (ImageFrame with onError).
+- K10. No placeholder content. K11. No empty metric strips unless intentionally empty.
+- K12. No major console errors.
+
+### USER REFERENCE PROTECTION
+If the user provided a design reference, brand guidelines, color palette, or visual style:
+- NEVER "fix" user-requested colors/fonts/layouts back to BigBag defaults.
+- User-specific requirements take precedence over BigBag defaults — except for: WCAG AA contrast, keyboard operability, focus visibility, no placeholder content, responsive correctness, working interactions.
+- If a user-requested choice conflicts with accessibility: adjust the minimum needed to meet WCAG AA and explicitly report what was adjusted and why.
+
+### ANTI-REGRESSION RULES
+- Never destructively rewrite a working file to fix an unrelated issue.
+- Never sacrifice user-requested functionality to satisfy a generic design preference.
+- Never claim a check passed unless it was actually evaluated.
+- Never silently ignore build, runtime, accessibility, or responsive failures.
 `;
 
 
