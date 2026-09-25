@@ -5,6 +5,7 @@
  */
 import "server-only";
 import { GLM_53_PROVIDER_ID, glm53Config } from "./ai-provider-config";
+import { providerChatDeltas } from "./provider-chat-stream";
 
 export interface PlannerResult {
   text: string;
@@ -41,38 +42,12 @@ export async function* streamChatResponse(
     signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
   });
   if (!response.ok || !response.body) throw new Error(`Chat provider HTTP ${response.status}`);
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
   let responseLength = 0;
   let firstTokenMs = -1;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() || "";
-      if (done && buffer.trim()) lines.push(buffer);
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (data === "[DONE]") continue;
-        let delta: string | undefined;
-        try {
-          const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> };
-          delta = parsed.choices?.[0]?.delta?.content;
-        } catch {
-          continue;
-        }
-        if (!delta) continue;
-        if (firstTokenMs < 0) firstTokenMs = Date.now() - startedAt;
-        responseLength += delta.length;
-        yield { type: "delta", text: delta };
-      }
-      if (done) break;
-    }
-  } finally {
-    reader.releaseLock();
+  for await (const delta of providerChatDeltas(response)) {
+    if (firstTokenMs < 0) firstTokenMs = Date.now() - startedAt;
+    responseLength += delta.length;
+    yield { type: "delta", text: delta };
   }
   if (!responseLength) throw new Error("Chat provider returned no response text");
   const durationMs = Date.now() - startedAt;
@@ -141,6 +116,9 @@ async function callOpenAICompat(
     console.info(`[planner] ${JSON.stringify({ event: "model_response", model, finishReason: choice.finish_reason || "unknown", outputChars: content.length, reasoningChars: choice.message?.reasoning_content?.length || 0, maxTokens, promptTokens: data.usage?.prompt_tokens, completionTokens: data.usage?.completion_tokens, reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens })}`);
     if (!content.trim()) {
       throw new Error(choice.finish_reason === "length" ? "Planning output limit: model produced no visible response" : "Planning model returned empty content");
+    }
+    if (choice.finish_reason === "length") {
+      throw new Error("Planning output limit: model response was incomplete");
     }
 
     return content;

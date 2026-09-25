@@ -1136,7 +1136,7 @@ export function postProcessGeneratedFiles(
   if (generatedApp && toasterInMain && /<Toaster\b[^>]*\/>/.test(generatedApp.content)) {
     generatedApp.content = generatedApp.content.replace(/<Toaster\b[^>]*\/>/g, "").replace(
       /import\s*\{([^}]+)\}\s*from\s*(["'])(sonner|@\/components\/ui\/sonner)\2;?/g,
-      (statement, imports: string, quote: string, moduleName: string) => {
+      (_statement, imports: string, quote: string, moduleName: string) => {
         const retained = imports.split(",").map((name) => name.trim()).filter((name) => name && name !== "Toaster");
         return retained.length ? `import { ${retained.join(", ")} } from ${quote}${moduleName}${quote};` : "";
       }

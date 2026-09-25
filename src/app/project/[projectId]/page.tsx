@@ -43,7 +43,7 @@ import { OperationBanner } from "@/components/workspace/OperationBanner";
 import { PublishedModal } from "@/components/workspace/PublishedModal";
 import { useProjectOperation } from "@/components/workspace/use-project-operation";
 import { OPERATION_COPY, OPERATION_PROFILES, shouldAdoptServerRebuild } from "@/lib/project-operation";
-import { getPublishedHost, getPreviewUrlField } from "@/lib/project-status";
+import { getPublishedUrl, getPreviewUrlField } from "@/lib/project-status";
 import { useVisualEditor } from "@/components/workspace/visual-editor/use-visual-editor";
 import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEditorPanel";
 import { VisualChangesBar } from "@/components/workspace/visual-editor/VisualChangesBar";
@@ -276,7 +276,7 @@ export default function WorkspacePage() {
    * same sandbox, so starting one while another runs is refused rather than queued.
    */
   const operation = useProjectOperation(projectId);
-  const [publishedHost, setPublishedHost] = useState<string | null>(null);
+  const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const githubPulling = operation.kind === "githubPull";
   const restoringVersion = operation.kind === "restoreVersion";
 
@@ -718,12 +718,12 @@ export default function WorkspacePage() {
            * ADDRESS — to click, to copy, to send to somebody — and a toast that disappears
            * in four seconds is the wrong place for it.
            */
-          setPublishedHost(getPublishedHost(proj, projectId));
+          const liveUrl = getPublishedUrl(proj, projectId);
+          setPublishedUrl(liveUrl);
           // Surface the deploy result in the chat and pull the latest conversation.
-          const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.local`;
           setMessages((prev) => [...prev, {
             author: "agent",
-            message: `${"🚀 Your app is now live at"} https://${liveUrl}`,
+            message: `${"🚀 Your app is now live at"} ${liveUrl}`,
             messageType: "finished",
             createdAt: new Date().toISOString(),
           }]);
@@ -1944,14 +1944,14 @@ export default function WorkspacePage() {
       */}
       <ServerBlockedDialog reason={blocked.reason} onDismiss={blocked.dismiss} wake={serverWake} />
       <PublishedModal
-        open={publishedHost !== null}
+        open={publishedUrl !== null}
         onOpenChange={open => {
-          if (!open) setPublishedHost(null);
+          if (!open) setPublishedUrl(null);
         }}
-        host={publishedHost ?? ""}
+        url={publishedUrl ?? ""}
         hasCustomDomain={project.customDomain?.status === "active"}
-        onOpenDomain={() => {
-          setPublishedHost(null);
+        onOpenDomain={process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local" ? undefined : () => {
+          setPublishedUrl(null);
           setOpenModal("domain");
         }}
       />

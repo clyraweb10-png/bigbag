@@ -89,11 +89,12 @@ async function ensureSchema(): Promise<Pool | null> {
         const marker = await client.query("SELECT to_regclass('public.builder_schema_version') AS table_name");
         if (marker.rows[0]?.table_name) {
           const current = await client.query("SELECT version FROM public.builder_schema_version WHERE version = 5");
-          if (current.rowCount) {
+          const previewVersion = await client.query("SELECT version FROM public.builder_schema_version WHERE version = 6");
+          if (previewVersion.rowCount) {
             await client.query("COMMIT");
             return;
           }
-          await client.query(`
+          if (!current.rowCount) await client.query(`
             CREATE INDEX IF NOT EXISTS builder_app_records_published_catalog
               ON public.builder_app_records (project_id, collection_name, updated_at DESC)
               WHERE (data_json::jsonb ->> 'published') = 'true';
@@ -124,6 +125,15 @@ async function ensureSchema(): Promise<Pool | null> {
             INSERT INTO public.builder_schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
             INSERT INTO public.builder_schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
           `);
+          await client.query(`
+            ALTER TABLE public.builder_project_files DROP CONSTRAINT IF EXISTS builder_project_files_kind_check;
+            ALTER TABLE public.builder_project_files ADD CONSTRAINT builder_project_files_kind_check
+              CHECK (kind IN ('source', 'preview', 'deployment'));
+            ALTER TABLE public.builder_project_snapshots DROP CONSTRAINT IF EXISTS builder_project_snapshots_kind_check;
+            ALTER TABLE public.builder_project_snapshots ADD CONSTRAINT builder_project_snapshots_kind_check
+              CHECK (kind IN ('source', 'preview', 'deployment'));
+            INSERT INTO public.builder_schema_version (version) VALUES (6) ON CONFLICT DO NOTHING;
+          `);
           await client.query("COMMIT");
           return;
         }
@@ -139,7 +149,7 @@ async function ensureSchema(): Promise<Pool | null> {
           CREATE TABLE IF NOT EXISTS public.builder_project_files (
             project_id TEXT NOT NULL,
             tenant_id TEXT NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('source', 'deployment')),
+            kind TEXT NOT NULL CHECK (kind IN ('source', 'preview', 'deployment')),
             path TEXT NOT NULL,
             content BYTEA NOT NULL,
             updated_at TEXT NOT NULL,
@@ -151,11 +161,17 @@ async function ensureSchema(): Promise<Pool | null> {
           CREATE TABLE IF NOT EXISTS public.builder_project_snapshots (
             project_id TEXT NOT NULL,
             tenant_id TEXT NOT NULL,
-            kind TEXT NOT NULL CHECK (kind IN ('source', 'deployment')),
+            kind TEXT NOT NULL CHECK (kind IN ('source', 'preview', 'deployment')),
             version_at TEXT NOT NULL,
             PRIMARY KEY (project_id, kind),
             FOREIGN KEY (project_id) REFERENCES public.builder_projects(project_id) ON DELETE CASCADE
           );
+          ALTER TABLE public.builder_project_files DROP CONSTRAINT IF EXISTS builder_project_files_kind_check;
+          ALTER TABLE public.builder_project_files ADD CONSTRAINT builder_project_files_kind_check
+            CHECK (kind IN ('source', 'preview', 'deployment'));
+          ALTER TABLE public.builder_project_snapshots DROP CONSTRAINT IF EXISTS builder_project_snapshots_kind_check;
+          ALTER TABLE public.builder_project_snapshots ADD CONSTRAINT builder_project_snapshots_kind_check
+            CHECK (kind IN ('source', 'preview', 'deployment'));
           CREATE TABLE IF NOT EXISTS public.builder_app_records (
             project_id TEXT NOT NULL,
             collection_name TEXT NOT NULL,
@@ -251,7 +267,7 @@ async function ensureSchema(): Promise<Pool | null> {
           CREATE INDEX IF NOT EXISTS builder_project_exports_created
             ON public.builder_project_exports (created_at DESC);
           CREATE TABLE IF NOT EXISTS public.builder_schema_version (version INTEGER PRIMARY KEY);
-          INSERT INTO public.builder_schema_version (version) VALUES (1), (2), (3), (4), (5) ON CONFLICT DO NOTHING;
+          INSERT INTO public.builder_schema_version (version) VALUES (1), (2), (3), (4), (5), (6) ON CONFLICT DO NOTHING;
         `);
         await client.query("COMMIT");
       } catch (error) {
@@ -365,7 +381,7 @@ export function collectDirectoryFiles(root: string, ignored = SOURCE_IGNORED): P
 async function persistSnapshot(
   pool: Pool,
   record: LocalProjectRecord,
-  kind: "source" | "deployment",
+  kind: "source" | "preview" | "deployment",
   files: PersistedFile[],
   signal?: AbortSignal
 ): Promise<void> {
@@ -544,6 +560,12 @@ export const durableProjectStore = {
     await persistSnapshot(pool, record, "deployment", files, signal);
   },
 
+  async savePreview(record: LocalProjectRecord, files: PersistedFile[], signal?: AbortSignal): Promise<void> {
+    if (files.length === 0) throw new Error("The successful build produced no preview files");
+    const pool = await requireSchema();
+    await persistSnapshot(pool, record, "preview", files, signal);
+  },
+
   async restoreSource(projectId: string, tenantId: string, workspaceDir: string): Promise<number> {
     const pool = await ensureSchema();
     if (!pool) return 0;
@@ -616,6 +638,14 @@ export const durableProjectStore = {
   },
 
   async readDeploymentFile(projectId: string, requestedPath: string): Promise<PersistedFile | null> {
+    return this.readBuildFile(projectId, requestedPath, "deployment");
+  },
+
+  async readPreviewFile(projectId: string, requestedPath: string): Promise<PersistedFile | null> {
+    return this.readBuildFile(projectId, requestedPath, "preview");
+  },
+
+  async readBuildFile(projectId: string, requestedPath: string, kind: "preview" | "deployment"): Promise<PersistedFile | null> {
     const pool = await ensureSchema();
     if (!pool) return null;
     const normalized = assertSafeRelativePath(requestedPath || "index.html");
@@ -625,8 +655,8 @@ export const durableProjectStore = {
        FROM public.builder_project_files AS files
        INNER JOIN public.builder_projects AS projects
          ON projects.project_id = files.project_id AND projects.tenant_id = files.tenant_id
-       WHERE files.project_id = $1 AND files.kind = 'deployment' AND files.path = $2 LIMIT 1`,
-      [projectId, normalized]
+       WHERE files.project_id = $1 AND files.kind = $3 AND files.path = $2 LIMIT 1`,
+      [projectId, normalized, kind]
     );
     const row = res.rows[0];
     return row ? { path: rowText(row.path), content: rowBytes(row.content) } : null;
