@@ -126,8 +126,29 @@ export async function getPlatformAuthAccessToken(): Promise<string | null> {
 `;
 
 export const GENERATED_AUTH_CLIENT_SOURCE = `${GENERATED_AUTH_CLIENT_MARKER}
-import { createClient, type AuthChangeEvent, type Session, type User } from "@supabase/supabase-js";
+import { createClient, type AuthChangeEvent, type Session as SupabaseSession, type User as SupabaseUser } from "@supabase/supabase-js";
 import { registerAuthTokenProvider } from "@/lib/auth-bridge";
+
+// Generated applications commonly need these types for their own view props.
+// Keep the aliases public so a model cannot accidentally depend on an internal
+// Supabase import just to type a sign-in screen.
+export type User = SupabaseUser & { name?: string };
+export type Session = Omit<SupabaseSession, "user"> & { user: User };
+export type AuthError = Error;
+export type AuthResult = { user: User | null; session: Session | null; data: { user: User | null; session: Session | null }; error: null };
+
+function normalizeUser(user: SupabaseUser | null): User | null {
+  if (!user) return null;
+  const name = typeof user.user_metadata?.name === "string" ? user.user_metadata.name : undefined;
+  return { ...user, ...(name ? { name } : {}) };
+}
+
+function normalizeSession(session: SupabaseSession | null): Session | null {
+  if (!session) return null;
+  const user = normalizeUser(session.user);
+  if (!user) return null;
+  return { ...session, user };
+}
 
 type AuthConfig = { url: string; anonKey: string };
 type AuthUnsubscribe = (() => void) & { data: { subscription: { unsubscribe: () => void } } };
@@ -246,10 +267,11 @@ function onAuthStateChange(
   void getAuthClient().then((client) => {
     if (!active) return;
     const { data } = client.auth.onAuthStateChange((event, session) => {
+      const normalizedSession = normalizeSession(session);
       if (callback.length >= 2) {
-        (callback as (event: AuthChangeEvent, session: Session | null) => void)(event, session);
+        (callback as (event: AuthChangeEvent, session: Session | null) => void)(event, normalizedSession);
       } else {
-        (callback as (session: Session | null) => void)(session);
+        (callback as (session: Session | null) => void)(normalizedSession);
       }
     });
     unsubscribe = () => data.subscription.unsubscribe();
@@ -282,17 +304,22 @@ export const auth = {
   async getProjectRole(): Promise<"owner" | "customer" | "visitor"> {
     return auth.getCommerceRole();
   },
-  async signUp(email: string, password: string) {
+  async signUp(emailOrName: string, passwordOrEmail: string, suppliedPassword?: string): Promise<AuthResult> {
+    const name = suppliedPassword === undefined ? undefined : emailOrName;
+    const email = suppliedPassword === undefined ? emailOrName : passwordOrEmail;
+    const password = suppliedPassword === undefined ? passwordOrEmail : suppliedPassword;
     const client = await getAuthClient();
-    const { data, error } = await client.auth.signUp({ email, password });
+    const { data, error } = await client.auth.signUp({ email, password, options: name ? { data: { name } } : undefined });
     if (error) throw error;
-    return { ...data, data, error: null };
+    const result = { user: normalizeUser(data.user), session: normalizeSession(data.session) };
+    return { ...result, data: result, error: null };
   },
-  async signIn(email: string, password: string) {
+  async signIn(email: string, password: string): Promise<AuthResult> {
     const client = await getAuthClient();
     const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    return { ...data, data, error: null };
+    const result = { user: normalizeUser(data.user), session: normalizeSession(data.session) };
+    return { ...result, data: result, error: null };
   },
   async signOut() {
     const client = await getAuthClient();
@@ -303,13 +330,13 @@ export const auth = {
     const client = await getAuthClient();
     const { data, error } = await client.auth.getSession();
     if (error) throw error;
-    return data.session;
+    return normalizeSession(data.session);
   },
   async getUser(): Promise<User | null> {
     const client = await getAuthClient();
     const { data, error } = await client.auth.getUser();
     if (error) throw error;
-    return data.user;
+    return normalizeUser(data.user);
   },
   onAuthStateChange,
 };
@@ -370,14 +397,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
+export type ListResult<T> = { records: T[]; total: number };
+
 export function collection<T extends object = DbRecord>(name: string) {
   const url = collectionPath(name);
   return {
-    async list(options: ListOptions = {}): Promise<{ records: T[]; total: number }> {
+    async list(options: ListOptions = {}): Promise<ListResult<T>> {
       const query = new URLSearchParams();
       if (options.limit !== undefined) query.set("limit", String(options.limit));
       if (options.offset !== undefined) query.set("offset", String(options.offset));
-      return request(url + (query.size ? "?" + query.toString() : ""));
+      const result = await request<{ records: T[]; total: number }>(url + (query.size ? "?" + query.toString() : ""));
+      return result;
     },
     async get(id: string): Promise<T> {
       return request(url + "/" + encodeURIComponent(id));
@@ -1205,6 +1235,17 @@ function refreshRuntimeComponents(dir: string): void {
       if (hash !== legacyHash && !PRIOR_RUNTIME_COMPONENT_HASHES[relative]?.includes(hash)) continue;
     }
     write(dir, relative, source);
+  }
+  // The UI barrel is commonly customized by generated applications. Do not
+  // replace that work just to expose a newly supplied primitive; append the
+  // missing export so direct and barrel Spinner imports remain equivalent.
+  const uiIndex = path.join(dir, "src/components/ui/index.ts");
+  if (fs.existsSync(uiIndex)) {
+    const existing = fs.readFileSync(uiIndex, "utf8");
+    const exportsSpinner = /export\s*\{[^}]*\bSpinner\b[^}]*\}|export\s+\*\s+from\s+["'][^"']*spinner[^"']*["']/.test(existing);
+    if (!exportsSpinner) {
+      write(dir, "src/components/ui/index.ts", `${existing.replace(/\s*$/, "")}\nexport * from "./spinner";\n`);
+    }
   }
 }
 
@@ -2183,6 +2224,21 @@ export function SkeletonCard({ className }: { className?: string }) {
   // SkeletonCard import spelling.
   write(dir, "src/components/ui/skeleton-card.tsx", `export { SkeletonCard } from "./skeleton";\n`);
 
+  // A compact loading indicator is a frequent direct import in generated
+  // applications. Supplying it avoids a needless model repair while retaining
+  // accessible status text and reduced-motion support from the shared CSS.
+  write(
+    dir,
+    "src/components/ui/spinner.tsx",
+    `import { LoaderCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export function Spinner({ className, label = "Loading" }: { className?: string; label?: string }) {
+  return <LoaderCircle className={cn("h-4 w-4 animate-spin motion-reduce:animate-none", className)} aria-label={label} role="status" />;
+}
+`
+  );
+
   write(
     dir,
     "src/components/ui/alert.tsx",
@@ -3067,6 +3123,7 @@ export * from "./switch";
 export * from "./separator";
 export * from "./badge";
 export * from "./skeleton";
+export * from "./spinner";
 export * from "./alert";
 export * from "./empty-state";
 export * from "./metric-card";

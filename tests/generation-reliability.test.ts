@@ -10,7 +10,7 @@ import ts from "typescript";
 import { ensureWorkspaceDependencies } from "../src/lib/local-orchestrator/dependency-scanner";
 import { probeBuiltPreview } from "../src/lib/local-orchestrator/preview-readiness";
 import { generationValidationIssues, isRuntimeOwnedGeneratedPath, validationRepairContext } from "../src/lib/local-orchestrator/generation-validator";
-import { GENERATED_DB_CLIENT_SOURCE, PREINSTALLED_DEPENDENCIES, writeStarterTemplate } from "../src/lib/local-orchestrator/starter-template";
+import { GENERATED_AUTH_CLIENT_SOURCE, GENERATED_DB_CLIENT_SOURCE, PREINSTALLED_DEPENDENCIES, writeStarterTemplate } from "../src/lib/local-orchestrator/starter-template";
 import { compactRepairContext, completeSemanticCss, fixCssImportOrder, hasRealGeneratedSource, postProcessGeneratedFiles, promptRequestsAuthentication, promptRequestsCommerce, promptRequestsPersistence, promptRequestsPrivateFiles, repairContextIncludesAffectedFiles, requestedSharedCatalogCollections, workspaceRepairContext } from "../src/lib/local-orchestrator/agent-engine";
 import { localProjectStore } from "../src/lib/local-orchestrator/project-store";
 import { localFileManager } from "../src/lib/local-orchestrator/file-manager";
@@ -53,6 +53,7 @@ test("a fresh starter workspace is not mistaken for an incremental user project"
     assert.ok(shell);
     assert.equal(fs.readFileSync(path.join(workspace, "src/components/ui/skeleton-card.tsx"), "utf8"),
       'export { SkeletonCard } from "./skeleton";\n');
+    assert.match(fs.readFileSync(path.join(workspace, "src/components/ui/spinner.tsx"), "utf8"), /LoaderCircle/);
     assert.match(fs.readFileSync(path.join(workspace, "src/components/ui/empty-state.tsx"), "utf8"), /<h2\b/);
     assert.match(fs.readFileSync(path.join(workspace, "src/components/ui/empty-state.tsx"), "utf8"), /icon\?: React\.ReactNode \| React\.ElementType/);
     const focusShell = fs.readFileSync(path.join(workspace, "src/components/layout/focus-shell.tsx"), "utf8");
@@ -156,18 +157,21 @@ test("continuation refreshes known starter primitives while preserving customize
     writeStarterTemplate(workspace, "runtime-refresh-check");
     const button = path.join(workspace, "src/components/ui/button.tsx");
     const alert = path.join(workspace, "src/components/ui/alert.tsx");
+    const uiIndex = path.join(workspace, "src/components/ui/index.ts");
     const dashboard = path.join(workspace, "src/components/layout/dashboard-shell.tsx");
     const marketing = path.join(workspace, "src/components/layout/marketing-shell.tsx");
     const customDashboard = "// @bigbag-runtime-layout\nexport function DashboardShell() { return <main>Custom shell</main>; }\n";
     const customMarketing = "export function MarketingShell() { return <main>Custom layout</main>; }\n";
     fs.writeFileSync(button, fs.readFileSync(path.join(process.cwd(), "tests/fixtures/runtime-button-legacy.tsx"), "utf8"));
     fs.writeFileSync(alert, "export function Alert() { return null; }\n");
+    fs.writeFileSync(uiIndex, 'export { Button } from "./button";\n');
     fs.writeFileSync(dashboard, customDashboard);
     fs.writeFileSync(marketing, customMarketing);
     writeStarterTemplate(workspace, "runtime-refresh-check");
     assert.match(fs.readFileSync(button, "utf8"), /asChild\?: boolean/);
     assert.match(fs.readFileSync(button, "utf8"), /icon-sm/);
     assert.equal(fs.readFileSync(alert, "utf8"), "export function Alert() { return null; }\n");
+    assert.equal(fs.readFileSync(uiIndex, "utf8"), 'export { Button } from "./button";\nexport * from "./spinner";\n');
     assert.equal(fs.readFileSync(dashboard, "utf8"), customDashboard);
     assert.equal(fs.readFileSync(marketing, "utf8"), customMarketing);
   } finally {
@@ -366,6 +370,15 @@ test("generated data client retries one rejected auth request but does not retry
   status = 403;
   await assert.rejects(db.collection("trips").list(), /Session is refreshing/);
   assert.equal(attempts, 1);
+});
+
+test("managed generated clients expose public auth types and preserve durable response shapes", () => {
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /export type Session = Omit<SupabaseSession, "user"> & \{ user: User \}/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /async signUp\(emailOrName: string, passwordOrEmail: string, suppliedPassword\?: string\)/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /options: name \? \{ data: \{ name \} \} : undefined/);
+  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /session: Session \| null/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /export type ListResult<T> = \{ records: T\[\]; total: number \}/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /return result;/);
 });
 
 test("unsupported optional imports are rejected before package metadata changes", async () => {
