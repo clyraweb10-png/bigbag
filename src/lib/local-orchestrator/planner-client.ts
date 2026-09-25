@@ -9,6 +9,7 @@
  * ⚠️ SERVER ONLY — reads API keys from env; never import from a client component.
  */
 import "server-only";
+import { safeConfiguredModel } from "./provider-model-config";
 
 export interface PlannerResult {
   text: string;
@@ -37,17 +38,17 @@ export async function* streamChatResponse(
   let routingReason: string;
 
   if (process.env.GROQ_API_KEY) {
-    model = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+    model = safeConfiguredModel(process.env.GROQ_MODEL, "qwen/qwen3.8-27b");
     apiKey = process.env.GROQ_API_KEY;
     baseUrl = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
     routingReason = "groq_fast_chat";
   } else if (process.env.GEMINI_API_KEY) {
-    model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    model = safeConfiguredModel(process.env.GEMINI_MODEL, "gemini-2.5-flash");
     apiKey = process.env.GEMINI_API_KEY;
     baseUrl = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai";
     routingReason = "gemini_fast_chat";
   } else if (process.env.TELNYX_API_KEY) {
-    model = process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
+    model = safeConfiguredModel(process.env.TELNYX_MODEL, "zai-org/GLM-5.3-Flash");
     apiKey = process.env.TELNYX_API_KEY;
     baseUrl = process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai";
     routingReason = "telnyx_chat";
@@ -151,8 +152,7 @@ async function callOpenAICompat(
       signal: controller.signal,
     });
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+      throw new Error(`Provider returned HTTP ${res.status}`);
     }
 
     const data = (await res.json()) as OpenAIResponse;
@@ -187,7 +187,7 @@ export async function callPlanner(
 ): Promise<PlannerResult> {
   const groqApiKey = process.env.GROQ_API_KEY;
   const groqBaseUrl = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
-  const groqModel = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+  const groqModel = safeConfiguredModel(process.env.GROQ_MODEL, "qwen/qwen3.8-27b");
   const groqMaxTokens = Math.min(
     950,
     Math.max(256, parseInt(process.env.GROQ_MAX_TOKENS || "950", 10) || 950)
@@ -195,7 +195,7 @@ export async function callPlanner(
 
   const geminiApiKey = process.env.GEMINI_API_KEY;
   const geminiBaseUrl = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai";
-  const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const geminiModel = safeConfiguredModel(process.env.GEMINI_MODEL, "gemini-2.5-flash");
   const geminiMaxTokens = Math.min(
     2_048,
     Math.max(512, parseInt(process.env.GEMINI_MAX_TOKENS || "2048", 10) || 2_048)
@@ -203,11 +203,11 @@ export async function callPlanner(
 
   const glmApiKey = process.env.GLM_API_KEY;
   const glmBaseUrl = process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
-  const glmModel = process.env.GLM_MODEL || "GLM-4.7-Flash";
+  const glmModel = safeConfiguredModel(process.env.GLM_MODEL, "GLM-4.7-Flash");
 
   const telnyxApiKey = process.env.TELNYX_API_KEY;
   const telnyxBaseUrl = process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai";
-  const telnyxModel = process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
+  const telnyxModel = safeConfiguredModel(process.env.TELNYX_MODEL, "zai-org/GLM-5.3-Flash");
 
   const fullMessages: OpenAIMessage[] = [
     { role: "system", content: systemPrompt },

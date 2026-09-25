@@ -12,7 +12,7 @@ const appOrigin = appUrl ? new URL(appUrl).origin : "";
 const extraAllowedOrigins = new Set(
   (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean)
 );
-const CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Requested-With, X-BigBag-Capability, X-BigBag-Guest";
+const CORS_ALLOWED_HEADERS = "Content-Type, Authorization, X-Requested-With, X-BigBag-Capability, X-BigBag-Guest, X-BigBag-File-Name, X-BigBag-Folder-Id";
 
 /**
  * Check if an origin is allowed for CORS.

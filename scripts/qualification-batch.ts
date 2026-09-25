@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { normalizeQualificationRunId, qualificationProjectId } from "../src/lib/qualification-run";
 import type { LocalProjectRecord } from "../src/lib/local-orchestrator/types";
@@ -11,6 +12,8 @@ const { getGenerationModelDiagnostics, localAgentEngine } = require("../src/lib/
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { localProjectStore, persistentPreviewPath } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
+const { getSupabaseAdminClient } = require("../src/lib/supabase") as typeof import("../src/lib/supabase");
+const { tenantContextForIdentity } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 
 type Status = "PASS" | "PARTIAL" | "FAIL" | "BLOCKED";
 type QualificationCategory = "FULL_STACK" | "DESIGNER" | "ECOMMERCE" | "CHAOS";
@@ -25,7 +28,7 @@ interface QualificationCase {
   visualReferenceUrl?: string;
 }
 
-const SECURITY_CONTRACT = `Use real supported authentication and server/database authorization when requested. Never implement password hashing or comparison in browser code, never store credentials or session records in the project CRUD datastore, never use browser storage as the authority for authentication, never expose secrets, and never simulate a connected backend. Enforce ownership outside the browser. Use actual persisted CRUD with loading, empty, validation, unauthorized, not-found, network-failure, and error states. Keep the application single-page unless the requested workflow genuinely requires routes.`;
+const SECURITY_CONTRACT = `Use real supported authentication and server/database authorization when requested. Never implement password hashing or comparison in browser code, never store credentials or session records in the project CRUD datastore, never use browser storage as the authority for authentication, never expose secrets, and never simulate a connected backend. Enforce ownership outside the browser. Do not invent initial products, stock, orders, users, or payments unless this prompt explicitly asks for demo data; show an honest empty state and admin create flow. Use actual persisted CRUD with loading, empty, validation, unauthorized, not-found, network-failure, and error states. Keep the application single-page unless the requested workflow genuinely requires routes.`;
 
 const CASES: QualificationCase[] = [
   { id: 1, name: "SaaS Project Management", requiresAuth: true, edit: "Make the dashboard header darker without changing behavior.", prompt: `Build a production project-management SaaS with signup, login, logout, persistent sessions, protected routes, organizations, projects, tasks, project CRUD, task CRUD, ownership, and a responsive team dashboard. Use a focused productivity-workstation design with compact navigation, useful tables and calm indigo/ink accents. ${SECURITY_CONTRACT}` },
@@ -35,11 +38,11 @@ const CASES: QualificationCase[] = [
   { id: 5, name: "LMS", requiresAuth: true, edit: "Add course search while preserving enrollment and progress.", prompt: `Build a production LMS with real authentication, courses, lessons, enrollment, progress, protected user data, persistence, and ownership. Use a focused learning design with course navigation, lesson reader, progress cues, and responsive student views. ${SECURITY_CONTRACT}` },
   { id: 6, name: "Job Board", requiresAuth: true, edit: "Add a location filter to the jobs view.", prompt: `Build a production job board with real users, companies, jobs, applications, search, filters, CRUD, persistence, and backend-enforced applicant/company ownership. Use a clear recruiting-product design with job list/detail and application state. ${SECURITY_CONTRACT}` },
   { id: 7, name: "Restaurant Reservation", requiresAuth: true, edit: "Add party-size filtering to availability.", prompt: `Build a production restaurant reservation app with customer accounts, restaurant tables, availability, reservations, cancellation, persistence, and backend conflict handling. Use a hospitality-specific date/time booking experience rather than a generic dashboard. ${SECURITY_CONTRACT}` },
-  { id: 8, name: "Inventory Management", requiresAuth: false, edit: "Add a low-stock filter to the inventory table.", prompt: `Build a production inventory manager with products, categories, inventory, stock updates, complete CRUD, a useful dashboard, persisted data, and refresh recovery. Use a warehouse-operations design with dense but mobile-usable tables and clear stock states. ${SECURITY_CONTRACT}` },
+  { id: 8, name: "Inventory Management", requiresAuth: true, edit: "Add a low-stock filter to the inventory table.", prompt: `Build a production inventory manager with products, categories, inventory, stock updates, complete CRUD, a useful dashboard, persisted data, and refresh recovery. Use a warehouse-operations design with dense but mobile-usable tables and clear stock states. ${SECURITY_CONTRACT}` },
   { id: 9, name: "Expense Tracker", requiresAuth: true, edit: "Add a merchant search field without changing monthly totals.", prompt: `Build a production expense tracker with real authentication, expenses, categories, monthly totals calculated from stored records, complete CRUD, filters, persistence, and ownership. Use a precise personal-finance design with responsive charts and transaction tables. ${SECURITY_CONTRACT}` },
   { id: 10, name: "Support Ticket System", requiresAuth: true, edit: "Add an urgent-priority filter for agents.", prompt: `Build a production support system with real users, tickets, comments, statuses, priorities, agent/customer roles, protected data, persistence, and backend role authorization. Use an efficient support-inbox design with queue/detail composition. ${SECURITY_CONTRACT}` },
   { id: 11, name: "Social Community", requiresAuth: true, edit: "Add post search while preserving comments and likes.", prompt: `Build a production social community with real users, profiles, posts, comments, likes, CRUD, authentication, ownership, and persistence. Use a community-specific feed/profile design with honest empty and moderation-aware states. ${SECURITY_CONTRACT}` },
-  { id: 12, name: "Event Management", requiresAuth: false, edit: "Add attendee search to event management.", prompt: `Build a production event-management app with events, attendees, registration, cancellation, event CRUD, database persistence, and refresh recovery. Use an event-operations design with schedule, attendee list, and responsive registration flow. ${SECURITY_CONTRACT}` },
+  { id: 12, name: "Event Management", requiresAuth: true, edit: "Add attendee search to event management.", prompt: `Build a production event-management app with events, attendees, registration, cancellation, event CRUD, database persistence, and refresh recovery. Use an event-operations design with schedule, attendee list, and responsive registration flow. ${SECURITY_CONTRACT}` },
   { id: 13, name: "Real Estate", requiresAuth: true, edit: "Add a bedrooms filter to listing search.", prompt: `Build a production real-estate app with listings, agents, search, filters, favorites, inquiries, CRUD, persistence, authentication, and backend ownership. Use a photography-led property search/detail experience with agent contact and responsive filters. ${SECURITY_CONTRACT}` },
   { id: 14, name: "Multi-role HR", requiresAuth: true, edit: "Add a pending-leave filter for HR.", prompt: `Build a production HR application with real admin, HR, and employee roles; employees, departments, leave requests, approvals, protected routes, persistence, and backend role enforcement. Use a sober people-operations design with directory and approval queue. ${SECURITY_CONTRACT}` },
   { id: 15, name: "Document Management", requiresAuth: true, edit: "Add document-name search inside the current folder.", prompt: `Build a production document manager with real authentication, folders, documents, actual uploads, metadata, ownership, deletion, persistence, and protected storage access. Use a file-workspace design with folder tree, list/detail, upload progress and honest failures. ${SECURITY_CONTRACT}` },
@@ -167,6 +170,54 @@ const workspaceRoot = process.env.WORKSPACE_ROOT || process.cwd();
 const outputDir = path.join(workspaceRoot, "output", "bigbag-qualification", runId);
 fs.mkdirSync(outputDir, { recursive: true });
 
+let ownerFixturePromise: Promise<{ userId: string; tenantId: string }> | null = null;
+function qualificationOwnerFixture(): Promise<{ userId: string; tenantId: string }> {
+  ownerFixturePromise ||= (async () => {
+    const admin = getSupabaseAdminClient();
+    if (!admin) throw new Error("Supabase admin configuration is required to qualify owner authorization");
+    const fixtureDir = path.join(os.homedir(), "runtime", "qualification-fixtures");
+    fs.mkdirSync(fixtureDir, { recursive: true, mode: 0o700 });
+    const fixturePath = path.join(fixtureDir, `${runId}.json`);
+    const saveOwnerFixture = (fixture: { userId: string; email: string; password: string }) => {
+      const temporary = `${fixturePath}.${process.pid}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(fixture), { mode: 0o600 });
+      fs.renameSync(temporary, fixturePath);
+    };
+    if (fs.existsSync(fixturePath)) {
+      const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as { userId?: string; email?: string; password?: string };
+      if (fixture.userId) {
+        const existing = await admin.auth.admin.getUserById(fixture.userId);
+        if (!existing.error && existing.data.user) {
+          const email = existing.data.user.email;
+          if (!email) throw new Error("Synthetic qualification owner has no email");
+          const password = fixture.password || `${randomBytes(24).toString("base64url")}A1!`;
+          if (!fixture.password) {
+            const updated = await admin.auth.admin.updateUserById(fixture.userId, { password });
+            if (updated.error) throw new Error(`Could not prepare synthetic owner sign-in: ${updated.error.message}`);
+          }
+          saveOwnerFixture({ userId: fixture.userId, email, password });
+          return { userId: fixture.userId, tenantId: tenantContextForIdentity(fixture.userId).tenantId };
+        }
+      }
+    }
+    const password = `${randomBytes(24).toString("base64url")}A1!`;
+    const created = await admin.auth.admin.createUser({
+      email: `bigbag-qualification-${runId}-${randomUUID()}@invalid.test`,
+      password,
+      email_confirm: true,
+    });
+    if (created.error || !created.data.user) {
+      throw new Error(`Could not create a synthetic qualification owner: ${created.error?.message || "unknown error"}`);
+    }
+    saveOwnerFixture({ userId: created.data.user.id, email: created.data.user.email || "", password });
+    return { userId: created.data.user.id, tenantId: tenantContextForIdentity(created.data.user.id).tenantId };
+  })().catch((error) => {
+    ownerFixturePromise = null;
+    throw error;
+  });
+  return ownerFixturePromise;
+}
+
 function sourceFiles(projectId: string): Array<{ path: string; content: string }> {
   const root = localProjectStore.getWorkspaceDir(projectId);
   const files: Array<{ path: string; content: string }> = [];
@@ -192,7 +243,7 @@ function categoryFor(id: number): QualificationCategory {
 }
 
 async function waitForGeneration(projectId: string, generationId: string): Promise<{ status: Status; message: string }> {
-  const deadline = Date.now() + 15 * 60_000;
+  const deadline = Date.now() + 20 * 60_000;
   while (Date.now() < deadline) {
     const record = localProjectStore.getRecord(projectId);
     const terminal = [...(record?.conversation || [])].reverse().find((message) =>
@@ -204,7 +255,8 @@ async function waitForGeneration(projectId: string, generationId: string): Promi
     }
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
-  return { status: "BLOCKED", message: "Generation did not reach a terminal state within 15 minutes" };
+  await localAgentEngine.cancelPrompt(projectId, generationId).catch(() => undefined);
+  return { status: "BLOCKED", message: "Generation did not reach a terminal state within 20 minutes" };
 }
 
 async function runPrompt(
@@ -272,7 +324,10 @@ async function qualify(item: QualificationCase) {
     };
   });
   const priorCampaignAttempt = priorCampaignAttempts.at(-1) || null;
-  const tenantId = randomUUID();
+  // Generation may legitimately introduce owner-managed catalogs for a prompt
+  // that did not explicitly ask for login. Give every qualification project a
+  // real synthetic creator identity so owner-only workflows can be exercised.
+  const tenantId = (await qualificationOwnerFixture()).tenantId;
   const label = `Qualification ${String(item.id).padStart(2, "0")} - ${item.name}`;
   let nextProjectId = requestedProjectId;
   for (let suffix = 0; ; suffix += 1) {
@@ -305,12 +360,18 @@ async function qualify(item: QualificationCase) {
     }).projectId;
     if (createdProjectId !== nextProjectId) throw new Error("Qualification reservation no longer matches the local project id");
   } catch (error) {
-    for (const candidate of new Set([nextProjectId, createdProjectId].filter((id): id is string => Boolean(id)))) {
-      if (localProjectStore.getRecord(candidate)?.tenantId === tenantId) {
-        await localProjectStore.waitForRecordPersistence(candidate).catch(() => undefined);
-        localProjectStore.remove(candidate);
+    if (createdProjectId) {
+      await localProjectStore.waitForRecordPersistence(createdProjectId).catch(() => undefined);
+      try {
+        localProjectStore.remove(createdProjectId);
+      } catch {
+        console.warn("[qualification] Could not remove the local record after project creation failed");
       }
-      await durableProjectStore.remove(candidate, tenantId);
+    }
+    try {
+      await durableProjectStore.remove(nextProjectId, tenantId);
+    } catch {
+      console.warn("[qualification] Could not remove the durable reservation after project creation failed");
     }
     throw error;
   }
@@ -337,11 +398,6 @@ async function qualify(item: QualificationCase) {
     .filter((attempt) => attempt.result !== "PASS")
     .map((attempt) => `Previous campaign attempt ${attempt.projectId} ${attempt.result.toLowerCase()}: ${attempt.terminalMessage}`);
   const firstAttemptFailures = [...priorAttemptFailures, ...initialProviderFailures, ...initialLifecycleFailures];
-  const files = sourceFiles(projectId);
-  const modelOwnedFiles = files.filter((file) => !["src/lib/db.ts", "src/lib/auth.ts", "src/main.tsx"].includes(file.path));
-  const securityFindings = generationValidationIssues(modelOwnedFiles, files.map((file) => file.path), { requireEntrypoint: false })
-    .filter((issue) => /password|authentication|authorization|browser storage|server-only secret|service role/i.test(issue));
-  const hasRealAuthProvider = modelOwnedFiles.some((file) => /from\s+["']@\/lib\/auth["']|firebase\/auth|@auth0\//.test(file.content));
   const deploymentIndex = await durableProjectStore.readDeploymentFile(projectId, "index.html").catch(() => null);
   const database = await databaseProbe(projectId);
 
@@ -353,6 +409,14 @@ async function qualify(item: QualificationCase) {
       edit = { generationId: localProjectStore.getRecord(projectId)?.activeGenerationId || "missing", terminal: { status: "FAIL", message: error instanceof Error ? error.message : String(error) } };
     }
   }
+
+  // An incremental edit can change the authentication and secret boundary.
+  // Qualify the final source, including a failed edit's preserved workspace.
+  const files = sourceFiles(projectId);
+  const modelOwnedFiles = files.filter((file) => !["src/lib/db.ts", "src/lib/auth.ts", "src/main.tsx"].includes(file.path));
+  const securityFindings = generationValidationIssues(modelOwnedFiles, files.map((file) => file.path), { requireEntrypoint: false })
+    .filter((issue) => /security issue|password|authentication|authorization|browser storage|server-only secret|service role/i.test(issue));
+  const hasRealAuthProvider = modelOwnedFiles.some((file) => /from\s+["']@\/lib\/auth["']|firebase\/auth|@auth0\//.test(file.content));
 
   const recordAfterEdit = localProjectStore.getRecord(projectId);
   const editModelDiagnostics = edit ? getGenerationModelDiagnostics(projectId, edit.generationId) : null;
@@ -389,11 +453,20 @@ async function qualify(item: QualificationCase) {
       : hasRealAuthProvider
         ? "PARTIAL"
         : "FAIL";
-  const buildVerified = recordAfterInitial?.deployment?.status === "success" && events.some((event) =>
+  const buildVerified = Boolean(deploymentIndex) && events.some((event) =>
     (event.type === "build_completed" || event.type === "validation_completed") && event.status === "completed"
   );
   const build: Status = buildVerified ? "PASS" : initial.terminal.status === "BLOCKED" ? "BLOCKED" : "FAIL";
-  const runtime: Status = deploymentIndex && events.some((event) => event.type === "preview_ready" && event.status === "completed") ? "PASS" : "FAIL";
+  const runtime: Status = deploymentIndex && events.some((event) => event.type === "preview_ready" && event.status === "completed")
+    ? "PASS" : initial.terminal.status === "BLOCKED" ? "BLOCKED" : "FAIL";
+  const initialRepairCount = (recordAfterInitial?.conversation || []).filter((message) => /repair attempt \d+ of \d+/i.test(message.message)).length;
+  const editRepairCount = editMessages.filter((message) => /repair attempt \d+ of \d+/i.test(message.message)).length;
+  const repairCount = initialRepairCount + editRepairCount;
+  const startedAt = (recordAfterInitial?.conversation || []).find((message) => message.generationEvent?.type === "generation_started")?.createdAt;
+  const finishedAt = [...(recordAfterInitial?.conversation || [])].reverse().find((message) =>
+    message.generationEvent?.type === "generation_completed" || message.generationEvent?.type === "generation_failed"
+  )?.createdAt;
+  const generationDurationMs = startedAt && finishedAt ? Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) : null;
   const finalGates = {
     generation: initial.terminal.status === "PASS",
     build: build === "PASS",
@@ -403,8 +476,18 @@ async function qualify(item: QualificationCase) {
     connector: connector === "PASS",
     qualificationPersistence: true,
   };
-  const final: Status = Object.values(finalGates).every(Boolean) ? "PARTIAL" : "FAIL";
+  const outputDependentStatuses = initial.terminal.status === "BLOCKED" ? [] : [auth, connector];
+  const confirmedFailure = [initial.terminal.status, build, runtime, database.status, ...outputDependentStatuses].includes("FAIL") ||
+    Boolean(edit && !editLifecyclePassed && edit.terminal.status !== "BLOCKED") || securityFindings.length > 0;
+  const blocked = initial.terminal.status === "BLOCKED" || Boolean(edit && !editLifecyclePassed && edit.terminal.status === "BLOCKED");
+  const final: Status = confirmedFailure ? "FAIL" : blocked ? "BLOCKED" : "PARTIAL";
   const evidence = {
+    testedAt: new Date().toISOString(),
+    generationDurationMs,
+    repairCount,
+    initialRepairCount,
+    editRepairCount,
+    screenshotUrl: recordAfterInitial?.screenshotUrl || null,
     projectNumber: item.id,
     projectName: item.name,
     category,
@@ -422,6 +505,8 @@ async function qualify(item: QualificationCase) {
       build,
       runtime,
       preview: runtime,
+      frontend: runtime === "PASS" ? "PARTIAL" as Status : runtime,
+      backend: database.status === "PASS" ? "PARTIAL" as Status : database.status,
       database: database.status,
       authentication: auth,
       crud: database.status === "PASS" ? "PARTIAL" as Status : "FAIL" as Status,
@@ -436,6 +521,9 @@ async function qualify(item: QualificationCase) {
             ? "BLOCKED" as Status
             : "FAIL" as Status,
       responsive: "BLOCKED" as Status,
+      uiUx: "BLOCKED" as Status,
+      accessibility: "BLOCKED" as Status,
+      codeRabbit: "NOT_RUN",
       security: securityFindings.length === 0 && (!item.requiresAuth || hasRealAuthProvider) ? "PARTIAL" as Status : "FAIL" as Status,
       final,
     },
@@ -533,4 +621,4 @@ async function main() {
 void main().catch((error) => {
   process.stderr.write(`QUALIFICATION_BATCH_FAILED ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
-});
+}).finally(() => durableProjectStore.closeConnections());

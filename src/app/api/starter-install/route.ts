@@ -175,8 +175,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const htmlFile = bundle?.find(f => f.path === "dist/index.html" || f.path === "index.html");
   if (htmlFile && durablePersistenceConfigured()) {
     try {
-      const rec = localProjectStore.getRecord(projectId);
+      const rec = localProjectStore.update(projectId, {});
       if (rec) {
+        await localProjectStore.flush(projectId);
         await durableProjectStore.saveDeployment(rec, [
           { path: "index.html", content: Buffer.from(htmlFile.content, "utf8") }
         ]);

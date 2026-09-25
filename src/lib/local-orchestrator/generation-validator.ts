@@ -1,6 +1,8 @@
 import path from "path";
+import { createHash } from "node:crypto";
 import postcss from "postcss";
 import ts from "typescript";
+import { scanGeneratedSourceLine } from "../generated-source-security";
 
 export type GeneratedSourceFile = { path: string; content: string };
 
@@ -27,6 +29,12 @@ export const APPLICATION_ENTRYPOINT_PATHS = new Set([
 ]);
 const FORBIDDEN_GENERATED_CHARACTERS = /[\u00a0\u200b-\u200d\u2013\u2014\u2018\u2019\u201c\u201d\u2026\u2060\ufeff]/u;
 const VITE_BUILT_IN_ENVIRONMENT_VARIABLES = new Set(["BASE_URL", "DEV", "MODE", "PROD", "SSR"]);
+const STARTER_UI_COMPONENTS = new Set([
+  "button", "card", "label", "input", "textarea", "checkbox", "switch", "separator",
+  "badge", "skeleton", "skeleton-card", "alert", "empty-state", "metric-card", "table", "dialog",
+  "sheet", "dropdown-menu", "tabs", "tooltip", "select", "breadcrumbs", "pagination",
+  "form", "index", "sparkline", "chart-container", "image-frame",
+]);
 
 export function seedRecordIntent(text: string): boolean | null {
   const request = /\b(?:seed(?:ed|ing)?|demo|sample|fixture|mock)(?:\s+(?:the|a|my|some|[0-9]+|one|two|three|five|ten))?\s+(?:data|database|records|products?|inventory|catalog(?:ue)?|items?|users?|orders?)\b/gi;
@@ -202,6 +210,35 @@ function isCompleteHtmlDocument(content: string): boolean {
  */
 export function isRuntimeOwnedGeneratedPath(value: string, content?: string): boolean {
   const normalized = normalizeGeneratedPath(value);
+  // A sibling ui.tsx wins module resolution over components/ui/index.ts and
+  // would make every preinstalled primitive import disappear.
+  if (/^src\/components\/ui\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  const starterUi = /^src\/components\/ui\/([a-z][a-z0-9-]*)\.[cm]?[jt]sx?$/.exec(normalized);
+  if (starterUi && STARTER_UI_COMPONENTS.has(starterUi[1])) return true;
+  const starterLayout = /^src\/components\/layout\/(dashboard-shell|marketing-shell|storefront-shell|editorial-shell|focus-shell|index)\.[cm]?[jt]sx?$/.exec(normalized);
+  if (starterLayout) {
+    // The starter's barrel is the one supported import surface. An index.tsx
+    // from the model can shadow index.ts and silently change every shell import.
+    if (starterLayout[1] === "index") return true;
+    // A model may customize a shell at the same path. Only the injected starter
+    // (including layouts created before the marker was introduced) is runtime-owned.
+    // Callers checking a deletion have no content; protect the known path until
+    // a replacement is supplied so the workspace cannot lose an imported shell.
+    if (content === undefined) return true;
+    if (content?.startsWith("// @bigbag-runtime-layout\n")) return true;
+    const legacyHashes: Record<string, string> = {
+      "dashboard-shell": "6d3ad636b60c7fe6708455099b3da204ccde8c8c30c333932808d53ed83945aa",
+      "marketing-shell": "d34d50b027be686719c69f3f0c2fe26536bfae9b53cfdf48e07984d8ac7021f8",
+      "storefront-shell": "884ba9736a5a51e90c025db3651f68b9673abf13486a6446135fffb3e99a07a4",
+      "editorial-shell": "1a1ae10eff7b16732f045a13e49816ab04af22c8324b4e19305163c00bbaa7ea",
+      "focus-shell": "6685bef90cd6ae8c0b783ba541f7fe8bf691428dc741cc960b0b1b7875f76f50",
+      index: "8c8bb0120e2ce0755feb8a8840e662ec7d70d3c5375720b1d893e56a00b4543e",
+    };
+    return Boolean(content && createHash("sha256").update(content).digest("hex") === legacyHashes[starterLayout[1]]);
+  }
+  // These files execute during installation or build and are owned by the
+  // platform. Package additions go through the vetted dependency scanner.
+  if (/^(?:package\.json|(?:vite|postcss|tailwind|tsconfig)\.config\.[cm]?[jt]s|tsconfig\.json)$/.test(normalized)) return true;
   if (normalized === "package-lock.json") return true;
   if (normalized === "index.html") return true;
   // The platform injects a browser-safe, project-scoped database client here.
@@ -209,6 +246,8 @@ export function isRuntimeOwnedGeneratedPath(value: string, content?: string): bo
   if (/^src\/lib\/db\.[cm]?[jt]sx?$/.test(normalized)) return true;
   if (/^src\/lib\/auth\.[cm]?[jt]sx?$/.test(normalized)) return true;
   if (/^src\/lib\/auth-bridge\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  if (/^src\/lib\/files\.[cm]?[jt]sx?$/.test(normalized)) return true;
+  if (/^src\/lib\/utils\.[cm]?[jt]sx?$/.test(normalized)) return true;
   if (/^src\/(?:main|index)\.[cm]?[jt]sx?$/.test(normalized) && content?.includes("@bigbag-runtime-entry")) {
     return true;
   }
@@ -259,10 +298,16 @@ export function validationRepairContext(
     .map((file, index) => ({ file, index, referenced: issueText.includes(normalizeGeneratedPath(file.path)) }))
     .sort((left, right) => Number(right.referenced) - Number(left.referenced) || left.index - right.index)
     .map(({ file }) => file);
-  return prioritized
-    .map((file) => `### File: ${file.path}\n\`\`\`\n${file.content}\n\`\`\``)
-    .join("\n\n")
-    .slice(0, Math.max(1, maxCharacters));
+  let remaining = Math.max(1, maxCharacters);
+  const completeFiles: string[] = [];
+  for (const file of prioritized) {
+    const block = `### File: ${file.path}\n\`\`\`\n${file.content}\n\`\`\``;
+    const cost = block.length + (completeFiles.length ? 2 : 0);
+    if (cost > remaining) continue;
+    completeFiles.push(block);
+    remaining -= cost;
+  }
+  return completeFiles.join("\n\n");
 }
 
 function cssImportSpecifiers(content: string): string[] {
@@ -470,10 +515,26 @@ function hasInMemoryAuthenticationMap(filePath: string, content: string): boolea
 }
 
 function projectDatabaseHandlesCredentials(content: string): boolean {
-  return (
-    /\.(?:create|update)\s*\([\s\S]{0,400}\b(?:password(?:Hash|_hash)?|accessToken|refreshToken|sessionToken|credential)\b/i.test(content) ||
-    (/\.(?:list|get)\s*\(/.test(content) && /\b(?:passwordHash|password_hash|accessToken|refreshToken|sessionToken)\b/.test(content))
-  );
+  const sourceFile = sourceFileFor("generated.tsx", content);
+  const credential = /\b(?:password(?:Hash|_hash)?|accessToken|refreshToken|sessionToken|credential)\b/i;
+  let writesCredential = false;
+  let readsProjectRecords = false;
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const operation = node.expression.name.text;
+      if (operation === "create" || operation === "update") {
+        // Inspect only this call's arguments. A broad source regex can consume
+        // an unrelated auth.signUp password hundreds of characters later.
+        writesCredential ||= node.arguments.some((argument) => credential.test(argument.getText(sourceFile)));
+      } else if (operation === "list" || operation === "get") {
+        readsProjectRecords = true;
+      }
+    }
+    if (!writesCredential) ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return writesCredential || (readsProjectRecords &&
+    /\b(?:passwordHash|password_hash|accessToken|refreshToken|sessionToken)\b/.test(content));
 }
 
 function usesBrowserStorageAsAuthAuthority(content: string): boolean {
@@ -575,7 +636,7 @@ const UNSUPPORTED_DIRECT_DATABASE_METHODS = new Set([
   "list", "get", "create", "update", "remove", "putMany", "query", "insert", "delete",
 ]);
 
-function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): boolean {
+function managedDatabaseCalls(filePath: string, content: string): { unsupported: boolean; collection: boolean } {
   const compilerOptions: ts.CompilerOptions = {
     noLib: true,
     noResolve: true,
@@ -591,26 +652,28 @@ function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): bo
   const sourceFile = program.getSourceFile(filePath) || parsedSource;
   const checker = program.getTypeChecker();
   const bindings = new Set<ts.Symbol>();
-  const addBinding = (identifier: ts.Identifier | undefined) => {
+  const collectionBindings = new Set<ts.Symbol>();
+  const addBinding = (identifier: ts.Identifier | undefined, target = bindings) => {
     const symbol = identifier && checker.getSymbolAtLocation(identifier);
-    if (symbol) bindings.add(symbol);
+    if (symbol) target.add(symbol);
   };
 
   for (const statement of sourceFile.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== "@/lib/db"
+      !resolvesLocalRuntimeModule(filePath, statement.moduleSpecifier.text, "db")
     ) continue;
     const clause = statement.importClause;
     addBinding(clause?.name);
     if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
       for (const element of clause.namedBindings.elements) {
         if ((element.propertyName?.text || element.name.text) === "db") addBinding(element.name);
+        if ((element.propertyName?.text || element.name.text) === "collection") addBinding(element.name, collectionBindings);
       }
     }
   }
-  if (bindings.size === 0) return false;
+  if (bindings.size === 0 && collectionBindings.size === 0) return { unsupported: false, collection: false };
 
   // Follow simple local aliases (`const store = client`) so renaming the import
   // cannot bypass validation. Repeat because aliases may form a short chain.
@@ -626,8 +689,9 @@ function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): bo
       ) {
         const sourceSymbol = checker.getSymbolAtLocation(node.initializer);
         const aliasSymbol = checker.getSymbolAtLocation(node.name);
-        if (sourceSymbol && aliasSymbol && bindings.has(sourceSymbol) && !bindings.has(aliasSymbol)) {
-          bindings.add(aliasSymbol);
+        const target = sourceSymbol && (bindings.has(sourceSymbol) ? bindings : collectionBindings.has(sourceSymbol) ? collectionBindings : null);
+        if (target && aliasSymbol && !target.has(aliasSymbol)) {
+          target.add(aliasSymbol);
           addedAlias = true;
         }
       }
@@ -637,19 +701,33 @@ function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): bo
   }
 
   let unsupported = false;
+  let collection = false;
   const visitCalls = (node: ts.Node) => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      Boolean(checker.getSymbolAtLocation(node.expression.expression) &&
-        bindings.has(checker.getSymbolAtLocation(node.expression.expression)!)) &&
-      UNSUPPORTED_DIRECT_DATABASE_METHODS.has(node.expression.name.text)
-    ) unsupported = true;
-    if (!unsupported) ts.forEachChild(node, visitCalls);
+    if (ts.isCallExpression(node)) {
+      if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
+        const symbol = checker.getSymbolAtLocation(node.expression.expression);
+        if (symbol && bindings.has(symbol)) {
+          if (UNSUPPORTED_DIRECT_DATABASE_METHODS.has(node.expression.name.text)) unsupported = true;
+          if (node.expression.name.text === "collection" || node.expression.name.text === "from") collection = true;
+        }
+      } else if (ts.isIdentifier(node.expression)) {
+        const symbol = checker.getSymbolAtLocation(node.expression);
+        if (symbol && collectionBindings.has(symbol)) collection = true;
+      }
+    }
+    ts.forEachChild(node, visitCalls);
   };
   visitCalls(sourceFile);
-  return unsupported;
+  return { unsupported, collection };
+}
+
+function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): boolean {
+  return managedDatabaseCalls(filePath, content).unsupported;
+}
+
+function hasManagedCollectionCall(filePath: string, content: string): boolean {
+  if (!/\.[cm]?[jt]sx?$/.test(filePath)) return false;
+  return managedDatabaseCalls(filePath, content).collection;
 }
 
 function importSpecifiers(filePath: string, content: string): string[] {
@@ -750,8 +828,14 @@ export function generationValidationIssues(
     allowSeedData?: boolean;
     /** Generated auth UI is allowed only when the user's request needs accounts or protected data. */
     allowAuthentication?: boolean;
+    /** Requested account flows must use the supported, server-verified identity client. */
+    requireAuthentication?: boolean;
+    /** Commerce management controls must use the server-reported owner role. */
+    requireCommerceRole?: boolean;
     /** Existing source is security-scanned so a narrow edit cannot preserve a critical violation. */
     existingSources?: GeneratedSourceFile[];
+    /** Business records requested by the user must survive a refresh. */
+    requirePersistence?: boolean;
   } = {}
 ): string[] {
   const issues: string[] = [];
@@ -762,6 +846,12 @@ export function generationValidationIssues(
     content: file.content,
   }));
   const generatedPaths = new Set<string>();
+  const sourceSecurityIssues = (filePath: string, content: string): string[] =>
+    content.split(/\r?\n/).flatMap((line, index) =>
+      scanGeneratedSourceLine(filePath, line).map((finding) =>
+        `${filePath}:${index + 1} ${finding.severity.toLowerCase()} security issue: ${finding.finding}`
+      )
+    );
 
   for (const file of normalizedFiles) {
     if (
@@ -783,7 +873,7 @@ export function generationValidationIssues(
     if (containsGenerationPlaceholder(file.content)) issues.push(`placeholder or unfinished code in ${file.path}`);
     if (
       options.allowSeedData !== true &&
-      /(?:^|\/)(?:seed|seeds|fixtures?)(?:\.(?:[cm]?[jt]sx?|json)|\/)/i.test(file.path)
+      /(?:^|\/)(?:seeds?|fixtures?)(?:\/|(?:[-_.](?:data|products?|inventory|orders?|customers?|users?|records?|catalog(?:ue)?|items?))?\.(?:[cm]?[jt]sx?|json)$)/i.test(file.path)
     ) {
       issues.push(`${file.path} adds seed or fixture data without an explicit user request for demo/seed data`);
     }
@@ -805,6 +895,7 @@ export function generationValidationIssues(
     if (structuredIssue) issues.push(structuredIssue);
     issues.push(...visualQualityIssues(file.path, file.content));
     issues.push(...generatedSecurityIssues(file.path, file.content));
+    issues.push(...sourceSecurityIssues(file.path, file.content));
     issues.push(...generatedAuthContractIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
@@ -824,6 +915,33 @@ export function generationValidationIssues(
     const existingPath = normalizeGeneratedPath(existing.path);
     if (generatedPaths.has(existingPath)) continue;
     issues.push(...generatedSecurityIssues(existingPath, existing.content));
+    issues.push(...sourceSecurityIssues(existingPath, existing.content));
+  }
+
+  const effectiveSources = [...normalizedFiles, ...(options.existingSources || []).filter((file) => !generatedPaths.has(normalizeGeneratedPath(file.path)))];
+  const modelSources = effectiveSources.filter((file) => !isRuntimeOwnedGeneratedPath(file.path, file.content));
+  if (options.requireAuthentication) {
+    if (!modelSources.some((file) => importsAuthentication(file.path, file.content) && /\bauth\.(?:getSession|onAuthStateChange|signIn|signUp)\s*\(/.test(file.content))) {
+      issues.push("requested authentication has no real identity client usage; import auth from @/lib/auth and implement signup, signin, session loading, and logout");
+    }
+  }
+  if (options.requireCommerceRole) {
+    if (!modelSources.some((file) => /\bauth\.(?:getCommerceRole|getProjectRole)\s*\(/.test(file.content))) {
+      issues.push("commerce owner controls have no server-verified role; call auth.getProjectRole() and show management only to the returned owner");
+    }
+    if (!modelSources.some((file) => hasManagedCollectionCall(file.path, file.content) && /\bcollection(?:<[^>\n]+>)?\s*\(\s*["']carts["']/.test(file.content))) {
+      issues.push("commerce cart has no durable carts collection; use db.collection(\"carts\") so guest and signed-in bags survive refresh");
+    }
+    for (const file of modelSources) {
+      if (/\b(?:const|let)\s+(?:isOwner|ownerRole|isAdmin)\s*=\s*true\b|\b(?:const|let)\s*\[\s*(?:isOwner|ownerRole|isAdmin)\s*(?:,\s*[A-Za-z_$][\w$]*)?\s*\]\s*=\s*(?:React\.)?useState(?:<[^>\n]+>)?\s*\(\s*true\s*\)/.test(file.content)) {
+        issues.push(`${file.path} hardcodes the owner role; derive it from auth.getProjectRole()`);
+      }
+    }
+  }
+  if (options.requirePersistence) {
+    if (!modelSources.some((file) => hasManagedCollectionCall(file.path, file.content))) {
+      issues.push("requested application data has no durable database collection; use the project-scoped @/lib/db client instead of component state or hardcoded rows");
+    }
   }
 
   const existingNormalized = new Set(existingPathList);
@@ -877,9 +995,19 @@ export function generationValidationIssues(
     }
   }
 
-  const availablePaths = new Set(
-    [...existingPathList, ...generatedPaths]
-  );
+  const availablePaths = new Set([
+    ...existingPathList,
+    ...generatedPaths,
+    ...[...STARTER_UI_COMPONENTS].map((name) => `src/components/ui/${name}.${name === "index" ? "ts" : "tsx"}`),
+    ...["dashboard-shell", "marketing-shell", "storefront-shell", "editorial-shell", "focus-shell"]
+      .map((name) => `src/components/layout/${name}.tsx`),
+    "src/components/layout/index.ts",
+    "src/lib/utils.ts",
+    "src/lib/db.ts",
+    "src/lib/auth.ts",
+    "src/lib/auth-bridge.ts",
+    "src/lib/files.ts",
+  ]);
   for (const file of normalizedFiles) {
     if (!/\.(?:tsx?|jsx?|css)$/.test(file.path)) continue;
     for (const specifier of importSpecifiers(file.path, file.content)) {

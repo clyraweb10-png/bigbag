@@ -9,6 +9,12 @@ export interface LocalProjectRecord {
   qualificationRunId?: string;
   /** True when generated-app data must be authorized by a real end-user session. */
   requiresEndUserAuth?: boolean;
+  /** Enables server-enforced shared catalogue reads and owner-only product writes. */
+  commerceEnabled?: boolean;
+  /** Enables private object storage and the server-owned documents metadata boundary. */
+  privateFilesEnabled?: boolean;
+  /** Explicit first-generation public catalogs; all other collections remain private. */
+  sharedCatalogCollections?: Array<"events" | "courses" | "services" | "tables" | "listings">;
   createdAt: string;
   lastModifiedAt?: string;
   agentStartedAt?: string;

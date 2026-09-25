@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { spawnSync } from "child_process";
-import { ALWAYS_AVAILABLE_PACKAGES } from "./starter-template";
+import { execFile } from "child_process";
+import { ALWAYS_AVAILABLE_PACKAGES, PREINSTALLED_DEPENDENCIES, PREINSTALLED_DEV_DEPENDENCIES } from "./starter-template";
+import { generatedProcessEnvironment } from "./process-env";
 
 /**
  * Node.js built-in modules that should never be npm-installed.
@@ -28,6 +29,8 @@ const ALWAYS_AVAILABLE = ALWAYS_AVAILABLE_PACKAGES;
  * installing arbitrary packages selected by model output.
  */
 const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>([
+  // Restored projects may retain a server-exclusive legacy database client.
+  ["@libsql/client", "0.18.0"],
   ["@hookform/resolvers", "5.2.2"],
   ["@radix-ui/react-accordion", "1.2.12"],
   ["@radix-ui/react-dialog", "1.1.15"],
@@ -41,6 +44,13 @@ const ALLOWED_GENERATED_DEPENDENCIES = new Map<string, string>([
 ]);
 
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/i;
+const REGISTRY_VERSION_TOKEN = /^(?:\^|~|>=|<=|>|<)?(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){1,2}(?:-[0-9a-z-]+(?:\.[0-9a-z-]+)*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
+
+function safeRegistryVersion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 100 &&
+    value.split(/\s*\|\|\s*/).every((range) =>
+      range.trim().split(/\s+/).every((token) => REGISTRY_VERSION_TOKEN.test(token)));
+}
 
 /**
  * Scan a list of generated file contents for third-party npm package imports.
@@ -49,7 +59,8 @@ const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a
  * Node built-ins and NOT in the always-available set.
  */
 export function detectThirdPartyImports(
-  files: Array<{ path: string; content: string }>
+  files: Array<{ path: string; content: string }>,
+  includeAlwaysAvailable = false
 ): string[] {
   const found = new Set<string>();
 
@@ -75,7 +86,7 @@ export function detectThirdPartyImports(
         }
 
         if (NODE_BUILTINS.has(specifier)) continue;
-        if (ALWAYS_AVAILABLE.has(specifier)) continue;
+        if (!includeAlwaysAvailable && ALWAYS_AVAILABLE.has(specifier)) continue;
         if (specifier.startsWith("@/")) continue;
         if (!PACKAGE_NAME.test(specifier)) continue;
 
@@ -93,11 +104,33 @@ export function detectThirdPartyImports(
  * deployments slow, non-reproducible, and still left the generated app missing
  * the package it imported.
  */
-export function ensureWorkspaceDependencies(
+export async function ensureWorkspaceDependencies(
   files: Array<{ path: string; content: string }>,
-  workspaceDir: string
-): { added: string[]; installed: string[]; failed: string[] } {
-  const requested = detectThirdPartyImports(files);
+  workspaceDir: string,
+  signal?: AbortSignal
+): Promise<{ added: string[]; installed: string[]; failed: string[] }> {
+  const existingSources: Array<{ path: string; content: string }> = [];
+  const visit = (directory: string): void => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory() && !["node_modules", "dist", "build", ".next", ".git"].includes(entry.name)) visit(full);
+      else if (entry.isFile() && /\.(?:tsx?|jsx?|mjs|cjs)$/.test(entry.name)) {
+        existingSources.push({ path: path.relative(workspaceDir, full), content: fs.readFileSync(full, "utf8") });
+      }
+    }
+  };
+  for (const directory of ["src", "app", "pages"]) visit(path.join(/* turbopackIgnore: true */ workspaceDir, directory));
+  const allSources = [...existingSources, ...files];
+  const requested = detectThirdPartyImports(allSources);
+  const imported = new Set(detectThirdPartyImports(allSources, true));
+  const unsupported = requested.filter((name) => !ALLOWED_GENERATED_DEPENDENCIES.has(name));
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Unsupported generated dependency: ${unsupported.join(", ")}. Replace the import with an installed React, CSS, or browser implementation.`
+    );
+  }
   const packagePath = path.join(workspaceDir, "package.json");
   let pkg: {
     dependencies?: Record<string, string>;
@@ -119,16 +152,50 @@ export function ensureWorkspaceDependencies(
       ? { ...pkg.dependencies }
       : {};
 
-  const added: string[] = [];
-  for (const name of requested) {
-    if (!dependencies[name]) {
-      const version = ALLOWED_GENERATED_DEPENDENCIES.get(name) || "latest";
-      dependencies[name] = version;
-      added.push(name);
+  // Old model output may leave an unused unsupported package in a restored
+  // manifest. Remove that declaration before npm install, while preserving a
+  // diagnostic above if any current source still imports the package.
+  let manifestChanged = false;
+  for (const name of Object.keys(dependencies)) {
+    // The starter advertises a broad installed stack for model generation,
+    // but each E2B worker installs its manifest afresh. Remove unused starter
+    // packages before the build so a basic app does not pay for charts, motion,
+    // browser test utilities, and other optional dependencies it never uses.
+    if (name !== "react" && name !== "react-dom" && name !== "jsdom" &&
+        PREINSTALLED_DEPENDENCIES[name] && !imported.has(name)) {
+      delete dependencies[name];
+      manifestChanged = true;
+    } else if (!ALWAYS_AVAILABLE.has(name) && !ALLOWED_GENERATED_DEPENDENCIES.has(name)) {
+      delete dependencies[name];
+      manifestChanged = true;
+    } else if (!safeRegistryVersion(dependencies[name])) {
+      const pinned = ALLOWED_GENERATED_DEPENDENCIES.get(name) ||
+        PREINSTALLED_DEPENDENCIES[name] || PREINSTALLED_DEV_DEPENDENCIES[name];
+      if (pinned) dependencies[name] = pinned;
+      else delete dependencies[name];
+      manifestChanged = true;
     }
   }
 
-  if (added.length > 0 && fs.existsSync(packagePath)) {
+  const added: string[] = [];
+  for (const name of imported) {
+    const version = PREINSTALLED_DEPENDENCIES[name];
+    if (version && !dependencies[name]) {
+      dependencies[name] = version;
+      added.push(name);
+      manifestChanged = true;
+    }
+  }
+  for (const name of requested) {
+    if (!dependencies[name]) {
+      const version = ALLOWED_GENERATED_DEPENDENCIES.get(name)!;
+      dependencies[name] = version;
+      added.push(name);
+      manifestChanged = true;
+    }
+  }
+
+  if (manifestChanged && fs.existsSync(packagePath)) {
     pkg.dependencies = dependencies;
     fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
   }
@@ -142,7 +209,12 @@ export function ensureWorkspaceDependencies(
 
   let installResult = { installed: [] as string[], failed: [] as string[] };
   if (missing.length > 0) {
-    installResult = installPackages(workspaceDir, missing);
+    installResult = await installPackages(workspaceDir, missing, dependencies, signal);
+  }
+  if (installResult.failed.length > 0) {
+    throw new Error(
+      `Dependency installation failed for ${installResult.failed.join(", ")}. Replace these optional imports with installed React, CSS, or browser code.`
+    );
   }
 
   return { added, installed: installResult.installed, failed: installResult.failed };
@@ -165,11 +237,15 @@ export function findMissingPackages(
  * Install packages into the given directory using npm.
  * Returns the list of packages that were successfully installed.
  */
-export function installPackages(
+export async function installPackages(
   targetDir: string,
-  packages: string[]
-): { installed: string[]; failed: string[] } {
+  packages: string[],
+  versions: Record<string, string> = {},
+  signal?: AbortSignal
+): Promise<{ installed: string[]; failed: string[] }> {
   if (packages.length === 0) return { installed: [], failed: [] };
+  const unsupported = packages.filter((name) => !ALLOWED_GENERATED_DEPENDENCIES.has(name));
+  if (unsupported.length > 0) throw new Error(`Unsupported generated dependency: ${unsupported.join(", ")}`);
 
   const installed: string[] = [];
   const failed: string[] = [];
@@ -178,40 +254,43 @@ export function installPackages(
     `[dep-scanner] Installing ${packages.length} missing packages: ${packages.join(", ")}`
   );
 
-  const runInstall = (requested: string[], timeout: number) =>
-    spawnSync(
-      "npm",
-      ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", "--", ...requested],
+  const runInstall = (requested: string[], timeout: number): Promise<void> => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    execFile(
+      process.platform === "win32" ? "npm.cmd" : "npm",
+      ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", "--", ...requested.map((name) => `${name}@${safeRegistryVersion(versions[name]) ? versions[name] : ALLOWED_GENERATED_DEPENDENCIES.get(name)!}`)],
       {
         cwd: targetDir,
         timeout,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, NODE_ENV: "development" },
-        encoding: "utf8",
+        signal,
+        maxBuffer: 1024 * 1024,
+        shell: process.platform === "win32",
+        env: generatedProcessEnvironment("development"),
+      },
+      (error, _stdout, stderr) => {
+        if (!error) return resolve();
+        if (signal?.aborted) return reject(signal.reason);
+        const npmCode = stderr.match(/\b(?:E404|ETARGET|ENOVERSIONS|ERESOLVE|EINVALIDTAGNAME)\b/)?.[0];
+        reject(new Error(`npm install failed${npmCode ? ` (${npmCode})` : ""}`));
       }
     );
+  });
 
   try {
-    const batch = runInstall(packages, 120_000);
-    if (batch.error) throw batch.error;
-    if (batch.status !== 0) {
-      throw new Error(batch.stderr || `npm exited with status ${batch.status}`);
-    }
+    await runInstall(packages, 120_000);
     installed.push(...packages);
     console.log(`[dep-scanner] Successfully installed: ${packages.join(", ")}`);
   } catch (err: any) {
+    if (signal?.aborted) throw err;
     console.warn(`[dep-scanner] Batch install failed, trying one by one...`);
 
     for (const pkg of packages) {
       try {
-        const single = runInstall([pkg], 60_000);
-        if (single.error) throw single.error;
-        if (single.status !== 0) {
-          throw new Error(single.stderr || `npm exited with status ${single.status}`);
-        }
+        await runInstall([pkg], 60_000);
         installed.push(pkg);
         console.log(`[dep-scanner] Installed: ${pkg}`);
       } catch (pkgErr: any) {
+        if (signal?.aborted) throw pkgErr;
         failed.push(pkg);
         console.error(
           `[dep-scanner] Failed to install ${pkg}:`,
@@ -228,11 +307,15 @@ export function installPackages(
  * Full pipeline: scan files → detect imports → find missing → install.
  * Returns which packages were installed and which failed.
  */
-export function autoInstallDependencies(
+export async function autoInstallDependencies(
   files: Array<{ path: string; content: string }>,
   rootDir: string
-): { installed: string[]; failed: string[] } {
+): Promise<{ installed: string[]; failed: string[] }> {
   const imports = detectThirdPartyImports(files);
+  const unsupported = imports.filter((name) => !ALLOWED_GENERATED_DEPENDENCIES.has(name));
+  if (unsupported.length > 0) {
+    throw new Error(`Unsupported generated dependency: ${unsupported.join(", ")}`);
+  }
   if (imports.length === 0) {
     console.log("[dep-scanner] No third-party imports detected.");
     return { installed: [], failed: [] };

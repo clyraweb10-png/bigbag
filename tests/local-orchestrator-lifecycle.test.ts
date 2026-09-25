@@ -150,6 +150,7 @@ test("source and deployment survive sandbox loss while the preview URL stays sta
 
   fs.mkdirSync(path.join(workspace, "public", "uploads"), { recursive: true });
   fs.writeFileSync(path.join(workspace, "public", "uploads", "logo.txt"), "durable-upload");
+  project.lastModifiedAt = new Date(Date.parse(project.lastModifiedAt) + 1_000).toISOString();
   await durableProjectStore.saveSource(project, workspace);
   const upload = await durableProjectStore.readPublicSourceFile(project.projectId, "public/uploads/logo.txt");
   assert.equal(Buffer.from(upload!.content).toString("utf8"), "durable-upload");
@@ -158,6 +159,7 @@ test("source and deployment survive sandbox loss while the preview URL stays sta
   // changes, but routing remains the same project-specific Render URL.
   project.sandboxId = undefined;
   project.deployment.versionId = "build-v2";
+  project.lastModifiedAt = new Date(Date.parse(project.lastModifiedAt) + 1_000).toISOString();
   await durableProjectStore.saveDeployment(project, [
     { path: "index.html", content: Buffer.from("<main>deployed-v2</main>") },
   ]);
@@ -510,6 +512,8 @@ test("only proven source compilation failures can trigger model-based repair", (
   assert.equal(isBuildResourceFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), false);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
+  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed for icon-package: network timeout")), false);
+  assert.equal(isSourceBuildFailure(new Error("Unsupported generated dependency: icon-package")), true);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code E404\nnpm ERR! 404 '@cairn/sdk@latest' is not in this registry.")), true);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code ETARGET\nnpm ERR! No matching version found for package@99.")), true);
   assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
@@ -593,7 +597,12 @@ test("static repair context prioritizes the file named by validation", () => {
 
   assert.match(context, /^### File: src\/components\/Broken\.tsx/);
   assert.match(context, /repair me/);
-  assert.ok(context.indexOf("src/components/Broken.tsx") < context.indexOf("src/App.tsx"));
+  assert.doesNotMatch(context, /### File: src\/App\.tsx/, "An unrelated file must not be cut off to fit the repair budget");
+  const both = validationRepairContext([
+    { path: "src/App.tsx", content: "export default function App() { return null; }" },
+    { path: "src/components/Broken.tsx", content: "const broken = <main>repair me</main>;" },
+  ], ["syntax error in src/components/Broken.tsx: '}' expected"], 250);
+  assert.ok(both.indexOf("src/components/Broken.tsx") < both.indexOf("src/App.tsx"));
 });
 
 test("runtime-owned model output is discarded without poisoning a valid page", () => {
@@ -1502,6 +1511,23 @@ test("proxy query parameters cannot grant preview document privileges", async ()
   assert.equal(platform.headers.get("content-security-policy"), "frame-ancestors *");
 });
 
+test("preview preflight permits authenticated private file uploads", async () => {
+  const response = await proxy(new NextRequest("https://builder.example.test/api/preview/demo/__bigbag/files", {
+    method: "OPTIONS",
+    headers: {
+      origin: "null",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "authorization, content-type, x-bigbag-file-name, x-bigbag-folder-id",
+    },
+  }));
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("access-control-allow-origin"), "null");
+  const allowed = response.headers.get("access-control-allow-headers")?.toLowerCase() || "";
+  for (const name of ["authorization", "content-type", "x-bigbag-file-name", "x-bigbag-folder-id"]) {
+    assert.match(allowed, new RegExp(`\\b${name}\\b`));
+  }
+});
+
 test("signed auth sessions protect provider-backed APIs", async () => {
   const session = createAuthSession("test-user", 1_000_000);
   assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "test-user");
@@ -1566,15 +1592,19 @@ test("authentication redirects preserve safe app destinations and reject open re
   assert.equal(allowed.status, 200);
 });
 
-test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
+test("generation providers use Gemini, Telnyx, then Groq fallback", () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousGroq = process.env.GROQ_API_KEY;
   process.env.GEMINI_API_KEY = "test-gemini";
   process.env.TELNYX_API_KEY = "test-telnyx";
+  process.env.GROQ_API_KEY = "test-groq";
   try {
     assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), [
       "gemini-flash",
       "telnyx-glm",
+      "groq",
+      "groq-oss",
     ]);
     assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
     assert.equal(GEMINI_MAX_RETRIES, 5);
@@ -1583,6 +1613,8 @@ test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
     else process.env.GEMINI_API_KEY = previousGemini;
     if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
     else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = previousGroq;
   }
 });
 
@@ -1649,9 +1681,11 @@ test("token-limited model output continues, merges safely, and keeps provider id
 test("provider exhaustion and failover statuses keep provider identity private", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousGroq = process.env.GROQ_API_KEY;
   const previousFetch = global.fetch;
   process.env.GEMINI_API_KEY = "test-gemini";
   process.env.TELNYX_API_KEY = "test-telnyx";
+  process.env.GROQ_API_KEY = "test-groq";
   const statuses: string[] = [];
   global.fetch = (async () => Response.json(
     { error: { message: "invalid test credential" } },
@@ -1675,6 +1709,10 @@ test("provider exhaustion and failover statuses keep provider identity private",
       "Generating the implementation…",
       "Continuing generation…",
       "Generating the implementation…",
+      "Continuing generation…",
+      "Generating the implementation…",
+      "Continuing generation…",
+      "Generating the implementation…",
     ]);
   } finally {
     global.fetch = previousFetch;
@@ -1682,6 +1720,8 @@ test("provider exhaustion and failover statuses keep provider identity private",
     else process.env.GEMINI_API_KEY = previousGemini;
     if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
     else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = previousGroq;
   }
 });
 
@@ -1689,8 +1729,8 @@ test("specialized vision requests stay on the required provider and preserve ima
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.TELNYX_API_KEY = "test-telnyx";
+  process.env.GEMINI_API_KEY = "test-gemini-vision";
+  process.env.TELNYX_API_KEY = "test-telnyx-vision";
   const requestedUrls: string[] = [];
   let requestBody: { messages?: Array<{ content?: unknown }> } = {};
 
@@ -1733,7 +1773,7 @@ test("reference analysis falls back to metadata without retrying non-retryable m
   const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousFetch = global.fetch;
-  process.env.TELNYX_API_KEY = "test-telnyx";
+  process.env.TELNYX_API_KEY = "test-telnyx-reference";
   delete process.env.GEMINI_API_KEY;
   const requestImageCounts: number[] = [];
   const validSpecification = {
@@ -1812,9 +1852,11 @@ test("reference design schema rejects incomplete output", () => {
 test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
   const previousGemini = process.env.GEMINI_API_KEY;
   const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousGroq = process.env.GROQ_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.GEMINI_API_KEY = "test-gemini-overload";
   delete process.env.TELNYX_API_KEY;
+  delete process.env.GROQ_API_KEY;
   let requestCount = 0;
 
   global.fetch = (async () => {
@@ -1850,6 +1892,8 @@ test("plain-text overloads retry and repeated continuations cannot produce false
     else process.env.GEMINI_API_KEY = previousGemini;
     if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
     else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = previousGroq;
   }
 });
 

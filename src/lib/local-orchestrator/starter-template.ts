@@ -1,6 +1,8 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import ts from "typescript";
+import { createHash } from "crypto";
 
 /**
  * Packages every generated app can import without waiting on npm.
@@ -261,6 +263,25 @@ function onAuthStateChange(
 }
 
 export const auth = {
+  async getCommerceRole(): Promise<"owner" | "customer" | "visitor"> {
+    const token = await getAuthAccessToken();
+    const capability = (window as Window & { __BIGBAG_WRITE_CAPABILITY__?: string }).__BIGBAG_WRITE_CAPABILITY__;
+    const response = await fetch(previewBase() + "/__bigbag/auth/role", {
+      cache: "no-store",
+      headers: {
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+        ...(capability ? { "X-BigBag-Capability": capability } : {}),
+      },
+    });
+    const payload = await response.json().catch(() => null) as { data?: { role?: string }; error?: string } | null;
+    if (!response.ok) throw new Error(payload?.error || "Project role could not be verified");
+    const role = payload?.data?.role;
+    if (role !== "owner" && role !== "customer" && role !== "visitor") throw new Error("Project role is invalid");
+    return role;
+  },
+  async getProjectRole(): Promise<"owner" | "customer" | "visitor"> {
+    return auth.getCommerceRole();
+  },
   async signUp(email: string, password: string) {
     const client = await getAuthClient();
     const { data, error } = await client.auth.signUp({ email, password });
@@ -325,16 +346,23 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     .__BIGBAG_WRITE_CAPABILITY__;
   const guestCapability = (window as Window & { __BIGBAG_GUEST_CAPABILITY__?: string })
     .__BIGBAG_GUEST_CAPABILITY__;
-  const response = await fetch(url, {
+  const send = (token: string | null) => fetch(url, {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...(capability ? { "X-BigBag-Capability": capability } : {}),
       ...(guestCapability ? { "X-BigBag-Guest": guestCapability } : {}),
-      ...(accessToken ? { "Authorization": "Bearer " + accessToken } : {}),
+      ...(token ? { "Authorization": "Bearer " + token } : {}),
       ...(init?.headers || {}),
     },
   });
+  let response = await send(accessToken);
+  if (response.status === 401) {
+    // Session refresh can race a data request just after sign-in. A rejected
+    // request has not mutated data, so one fresh-token retry is safe.
+    const refreshedToken = await getPlatformAuthAccessToken().catch(() => null);
+    if (refreshedToken || accessToken) response = await send(refreshedToken || accessToken);
+  }
   const payload = await response.json().catch(() => null) as { data?: T; error?: string } | null;
   if (!response.ok || !payload?.data) {
     throw new Error(payload?.error || "Database request failed (" + response.status + ")");
@@ -369,8 +397,79 @@ export function collection<T extends object = DbRecord>(name: string) {
   };
 }
 
-export const db = { collection, from: collection };
+export async function claimGuestCart<T extends object = DbRecord>(): Promise<T | null> {
+  const endpoint = collectionPath("carts").replace(/\\/data\\/carts$/, "/commerce/claim-cart");
+  const result = await request<{ cart: T | null }>(endpoint, { method: "POST" });
+  return result.cart;
+}
+
+export const db = { collection, from: collection, claimGuestCart };
 export default db;
+`;
+
+export const GENERATED_FILES_CLIENT_SOURCE = `// @bigbag-managed-files-client
+import { getPlatformAuthAccessToken } from "@/lib/auth-bridge";
+
+export interface StoredFileRecord {
+  _id: string;
+  createdAt: string;
+  updatedAt: string;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  fileId: string;
+  folderId: string | null;
+}
+
+function endpoint(id?: string): string {
+  const preview = window.location.pathname.match(/^\\/api\\/preview\\/[^/]+/);
+  if (!preview) throw new Error("Private files are available only inside a BigBag preview");
+  return preview[0] + "/__bigbag/files" + (id ? "/" + encodeURIComponent(id) : "");
+}
+
+async function accessToken(): Promise<string> {
+  const token = await getPlatformAuthAccessToken();
+  if (!token) throw new Error("Sign in to access private files");
+  return token;
+}
+
+async function responseData<T>(response: Response): Promise<T> {
+  const payload = await response.json().catch(() => null) as { data?: T; error?: string } | null;
+  if (!response.ok || !payload?.data) throw new Error(payload?.error || "Private file request failed");
+  return payload.data;
+}
+
+export const files = {
+  async upload(file: File, folderId: string | null = null): Promise<StoredFileRecord> {
+    const token = await accessToken();
+    const response = await fetch(endpoint(), {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": file.type || "application/octet-stream",
+        "X-BigBag-File-Name": encodeURIComponent(file.name),
+        ...(folderId ? { "X-BigBag-Folder-Id": folderId } : {}),
+      },
+      body: file,
+    });
+    return responseData<StoredFileRecord>(response);
+  },
+  async download(id: string): Promise<Blob> {
+    const token = await accessToken();
+    const response = await fetch(endpoint(id), { headers: { Authorization: "Bearer " + token } });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(payload?.error || "Private file download failed");
+    }
+    return response.blob();
+  },
+  async remove(id: string): Promise<void> {
+    const token = await accessToken();
+    await responseData<{ deleted: boolean }>(await fetch(endpoint(id), {
+      method: "DELETE", headers: { Authorization: "Bearer " + token },
+    }));
+  },
+};
 `;
 
 export const LEGACY_GENERATED_DB_CLIENT_SOURCE = `import { createClient } from "@libsql/client";
@@ -1028,7 +1127,88 @@ function ensureGeneratedAuthClient(dir: string): void {
   }
 }
 
-function ensureViteRuntime(dir: string, projectId: string): void {
+const LEGACY_LAYOUT_HASHES: Record<string, string> = {
+  "dashboard-shell.tsx": "6d3ad636b60c7fe6708455099b3da204ccde8c8c30c333932808d53ed83945aa",
+  "marketing-shell.tsx": "d34d50b027be686719c69f3f0c2fe26536bfae9b53cfdf48e07984d8ac7021f8",
+  "storefront-shell.tsx": "884ba9736a5a51e90c025db3651f68b9673abf13486a6446135fffb3e99a07a4",
+  "editorial-shell.tsx": "1a1ae10eff7b16732f045a13e49816ab04af22c8324b4e19305163c00bbaa7ea",
+  "focus-shell.tsx": "6685bef90cd6ae8c0b783ba541f7fe8bf691428dc741cc960b0b1b7875f76f50",
+  "index.ts": "8c8bb0120e2ce0755feb8a8840e662ec7d70d3c5375720b1d893e56a00b4543e",
+};
+// Exact hashes of starter-owned components from prior runtime revisions. A
+// user may edit a primitive or leave a layout marker in a customized file;
+// neither path nor marker alone authorizes replacing their work on continuation.
+const PRIOR_RUNTIME_COMPONENT_HASHES: Record<string, readonly string[]> = {
+  "src/components/ui/button.tsx": [
+    "69aebb63aac240734ab3d749f713f3264b1d9b3577d1e3e1cc1d301ea48f73bc",
+    "491ba124307a3a8aaa2ec38ac4e7ada4a55e09eba4a8b53fedccd134261575c1",
+    "95f474e1f3ced51bc1e3b1eb2f9d8437995736a5d4157e162e5c8fbfce0a6470",
+    "677b4b325fedb36b5d269391cbf347aecbe57fdd0bbf5d02cc02e8d70b71f1c1",
+  ],
+  "src/components/ui/empty-state.tsx": [
+    "ab24e884e1f8e08c3a38cb3100633fa7f09f495880b7f5990475d53b9eda7c73",
+    "da67f4b1a42f13221a853c72f5437e7fc2ee5fda0e561fbeb55b9e557e239ffa",
+    "4374ed66b9823eff1f386cf5dfebed80a6c2ba138035c93b46e689d3117cbc94",
+    "eb862071e44e8bfccbfa87b101cbf94e393401cbd3d23d69ea89d4780eb1440c",
+    "835a268025c5e7c33631dd0132b4271a93d3d863ee01f0502c0c14339776993c",
+  ],
+  "src/components/ui/metric-card.tsx": [
+    "889b5bf712ad33903cc12398cabe485bc17ac957bea6034516b91b0a1625b793",
+    "4501aebb9b850325a291ee9619f4cca9985293f81294908e434cddeade25bda4",
+  ],
+  "src/components/layout/dashboard-shell.tsx": [
+    "6cb42da9887c9730ee555455543b8a01f0913d2149c6ff06003e953ca33ac901",
+    "d5a5e91eefedc766d588212b66c0aff375a31ab861d6c86b420ac880906d7a16",
+  ],
+  "src/components/layout/focus-shell.tsx": [
+    "ce2497120dfdefc61bb954836248c8291bad4b53e252f36d53c564c613c2ef96",
+    "b55fae7118d70aae051fa78d6691991d97570c6fcb4c6f259edc1f568d0dbd6b",
+  ],
+  "src/components/layout/marketing-shell.tsx": ["2a6da1bcc026e5216f954cbe1c7510ebf86e261cbdf6cf18e7456b46f1074927"],
+  "src/components/layout/storefront-shell.tsx": ["d1bfe81c6398e0c87a7cde4a0387cc66f2b304acd9d119a7a1897ea04927e404"],
+  "src/components/layout/editorial-shell.tsx": ["861a3f8107b3d921d6939bcabed190de8ddb1ed7c3644434b06d9fa7ed7ba398"],
+};
+let runtimeComponentSources: Map<string, string> | null = null;
+
+function currentRuntimeComponents(): Map<string, string> {
+  if (runtimeComponentSources) return runtimeComponentSources;
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-runtime-components-"));
+  try {
+    // Use the same starter writer as new projects so the refreshed primitives
+    // cannot drift from the public component API supplied to the model.
+    writeStarterTemplate(staging, "runtime-component-reference");
+    const sources = new Map<string, string>();
+    for (const folder of ["src/components/ui", "src/components/layout"]) {
+      for (const entry of fs.readdirSync(/* turbopackIgnore: true */ path.join(/* turbopackIgnore: true */ staging, folder), { withFileTypes: true })) {
+        if (!entry.isFile() || !/\.[cm]?[jt]sx?$/.test(entry.name)) continue;
+        const relative = `${folder}/${entry.name}`;
+        sources.set(relative, fs.readFileSync(/* turbopackIgnore: true */ path.join(/* turbopackIgnore: true */ staging, relative), "utf8"));
+      }
+    }
+    runtimeComponentSources = sources;
+    return sources;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+function refreshRuntimeComponents(dir: string): void {
+  for (const [relative, source] of currentRuntimeComponents()) {
+    const target = path.join(dir, relative);
+    const existing = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : null;
+    if (existing === source) continue;
+    if (existing !== null) {
+      const hash = createHash("sha256").update(existing).digest("hex");
+      const legacyHash = relative.startsWith("src/components/layout/")
+        ? LEGACY_LAYOUT_HASHES[path.basename(relative)]
+        : undefined;
+      if (hash !== legacyHash && !PRIOR_RUNTIME_COMPONENT_HASHES[relative]?.includes(hash)) continue;
+    }
+    write(dir, relative, source);
+  }
+}
+
+function ensureViteRuntime(dir: string, projectId: string, refreshComponents = true): void {
   const pkgPath = path.join(dir, "package.json");
   const dbClientPath = path.join(dir, "src/lib/db.ts");
   const currentDbClient = fs.existsSync(dbClientPath)
@@ -1081,7 +1261,13 @@ function ensureViteRuntime(dir: string, projectId: string): void {
       preview: "vite preview --host 0.0.0.0",
     },
     dependencies: {
-      ...PREINSTALLED_DEPENDENCIES,
+      // Shared local node_modules already contains the optional starter stack.
+      // Keep restored manifests lean; dependency scanning adds only imports
+      // used by this generated project before its isolated E2B install.
+      react: PREINSTALLED_DEPENDENCIES.react,
+      "react-dom": PREINSTALLED_DEPENDENCIES["react-dom"],
+      // The post-build runtime probe executes the compiled bundle in JSDOM.
+      jsdom: PREINSTALLED_DEPENDENCIES.jsdom,
       ...browserDependencies,
       ...(keepLibsqlDependency
         ? { "@libsql/client": legacyDbDependency || "^0.18.0" }
@@ -1104,6 +1290,8 @@ export default {
   plugins: [tailwindcss()],
 };
 `;
+
+
   const postcssPath = path.join(dir, "postcss.config.mjs");
   if (!fs.existsSync(postcssPath)) {
     write(dir, "postcss.config.mjs", postcssConfig);
@@ -1135,6 +1323,7 @@ export default {
     write(dir, "src/lib/db.ts", GENERATED_DB_CLIENT_SOURCE);
   }
   write(dir, "src/lib/auth-bridge.ts", GENERATED_AUTH_BRIDGE_SOURCE);
+  write(dir, "src/lib/files.ts", GENERATED_FILES_CLIENT_SOURCE);
   ensureGeneratedAuthClient(dir);
 
   const runtimeIndex = `<!doctype html>
@@ -1182,7 +1371,6 @@ export default defineConfig({
   plugins: [directLucideImports(), react()],
   build: { minify: false },
   server: { allowedHosts: [".e2b.app"], hmr: false },
-  css: { postcss: {} },
   resolve: {
     alias: { "@": path.resolve(configDir, "./src") },
   },
@@ -1271,12 +1459,12 @@ export default defineConfig({
       '$1\n  build: { minify: false },'
     );
   }
-  if (!/\bcss\s*:\s*\{[^}]*postcss/.test(updatedViteConfig)) {
-    updatedViteConfig = updatedViteConfig.replace(
-      /(server:\s*\{[^}]*\},?)/,
-      '$1\n  css: { postcss: {} },'
-    );
-  }
+  // An empty inline PostCSS configuration suppresses postcss.config.mjs,
+  // leaving Tailwind's utility directive unexpanded in successful builds.
+  updatedViteConfig = updatedViteConfig.replace(
+    /^\s*css:\s*\{\s*postcss:\s*\{\s*\}\s*\},?\s*$/m,
+    ""
+  );
   if (updatedViteConfig !== currentViteConfig) {
     write(dir, "vite.config.ts", updatedViteConfig);
   }
@@ -1293,6 +1481,7 @@ export default defineConfig({
   ) {
     write(dir, "src/main.tsx", runtimeMainSource(appImport, cssImport, metadata));
   }
+  if (refreshComponents) refreshRuntimeComponents(dir);
 }
 
 /** Seed a Lovable-style Vite + React + Tailwind app. Idempotent. */
@@ -1605,18 +1794,22 @@ export function cn(...inputs: ClassValue[]) {
     GENERATED_AUTH_BRIDGE_SOURCE
   );
 
+  write(dir, "src/lib/files.ts", GENERATED_FILES_CLIENT_SOURCE);
+
   ensureGeneratedAuthClient(dir);
 
   write(
     dir,
     "src/components/ui/button.tsx",
     `import * as React from "react";
+import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/lib/utils";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "default" | "outline" | "ghost" | "secondary" | "destructive" | "link";
-  size?: "xs" | "sm" | "default" | "lg" | "icon";
+  size?: "xs" | "sm" | "default" | "lg" | "icon" | "icon-sm";
   isLoading?: boolean;
+  asChild?: boolean;
 }
 
 export function Button({
@@ -1624,28 +1817,43 @@ export function Button({
   variant = "default",
   size = "default",
   isLoading = false,
+  asChild = false,
   disabled,
   children,
   ...props
 }: ButtonProps) {
+  const buttonClass = cn(
+    "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] whitespace-nowrap select-none",
+    variant === "default" && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-subtle",
+    variant === "secondary" && "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--muted)]",
+    variant === "outline" && "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
+    variant === "ghost" && "bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
+    variant === "destructive" && "bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90",
+    variant === "link" && "bg-transparent text-[var(--primary)] underline-offset-4 hover:underline p-0 h-auto",
+    size === "xs" && "h-7 px-2.5 text-xs",
+    size === "sm" && "h-8 px-3 text-sm",
+    size === "default" && "h-9 px-4 text-sm",
+    size === "lg" && "h-11 px-8 text-base",
+    size === "icon" && "h-9 w-9 p-0",
+    size === "icon-sm" && "h-8 w-8 p-0",
+    className
+  );
+  if (asChild) {
+    return <Slot
+      {...props}
+      className={buttonClass}
+      aria-disabled={disabled || isLoading || undefined}
+      tabIndex={disabled || isLoading ? -1 : props.tabIndex}
+      onClick={(event) => {
+        if (disabled || isLoading) { event.preventDefault(); return; }
+        props.onClick?.(event as React.MouseEvent<HTMLButtonElement>);
+      }}
+    >{children}</Slot>;
+  }
   return (
     <button
       disabled={disabled || isLoading}
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] whitespace-nowrap select-none",
-        variant === "default" && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-subtle",
-        variant === "secondary" && "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--muted)]",
-        variant === "outline" && "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
-        variant === "ghost" && "bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
-        variant === "destructive" && "bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90",
-        variant === "link" && "bg-transparent text-[var(--primary)] underline-offset-4 hover:underline p-0 h-auto",
-        size === "xs" && "h-7 px-2.5 text-xs",
-        size === "sm" && "h-8 px-3 text-sm",
-        size === "default" && "h-9 px-4 text-sm",
-        size === "lg" && "h-11 px-8 text-base",
-        size === "icon" && "h-9 w-9 p-0",
-        className
-      )}
+      className={buttonClass}
       {...props}
     >
       {isLoading ? (
@@ -1970,6 +2178,11 @@ export function SkeletonCard({ className }: { className?: string }) {
 `
   );
 
+  // Models commonly use the component name as its module path. Keep this
+  // tiny alias in the runtime rather than spending a repair call on a valid
+  // SkeletonCard import spelling.
+  write(dir, "src/components/ui/skeleton-card.tsx", `export { SkeletonCard } from "./skeleton";\n`);
+
   write(
     dir,
     "src/components/ui/alert.tsx",
@@ -2012,6 +2225,14 @@ export function Alert({ className, variant = "info", title, children, ...props }
     </div>
   );
 }
+
+export function AlertTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
+  return <h5 className={cn("font-semibold leading-none", className)} {...props} />;
+}
+
+export function AlertDescription({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("text-sm leading-relaxed opacity-90", className)} {...props} />;
+}
 `
   );
 
@@ -2022,28 +2243,31 @@ export function Alert({ className, variant = "info", title, children, ...props }
 import { cn } from "@/lib/utils";
 
 export interface EmptyStateProps {
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | React.ElementType;
   title: string;
   description?: string;
   action?: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
 }
 
-export function EmptyState({ icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({ icon, title, description, action, children, className }: EmptyStateProps) {
   return (
     <div className={cn("flex flex-col items-center justify-center text-center py-16 px-4", className)}>
       {icon && (
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--muted)] text-[var(--muted-foreground)]">
-          {icon}
+          {typeof icon === "function" || (typeof icon === "object" && icon !== null && !React.isValidElement(icon) && "$$typeof" in icon)
+            ? React.createElement(icon as React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>, { className: "h-6 w-6", "aria-hidden": true })
+            : icon as React.ReactNode}
         </div>
       )}
-      <h3 className="text-base font-semibold text-[var(--foreground)] mb-1.5">{title}</h3>
+      <h2 className="text-base font-semibold text-[var(--foreground)] mb-1.5">{title}</h2>
       {description && (
         <p className="text-sm text-[var(--muted-foreground)] max-w-sm leading-relaxed mb-4">
           {description}
         </p>
       )}
-      {action && <div className="mt-2">{action}</div>}
+      {(action || children) && <div className="mt-2">{action || children}</div>}
     </div>
   );
 }
@@ -2062,7 +2286,7 @@ export interface MetricCardProps {
   value: string | number;
   trend?: number;
   trendLabel?: string;
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | React.ElementType;
   className?: string;
   description?: string;
 }
@@ -2078,6 +2302,10 @@ export function MetricCard({
 }: MetricCardProps) {
   const isPositive = trend !== undefined && trend > 0;
   const isNegative = trend !== undefined && trend < 0;
+  const renderedIcon = typeof icon === "function" ||
+    (typeof icon === "object" && icon !== null && !React.isValidElement(icon) && "$$typeof" in icon)
+    ? React.createElement(icon as React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>, { className: "h-4 w-4", "aria-hidden": true })
+    : icon as React.ReactNode;
 
   return (
     <div
@@ -2100,7 +2328,7 @@ export function MetricCard({
         </div>
         {icon && (
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)]">
-            {icon}
+            {renderedIcon}
           </div>
         )}
       </div>
@@ -2174,7 +2402,7 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        "h-10 px-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)] [&:has([role=checkbox])]:pr-0",
+        "relative h-10 px-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)] [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -3342,8 +3570,9 @@ export function AvatarGroup({ users, max = 4, size = "sm", className }: AvatarGr
   write(
     dir,
     "src/components/layout/dashboard-shell.tsx",
-    `import * as React from "react";
-import { Menu, X, Bell, Search, ChevronDown, LayoutDashboard } from "lucide-react";
+    `// @bigbag-runtime-layout
+import * as React from "react";
+import { Menu, Bell, Search, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -3351,7 +3580,7 @@ import { cn } from "@/lib/utils";
 export interface NavItem {
   label: string;
   href?: string;
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | React.ElementType;
   onClick?: () => void;
   active?: boolean;
   badge?: string | number;
@@ -3369,17 +3598,26 @@ export interface DashboardShellProps {
   userAvatar?: string;
   /** Topbar right-side actions */
   actions?: React.ReactNode;
+  /** Search appears only when the application supplies a working action. */
+  onSearch?: () => void;
+  /** Notifications appear only when the application supplies a working action. */
+  onNotifications?: () => void;
   /** Page title shown in the topbar breadcrumb */
   pageTitle?: string;
   className?: string;
 }
 
-function NavLink({ item }: { item: NavItem }) {
+function NavLink({ item, onSelect }: { item: NavItem; onSelect?: () => void }) {
+  if (!item.href && !item.onClick) return null;
   const Tag = item.href ? "a" : "button";
+  const icon = typeof item.icon === "function" ||
+    (typeof item.icon === "object" && item.icon !== null && !React.isValidElement(item.icon) && "$$typeof" in item.icon)
+    ? React.createElement(item.icon as React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>, { className: "h-4 w-4", "aria-hidden": true })
+    : item.icon as React.ReactNode;
   return (
     <Tag
       href={item.href}
-      onClick={item.onClick}
+      onClick={() => { item.onClick?.(); onSelect?.(); }}
       className={cn(
         "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors min-h-[44px]",
         item.active
@@ -3387,7 +3625,7 @@ function NavLink({ item }: { item: NavItem }) {
           : "text-[var(--muted-foreground)] hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
       )}
     >
-      {item.icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center">{item.icon}</span>}
+      {icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>}
       <span className="flex-1 truncate text-left">{item.label}</span>
       {item.badge !== undefined && (
         <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--primary)] px-1.5 text-[10px] font-semibold text-[var(--primary-foreground)]">
@@ -3404,12 +3642,14 @@ export function DashboardShell({
   brand,
   userName = "User",
   actions,
+  onSearch,
+  onNotifications,
   pageTitle,
   className,
 }: DashboardShellProps) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
-  const sidebar = (
+  const sidebar = (closeOnSelect = false) => (
     <nav className="flex h-full flex-col gap-1 p-4">
       <div className="mb-4 flex items-center gap-2 px-2">
         {brand ?? (
@@ -3423,7 +3663,7 @@ export function DashboardShell({
       </div>
       <div className="flex-1 space-y-0.5">
         {navItems.map((item, i) => (
-          <NavLink key={i} item={item} />
+          <NavLink key={i} item={item} onSelect={closeOnSelect ? () => setMobileOpen(false) : undefined} />
         ))}
       </div>
       <div className="border-t border-[var(--border)] pt-3">
@@ -3432,7 +3672,6 @@ export function DashboardShell({
             {userName.charAt(0).toUpperCase()}
           </div>
           <span className="flex-1 truncate text-xs font-medium text-[var(--foreground)]">{userName}</span>
-          <ChevronDown className="h-3.5 w-3.5 text-[var(--muted-foreground)]" />
         </div>
       </div>
     </nav>
@@ -3442,7 +3681,7 @@ export function DashboardShell({
     <div className={cn("flex min-h-screen bg-[var(--background)]", className)}>
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex lg:w-60 lg:shrink-0 lg:flex-col border-r border-[var(--border)] bg-[var(--card)]">
-        {sidebar}
+        {sidebar()}
       </aside>
 
       {/* Main content area */}
@@ -3461,7 +3700,7 @@ export function DashboardShell({
               <SheetHeader className="sr-only">
                 <SheetTitle>Navigation</SheetTitle>
               </SheetHeader>
-              {sidebar}
+              {sidebar(true)}
             </SheetContent>
           </Sheet>
 
@@ -3470,12 +3709,12 @@ export function DashboardShell({
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="icon" aria-label="Search">
+            {onSearch && <Button variant="ghost" size="icon" aria-label="Search" onClick={onSearch}>
               <Search className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Notifications">
+            </Button>}
+            {onNotifications && <Button variant="ghost" size="icon" aria-label="Notifications" onClick={onNotifications}>
               <Bell className="h-4 w-4" />
-            </Button>
+            </Button>}
             {actions}
           </div>
         </header>
@@ -3496,7 +3735,8 @@ export function DashboardShell({
   write(
     dir,
     "src/components/layout/marketing-shell.tsx",
-    `import * as React from "react";
+    `// @bigbag-runtime-layout
+import * as React from "react";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -3727,8 +3967,9 @@ export function FeatureGrid({ features, className }: { features: FeatureItem[]; 
   write(
     dir,
     "src/components/layout/storefront-shell.tsx",
-    `import * as React from "react";
-import { ShoppingBag, Search, Menu, X, SlidersHorizontal } from "lucide-react";
+`// @bigbag-runtime-layout
+import * as React from "react";
+import { ShoppingBag, Search, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -3740,7 +3981,11 @@ export interface StorefrontShellProps {
   brand?: React.ReactNode;
   cartCount?: number;
   onCartOpen?: () => void;
+  cartOpen?: boolean;
+  onCartOpenChange?: (open: boolean) => void;
   cartDrawer?: React.ReactNode;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
   filterPanel?: React.ReactNode;
   className?: string;
 }
@@ -3750,12 +3995,21 @@ export function StorefrontShell({
   brand,
   cartCount = 0,
   onCartOpen,
+  cartOpen,
+  onCartOpenChange,
   cartDrawer,
+  searchValue,
+  onSearchChange,
   filterPanel,
   className,
 }: StorefrontShellProps) {
-  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const [internalCartOpen, setInternalCartOpen] = React.useState(false);
   const [mobileFilterOpen, setMobileFilterOpen] = React.useState(false);
+  const visibleCartOpen = cartOpen ?? internalCartOpen;
+  const setVisibleCartOpen = (open: boolean) => {
+    if (cartOpen === undefined) setInternalCartOpen(open);
+    onCartOpenChange?.(open);
+  };
 
   return (
     <div className={cn("min-h-screen bg-[var(--background)]", className)}>
@@ -3763,11 +4017,6 @@ export function StorefrontShell({
       <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--card)]/95 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center gap-4">
-            {/* Mobile menu */}
-            <Button variant="ghost" size="icon" className="sm:hidden" onClick={() => setMobileMenuOpen(true)}>
-              <Menu className="h-5 w-5" />
-            </Button>
-
             {/* Brand */}
             <div className="flex-shrink-0">
               {brand ?? (
@@ -3776,23 +4025,18 @@ export function StorefrontShell({
             </div>
 
             {/* Search bar */}
-            <div className="hidden sm:flex flex-1 max-w-lg mx-4">
+            {onSearchChange && <div className="hidden sm:flex flex-1 max-w-lg mx-4">
               <div className="relative w-full">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
-                <Input className="pl-9 h-9" placeholder="Search products..." />
+                <Input className="pl-9 h-9" placeholder="Search products..." value={searchValue ?? ""} onChange={(event) => onSearchChange(event.target.value)} />
               </div>
-            </div>
+            </div>}
 
             <div className="ml-auto flex items-center gap-2">
-              {/* Mobile search */}
-              <Button variant="ghost" size="icon" className="sm:hidden">
-                <Search className="h-5 w-5" />
-              </Button>
-
               {/* Cart trigger */}
-              <Sheet>
+              <Sheet open={visibleCartOpen} onOpenChange={setVisibleCartOpen}>
                 <SheetTrigger asChild>
-                  <Button variant="ghost" size="icon" className="relative" aria-label="Shopping cart">
+                  <Button variant="ghost" size="icon" className="relative" aria-label="Shopping cart" onClick={onCartOpen}>
                     <ShoppingBag className="h-5 w-5" />
                     {cartCount > 0 && (
                       <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[var(--primary)] text-[10px] font-bold text-[var(--primary-foreground)]">
@@ -3817,6 +4061,10 @@ export function StorefrontShell({
               </Sheet>
             </div>
           </div>
+          {onSearchChange && <div className="pb-3 sm:hidden">
+            <label className="sr-only" htmlFor="mobile-store-search">Search products</label>
+            <Input id="mobile-store-search" placeholder="Search products..." value={searchValue ?? ""} onChange={(event) => onSearchChange(event.target.value)} />
+          </div>}
         </div>
       </header>
 
@@ -3908,7 +4156,7 @@ export function ProductCard({ image, name, price, originalPrice, badge, onAddToC
             </span>
           )}
         </div>
-        <Button size="sm" className="mt-3 w-full" onClick={onAddToCart}>
+        <Button size="sm" className="mt-3 w-full" onClick={(event) => { event.stopPropagation(); onAddToCart?.(); }}>
           Add to Cart
         </Button>
       </div>
@@ -3921,7 +4169,8 @@ export function ProductCard({ image, name, price, originalPrice, badge, onAddToC
   write(
     dir,
     "src/components/layout/editorial-shell.tsx",
-    `import * as React from "react";
+    `// @bigbag-runtime-layout
+import * as React from "react";
 import { ArrowLeft, Clock, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -4062,7 +4311,8 @@ export function ArticleBody({ children, className }: { children: React.ReactNode
   write(
     dir,
     "src/components/layout/focus-shell.tsx",
-    `import * as React from "react";
+    `// @bigbag-runtime-layout
+import * as React from "react";
 import { cn } from "@/lib/utils";
 
 export interface FocusShellProps {
@@ -4080,26 +4330,26 @@ export function FocusShell({ children, visual, stepIndicator, brand, className }
   return (
     <div className={cn("min-h-screen bg-[var(--background)]", className)}>
       {/* Mobile brand header */}
-      <div className="flex items-center justify-between p-4 lg:hidden border-b border-[var(--border)]">
+      <header className="flex items-center justify-between p-4 lg:hidden border-b border-[var(--border)]">
         {brand ?? <span className="text-sm font-semibold text-[var(--foreground)]">App</span>}
         {stepIndicator && <div className="text-xs text-[var(--muted-foreground)]">{stepIndicator}</div>}
-      </div>
+      </header>
 
       <div className="flex min-h-[calc(100vh-57px)] lg:min-h-screen">
         {/* Left visual panel (desktop only) */}
         {visual && (
-          <div className="hidden lg:flex lg:w-1/2 xl:w-[45%] flex-col bg-[var(--card)] border-r border-[var(--border)]">
+          <aside className="hidden lg:flex lg:w-1/2 xl:w-[45%] flex-col bg-[var(--card)] border-r border-[var(--border)]">
             <div className="flex items-center p-8">
               {brand ?? <span className="text-base font-semibold text-[var(--foreground)]">App</span>}
             </div>
             <div className="flex flex-1 items-center justify-center p-12">
               {visual}
             </div>
-          </div>
+          </aside>
         )}
 
         {/* Right form panel */}
-        <div className={cn(
+        <main className={cn(
           "flex flex-1 flex-col items-center justify-center px-4 py-12 sm:px-6 lg:px-12",
           !visual && "lg:w-full"
         )}>
@@ -4111,7 +4361,7 @@ export function FocusShell({ children, visual, stepIndicator, brand, className }
           <div className="w-full max-w-sm">
             {children}
           </div>
-        </div>
+        </main>
       </div>
     </div>
   );
@@ -4181,7 +4431,8 @@ export function StepProgress({ currentStep, totalSteps, stepLabels, className }:
   write(
     dir,
     "src/components/layout/index.ts",
-    `// Layout Shell Exports — BigBag Archetype Layouts
+    `// @bigbag-runtime-layout
+// Layout Shell Exports — BigBag Archetype Layouts
 export * from "./dashboard-shell";
 export * from "./marketing-shell";
 export * from "./storefront-shell";
@@ -4190,7 +4441,7 @@ export * from "./focus-shell";
 `
   );
 
-  ensureViteRuntime(dir, projectId);
+  ensureViteRuntime(dir, projectId, false);
 }
 
 /** True when a file is a JSX/TSX snippet, not a real HTML document. */
