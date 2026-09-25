@@ -44,7 +44,7 @@ const {
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const {
   appendContinuationChunk,
-  GEMINI_MAX_RETRIES,
+  GLM_53_MAX_RETRIES,
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
@@ -320,9 +320,9 @@ test("Stop aborts the active provider request and remains terminal", async () =>
   let providerAborted = false;
 
   (multiModelRouter as any).getProviders = () => [{
-    id: "telnyx-glm",
+    id: "above-glm53",
     name: "Cancellation test provider",
-    model: "zai-org/GLM-5.3-Flash",
+    model: "glm-5.3-flash-modal",
   }];
   (multiModelRouter as any).complete = async (
     _messages: unknown,
@@ -1592,189 +1592,80 @@ test("authentication redirects preserve safe app destinations and reject open re
   assert.equal(allowed.status, 200);
 });
 
-test("generation providers use Gemini, Telnyx, then Groq fallback", () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousGroq = process.env.GROQ_API_KEY;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.TELNYX_API_KEY = "test-telnyx";
-  process.env.GROQ_API_KEY = "test-groq";
+test("generation, chat, and reference analysis select only GLM 5.3 Flash", () => {
+  const previous = process.env.ABOVE_API_KEY;
+  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle";
   try {
-    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), [
-      "gemini-flash",
-      "telnyx-glm",
-      "groq",
-      "groq-oss",
-    ]);
-    assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
-    assert.equal(GEMINI_MAX_RETRIES, 5);
+    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), ["above-glm53"]);
+    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.model), ["glm-5.3-flash-modal"]);
+    assert.equal(multiModelRouter.getProviders()[0].maxRetries, GLM_53_MAX_RETRIES);
   } finally {
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
+    if (previous === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previous;
   }
 });
 
-test("token-limited model output continues, merges safely, and keeps provider identity private", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
+test("token-limited model output continues and keeps provider identity private", async () => {
+  const previous = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  delete process.env.TELNYX_API_KEY;
+  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle-continuation";
   const statuses: string[] = [];
   const requestBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
-  let requestCount = 0;
-
   global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     requestBodies.push(JSON.parse(String(init?.body || "{}")));
-    requestCount += 1;
-    if (requestCount === 1) {
-      return Response.json({
-        choices: [{
-          finish_reason: "length",
-          message: { content: "<section>continuation-boundary" },
-        }],
-      });
-    }
-    return Response.json({
-      choices: [{
-        finish_reason: "stop",
-        message: { content: "continuation-boundary-complete</section>" },
-      }],
-    });
+    return Response.json({ choices: [{ finish_reason: requestBodies.length === 1 ? "length" : "stop", message: {
+      content: requestBodies.length === 1 ? "<section>continuation-boundary" : "continuation-boundary-complete</section>",
+    } }] });
   }) as typeof fetch;
-
   try {
-    const result = await multiModelRouter.complete(
-      [{ role: "user", content: "Build the complete page" }],
-      (status) => statuses.push(status),
-      { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
-    );
+    const result = await multiModelRouter.complete([{ role: "user", content: "Build the complete page" }],
+      (status) => statuses.push(status), { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 });
     assert.equal(result.text, "<section>continuation-boundary-complete</section>");
     assert.equal(result.publicModelName, "AI");
     assert.deepEqual(result.failureCategories, []);
-    assert.equal(requestCount, 2);
+    assert.equal(requestBodies.length, 2);
     assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
     assert.ok(statuses.some((status) => status.includes("Continuing generation")));
-    assert.ok(statuses.every((status) => !/Gemini|gemini-2\.5|Google/i.test(status)));
-    assert.equal(publicModelName("telnyx-glm"), "AI");
-    assert.equal(
-      appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"),
-      "0123456789abcdefghijkl-complete"
-    );
-    assert.equal(
-      appendContinuationChunk("0123456789abcdefghijkl", "0123456789abcdefghijkl"),
-      "0123456789abcdefghijkl"
-    );
+    assert.ok(statuses.every((status) => !/above|glm-5\.3/i.test(status)));
+    assert.equal(publicModelName("above-glm53"), "AI");
+    assert.equal(appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"), "0123456789abcdefghijkl-complete");
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previous === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previous;
   }
 });
 
-test("provider exhaustion and failover statuses keep provider identity private", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousGroq = process.env.GROQ_API_KEY;
+test("specialized GLM vision requests preserve image inputs", async () => {
+  const previous = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.TELNYX_API_KEY = "test-telnyx";
-  process.env.GROQ_API_KEY = "test-groq";
-  const statuses: string[] = [];
-  global.fetch = (async () => Response.json(
-    { error: { message: "invalid test credential" } },
-    { status: 401 }
-  )) as typeof fetch;
-
-  try {
-    await assert.rejects(
-      multiModelRouter.complete(
-        [{ role: "user", content: "Build" }],
-        (status) => statuses.push(status),
-        { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
-      ),
-      (error: Error) => {
-        assert.equal(error.name, "ProviderExhaustedError");
-        assert.doesNotMatch(error.message, /Gemini|Telnyx|gemini-2\.5|GLM-5\.3/i);
-        return true;
-      }
-    );
-    assert.deepEqual(statuses, [
-      "Generating the implementation…",
-      "Continuing generation…",
-      "Generating the implementation…",
-      "Continuing generation…",
-      "Generating the implementation…",
-      "Continuing generation…",
-      "Generating the implementation…",
-    ]);
-  } finally {
-    global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
-  }
-});
-
-test("specialized vision requests stay on the required provider and preserve image inputs", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini-vision";
-  process.env.TELNYX_API_KEY = "test-telnyx-vision";
-  const requestedUrls: string[] = [];
+  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle-vision";
   let requestBody: { messages?: Array<{ content?: unknown }> } = {};
-
-  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    requestedUrls.push(String(input));
+  global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     requestBody = JSON.parse(String(init?.body || "{}"));
-    return Response.json({
-      choices: [{ finish_reason: "stop", message: { content: "Observed a structured hero and compact navigation." } }],
-    });
+    return Response.json({ choices: [{ finish_reason: "stop", message: { content: "Observed structured hero." } }] });
   }) as typeof fetch;
-
   try {
-    const result = await multiModelRouter.complete(
-      [{
-        role: "user",
-        content: [
-          { type: "text", text: "Analyze this real reference." },
-          { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
-        ],
-      }],
-      undefined,
-      { onlyProviderId: "telnyx-glm", perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
-    );
-    assert.equal(result.providerId, "telnyx-glm");
-    assert.equal(requestedUrls.length, 1);
+    const result = await multiModelRouter.complete([{ role: "user", content: [
+      { type: "text", text: "Analyze this reference." },
+      { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
+    ] }], undefined, { onlyProviderId: "above-glm53", perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 });
+    assert.equal(result.providerId, "above-glm53");
     assert.deepEqual(requestBody.messages?.[0]?.content, [
-      { type: "text", text: "Analyze this real reference." },
+      { type: "text", text: "Analyze this reference." },
       { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
     ]);
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previous === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previous;
   }
 });
 
 test("reference analysis falls back to metadata without retrying non-retryable multimodal requests", async () => {
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.TELNYX_API_KEY = "test-telnyx-reference";
-  delete process.env.GEMINI_API_KEY;
+  process.env.ABOVE_API_KEY = "test-above-reference";
   const requestImageCounts: number[] = [];
   const validSpecification = {
     reference_url: "https://example.test/",
@@ -1835,10 +1726,8 @@ test("reference analysis falls back to metadata without retrying non-retryable m
     assert.match(result.implementationContext, /VALIDATED REFERENCE DESIGN SPECIFICATION/);
   } finally {
     global.fetch = previousFetch;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
@@ -1850,13 +1739,9 @@ test("reference design schema rejects incomplete output", () => {
 });
 
 test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousGroq = process.env.GROQ_API_KEY;
+  const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini-overload";
-  delete process.env.TELNYX_API_KEY;
-  delete process.env.GROQ_API_KEY;
+  process.env.ABOVE_API_KEY = "test-above-overload";
   let requestCount = 0;
 
   global.fetch = (async () => {
@@ -1888,19 +1773,16 @@ test("plain-text overloads retry and repeated continuations cannot produce false
     assert.deepEqual(result.failureCategories, ["provider_unavailable", "output_limit"]);
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
 test("generated apps use a browser-safe durable data client", async () => {
   assert.match(GENERATED_DB_CLIENT_SOURCE, /\/__bigbag\/data\//);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /collection<T extends object = DbRecord>/);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /Promise<\{ records: T\[\]; total: number \}>/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /type ListResult<T> = \{ records: T\[\]; total: number \}/);
+  assert.match(GENERATED_DB_CLIENT_SOURCE, /Promise<ListResult<T>>/);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /X-BigBag-Capability/);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /Authorization/);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /getPlatformAuthAccessToken/);

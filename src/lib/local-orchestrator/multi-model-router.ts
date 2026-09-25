@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { safeConfiguredModel } from "./provider-model-config";
+import { GLM_53_PROVIDER_ID, glm53Config } from "./ai-provider-config";
 
 export interface ModelProviderConfig {
   id: string;
@@ -83,8 +83,8 @@ export interface RouterCompletionOptions {
   providerMessageTransform?: (providerId: string, messages: ModelMessage[]) => ModelMessage[] | null;
 }
 
-/** Product policy: Gemini gets five recovery attempts before provider failover. */
-export const GEMINI_MAX_RETRIES = 5;
+/** Additional bounded attempts for transient GLM 5.3 Flash failures. */
+export const GLM_53_MAX_RETRIES = 2;
 /** Maximum number of follow-up requests used to finish a token-limited response. */
 export const MAX_OUTPUT_CONTINUATIONS = 4;
 const DEFAULT_MAX_RETRIES = 2;
@@ -107,12 +107,21 @@ function providerCooldown(provider: ModelProviderConfig): ProviderErrorCategory 
   return cooldown.category;
 }
 
-function recordProviderFailure(provider: ModelProviderConfig, category: ProviderErrorCategory): void {
+function recordProviderFailure(provider: ModelProviderConfig, category: ProviderErrorCategory, retryAfterMs = 0): void {
   const duration = category === "authentication" || category === "invalid_model" ? 5 * 60_000
-    : category === "rate_limit" ? 30_000 : 0;
+    : category === "rate_limit" ? Math.max(30_000, Math.min(120_000, retryAfterMs))
+      : 0;
   if (duration > 0) providerCooldowns.set(provider.id, {
     fingerprint: providerFingerprint(provider), until: Date.now() + duration, category,
   });
+}
+
+function actionableProviderFailure(errors: ProviderRequestError[]): ProviderRequestError | undefined {
+  // A configured account can be invalid while the only usable account is
+  // temporarily rate-limited. Report the condition that can actually recover.
+  return errors.findLast((error) => error.category === "rate_limit") ||
+    errors.findLast((error) => error.category === "request_too_large" || error.category === "context_limit") ||
+    errors.at(-1);
 }
 
 function resetDelayMs(value: string | null, retryAfter = false): number {
@@ -145,6 +154,46 @@ function completionText(content: unknown): string {
         : "";
     })
     .join("");
+}
+
+async function readStreamedCompletion(response: Response, onText: (text: string) => void): Promise<{
+  text: string; reasoning: string; finishReason: string;
+}> {
+  if (!response.body) throw new Error("Provider returned an empty stream");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let text = "";
+  let reasoning = "";
+  let finishReason = "";
+  let doneMarker = false;
+  const readLine = (line: string) => {
+    if (!line.startsWith("data:")) return;
+    const data = line.slice(5).trim();
+    if (!data) return;
+    if (data === "[DONE]") { doneMarker = true; return; }
+    let parsed: { choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> };
+    try { parsed = JSON.parse(data); } catch { return; }
+    const choice = parsed.choices?.[0];
+    const delta = completionText(choice?.delta?.content);
+    if (delta) { text += delta; onText(text); }
+    reasoning += completionText(choice?.delta?.reasoning_content);
+    if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason.toLowerCase();
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() || "";
+      for (const line of lines) readLine(line);
+      if (done) { if (pending) readLine(pending); break; }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!doneMarker) throw new Error("Network stream ended before completion");
+  return { text, reasoning, finishReason };
 }
 
 export function publicModelName(providerId: string): string {
@@ -319,72 +368,19 @@ class MultiModelRouter {
   }
 
   public getProviders(): ModelProviderConfig[] {
-    const providers: ModelProviderConfig[] = [];
-
-    // 1. Google Gemini — primary by product policy.
-    const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
-    if (geminiKey) {
-      let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
-      if (geminiBase.includes("generativelanguage.googleapis.com") && !geminiBase.includes("/openai")) {
-        geminiBase = "https://generativelanguage.googleapis.com/v1beta/openai";
-      }
-
-      providers.push({
-        id: "gemini-flash",
-        name: "Google Gemini (gemini-2.5-flash)",
-        baseUrl: geminiBase,
-        apiKey: geminiKey,
-        model: safeConfiguredModel(process.env.GEMINI_MODEL, "gemini-2.5-flash"),
-        maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
-        maxRetries: GEMINI_MAX_RETRIES,
-      });
-    }
-
-    // 2. Telnyx GLM-5.3-Flash — fallback when Gemini is unavailable.
-    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
-    if (telnyxKey) {
-      const telnyxModel = safeConfiguredModel(process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL, "zai-org/GLM-5.3-Flash");
-      providers.push({
-        id: "telnyx-glm",
-        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
-        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
-        apiKey: telnyxKey,
-        model: telnyxModel,
-        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
-        maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
-      });
-    }
-
-    // A second independent text provider keeps generation available when the
-    // primary provider rejects requests or reaches its account limit.
-    const groqKey = process.env.GROQ_API_KEY?.trim() || "";
-    if (groqKey) {
-      const groqBase = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").trim();
-      const groqModel = safeConfiguredModel(process.env.GROQ_MODEL, "qwen/qwen3.8-27b");
-      providers.push({
-        id: "groq",
-        name: "Groq AI",
-        baseUrl: groqBase,
-        apiKey: groqKey,
-        model: groqModel,
-        maxTokens: parseInt(process.env.GROQ_MAX_TOKENS || "16384", 10),
-        maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningFormat: groqModel === "qwen/qwen3.8-27b" ? "hidden" : undefined,
-      });
-      providers.push({
-        id: "groq-oss",
-        name: "Groq AI alternate",
-        baseUrl: groqBase,
-        apiKey: groqKey,
-        model: "openai/gpt-oss-120b",
-        maxTokens: parseInt(process.env.GROQ_OSS_MAX_TOKENS || "16384", 10),
-        maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: "low",
-      });
-    }
-
-    return providers;
+    const config = glm53Config();
+    if (!config) return [];
+    return [{
+      id: GLM_53_PROVIDER_ID,
+      name: "GLM 5.3 Flash",
+      ...config,
+      // Bound the first response so a long reasoning phase cannot consume the
+      // entire request timeout before any usable source arrives. Continuation
+      // requests retain the ability to emit larger applications.
+      maxTokens: 8_192,
+      maxRetries: GLM_53_MAX_RETRIES,
+      reasoningEffort: "low",
+    }];
   }
 
   /**
@@ -449,6 +445,7 @@ class MultiModelRouter {
       }
 
       let accumulatedText = recoverablePartialText;
+      let inFlightText = "";
       try {
         let requestMessages = accumulatedText
           ? continuationMessages(messages, accumulatedText, options.requestLabel)
@@ -476,6 +473,8 @@ class MultiModelRouter {
             temperature: 0.2,
             max_tokens: maxTokens,
           };
+          const stream = (options.requestLabel === "code_generation" || options.requestLabel === "code_repair") && !options.responseFormat;
+          if (stream) payload.stream = true;
           if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
           if (provider.reasoningFormat) payload.reasoning_format = provider.reasoningFormat;
           if (options.responseFormat) payload.response_format = { type: options.responseFormat };
@@ -487,7 +486,7 @@ class MultiModelRouter {
             requestLabel: options.requestLabel,
             model: provider.model,
             providerId: provider.id,
-            stream: false,
+            stream,
             textChars: size.textChars,
             imageCount: size.imageCount,
             maxTokens,
@@ -556,21 +555,19 @@ class MultiModelRouter {
             );
           }
 
-          const json = await res.json().catch(() => {
-            throw new ProviderRequestError(
-              "Provider returned malformed JSON",
-              "invalid_response_schema",
-              false,
-              accumulatedText,
-              "",
-              requestAttempts
-            );
+          inFlightText = "";
+          const streamed = stream && res.headers.get("content-type")?.includes("text/event-stream")
+            ? await readStreamedCompletion(res, (value) => { inFlightText = value; })
+            : null;
+          const json = streamed ? null : await res.json().catch(() => {
+            throw new ProviderRequestError("Provider returned malformed JSON", "invalid_response_schema", false,
+              accumulatedText, "", requestAttempts);
           });
-          const choice = json.choices?.[0];
-          const text = completionText(choice?.message?.content);
+          const choice = json?.choices?.[0];
+          const text = streamed?.text ?? completionText(choice?.message?.content);
           if (!text || text.trim().length === 0) {
-            const hasReasoning = completionText(choice?.message?.reasoning_content).trim().length > 0;
-            const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason.toLowerCase() : "";
+            const hasReasoning = (streamed?.reasoning || completionText(choice?.message?.reasoning_content)).trim().length > 0;
+            const finishReason = streamed?.finishReason || (typeof choice?.finish_reason === "string" ? choice.finish_reason.toLowerCase() : "");
             const reasoningHitLimit = hasReasoning && ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
             throw new ProviderRequestError(
               hasReasoning
@@ -596,9 +593,9 @@ class MultiModelRouter {
               requestAttempts
             );
           }
-          const finishReason = typeof choice?.finish_reason === "string"
+          const finishReason = streamed?.finishReason || (typeof choice?.finish_reason === "string"
             ? choice.finish_reason.toLowerCase()
-            : "";
+            : "");
           const wasTruncated = ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
           console.info(`[MultiModelRouter] ${JSON.stringify({
             event: continuation === 0 ? "model_first_response" : "model_continuation_response",
@@ -650,6 +647,7 @@ class MultiModelRouter {
           throw new ProviderRequestError("Generation cancelled", "cancelled", false, "", "", requestAttempts);
         }
         const message = err?.message || String(err);
+        const partialResponse = appendContinuationChunk(accumulatedText, inFlightText);
         const isTimeout = err?.name === "TimeoutError" || /aborted|timeout/i.test(message);
         const isNetworkFailure = /fetch|network|socket/i.test(message);
         lastError = err instanceof ProviderRequestError
@@ -658,7 +656,7 @@ class MultiModelRouter {
               safeProviderMessage(message),
               isTimeout ? "network_timeout" : isNetworkFailure ? "network_error" : "unknown",
               isTimeout || isNetworkFailure,
-              accumulatedText,
+              partialResponse,
               "",
               requestAttempts
             );
@@ -683,7 +681,9 @@ class MultiModelRouter {
           ? lastError.partialText
           : "";
 
-        if (!lastError.retryable) break;
+        // A long provider reset cannot be repaired by an immediate retry.
+        // Preserve the account's cooldown and give another provider the run.
+        if (!lastError.retryable || (lastError.category === "rate_limit" && lastError.retryAfterMs > 30_000)) break;
       }
     }
 
@@ -699,7 +699,7 @@ class MultiModelRouter {
 
     if (configuredProviders.length === 0) {
       throw new Error(
-        "No AI provider configured. Configure Gemini, Telnyx, or Groq credentials."
+        "GLM 5.3 Flash is not configured. Set ABOVE_API_KEY on the server."
       );
     }
 
@@ -710,12 +710,13 @@ class MultiModelRouter {
       throw new Error("The required AI capability is not configured.");
     }
 
+    const initialProviders = [...eligibleProviders];
     const routedProviders = options.deprioritizeProviderId
       ? [
-          ...eligibleProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
-          ...eligibleProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
+          ...initialProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
+          ...initialProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
         ]
-      : eligibleProviders;
+      : initialProviders;
     const skipped = routedProviders.flatMap((provider) => {
       const category = providerCooldown(provider);
       return category ? [{ provider, category }] : [];
@@ -724,7 +725,8 @@ class MultiModelRouter {
     const errors: ProviderRequestError[] = skipped.map(({ category }) =>
       new ProviderRequestError("Provider is in a temporary health cooldown", category, category === "rate_limit"));
     if (providers.length === 0) {
-      throw new ProviderExhaustedError(errors[0]?.category || "provider_unavailable", errors.length > 0 && errors.every((error) => error.retryable), "", "", 0,
+      const blockingError = actionableProviderFailure(errors);
+      throw new ProviderExhaustedError(blockingError?.category || "provider_unavailable", Boolean(blockingError?.retryable), "", "", 0,
         "Configured AI providers are temporarily unavailable; check their credentials or rate limits.");
     }
     const startedAt = Date.now();
@@ -782,7 +784,7 @@ class MultiModelRouter {
           ? err
           : new ProviderRequestError(safeProviderMessage(err?.message || String(err)), "unknown", false);
         errors.push(providerError);
-        recordProviderFailure(provider, providerError.category);
+        recordProviderFailure(provider, providerError.category, providerError.retryAfterMs);
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
@@ -793,7 +795,7 @@ class MultiModelRouter {
       }
     }
 
-    const finalError = errors.at(-1) || new ProviderRequestError("No provider completed the request", "unknown", false);
+    const finalError = actionableProviderFailure(errors) || new ProviderRequestError("No provider completed the request", "unknown", false);
     console.warn(`[MultiModelRouter] ${JSON.stringify({
       event: "all_providers_failed",
       requestLabel: options.requestLabel?.trim() || "generation",

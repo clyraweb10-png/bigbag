@@ -3,12 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { normalizeQualificationRunId, qualificationProjectId } from "../src/lib/qualification-run";
+import { writeQualificationEvidenceFile } from "../src/lib/qualification-evidence-file";
+import { ensureQualificationCatalog, writeQualificationReport } from "../src/lib/qualification-report";
+import { qualificationProviderBlocker } from "../src/lib/qualification-provider-blocker";
 import type { LocalProjectRecord } from "../src/lib/local-orchestrator/types";
 
 const envPath = path.join(process.cwd(), ".env.local");
 if (fs.existsSync(envPath)) process.loadEnvFile(envPath);
 
-const { getGenerationModelDiagnostics, localAgentEngine } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
+const { getGenerationModelDiagnostics, hasRealGeneratedSource, localAgentEngine } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const { durableProjectStore } = require("../src/lib/local-orchestrator/durable-project-store") as typeof import("../src/lib/local-orchestrator/durable-project-store");
 const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { localProjectStore, persistentPreviewPath } = require("../src/lib/local-orchestrator/project-store") as typeof import("../src/lib/local-orchestrator/project-store");
@@ -414,6 +417,8 @@ async function qualify(item: QualificationCase) {
   // Qualify the final source, including a failed edit's preserved workspace.
   const files = sourceFiles(projectId);
   const modelOwnedFiles = files.filter((file) => !["src/lib/db.ts", "src/lib/auth.ts", "src/main.tsx"].includes(file.path));
+  const externalBlockerCategory = qualificationProviderBlocker(initial.terminal.message, hasRealGeneratedSource(files));
+  if (externalBlockerCategory && initial.terminal.status === "FAIL") initial.terminal.status = "BLOCKED";
   const securityFindings = generationValidationIssues(modelOwnedFiles, files.map((file) => file.path), { requireEntrypoint: false })
     .filter((issue) => /security issue|password|authentication|authorization|browser storage|server-only secret|service role/i.test(issue));
   const hasRealAuthProvider = modelOwnedFiles.some((file) => /from\s+["']@\/lib\/auth["']|firebase\/auth|@auth0\//.test(file.content));
@@ -446,7 +451,7 @@ async function qualify(item: QualificationCase) {
     ? events.some((event) => event.type === "crawl_asset_received") ? "PASS" : "FAIL"
     : database.status === "PASS" ? "PARTIAL" : "FAIL";
 
-  const auth: Status = !item.requiresAuth
+  const auth: Status = externalBlockerCategory ? "BLOCKED" : !item.requiresAuth
     ? "PARTIAL"
     : securityFindings.length > 0
       ? "FAIL"
@@ -471,7 +476,7 @@ async function qualify(item: QualificationCase) {
     generation: initial.terminal.status === "PASS",
     build: build === "PASS",
     runtime: runtime === "PASS",
-    authentication: !item.requiresAuth || auth !== "FAIL",
+    authentication: !externalBlockerCategory && (!item.requiresAuth || auth !== "FAIL"),
     editLifecycle: editLifecyclePassed,
     connector: connector === "PASS",
     qualificationPersistence: true,
@@ -493,26 +498,27 @@ async function qualify(item: QualificationCase) {
     category,
     prompt: item.prompt,
     projectId,
+    externalBlocker: externalBlockerCategory ? { category: externalBlockerCategory, detail: initial.terminal.message } : null,
     generationId: initial.generationId,
     route: persistentPreviewPath(projectId),
     statuses: {
       generation: initial.terminal.status,
       planning: "PARTIAL" as Status,
       codeGeneration: initial.terminal.status,
-      files: files.length > 0 ? "PASS" as Status : "FAIL" as Status,
-      dependencies: "PARTIAL" as Status,
+      files: externalBlockerCategory ? "BLOCKED" as Status : files.length > 0 ? "PASS" as Status : "FAIL" as Status,
+      dependencies: externalBlockerCategory ? "BLOCKED" as Status : "PARTIAL" as Status,
       typescript: build,
       build,
       runtime,
       preview: runtime,
       frontend: runtime === "PASS" ? "PARTIAL" as Status : runtime,
-      backend: database.status === "PASS" ? "PARTIAL" as Status : database.status,
+      backend: externalBlockerCategory ? "BLOCKED" as Status : database.status === "PASS" ? "PARTIAL" as Status : database.status,
       database: database.status,
       authentication: auth,
-      crud: database.status === "PASS" ? "PARTIAL" as Status : "FAIL" as Status,
-      connector,
-      api: item.requiresApi ? "BLOCKED" as Status : "PARTIAL" as Status,
-      persistence: database.status === "PASS" ? "PARTIAL" as Status : "FAIL" as Status,
+      crud: externalBlockerCategory ? "BLOCKED" as Status : database.status === "PASS" ? "PARTIAL" as Status : "FAIL" as Status,
+      connector: externalBlockerCategory ? "BLOCKED" as Status : connector,
+      api: externalBlockerCategory || item.requiresApi ? "BLOCKED" as Status : "PARTIAL" as Status,
+      persistence: externalBlockerCategory ? "BLOCKED" as Status : database.status === "PASS" ? "PARTIAL" as Status : "FAIL" as Status,
       edit: !edit
         ? "BLOCKED" as Status
         : editLifecyclePassed
@@ -524,7 +530,7 @@ async function qualify(item: QualificationCase) {
       uiUx: "BLOCKED" as Status,
       accessibility: "BLOCKED" as Status,
       codeRabbit: "NOT_RUN",
-      security: securityFindings.length === 0 && (!item.requiresAuth || hasRealAuthProvider) ? "PARTIAL" as Status : "FAIL" as Status,
+      security: externalBlockerCategory ? "BLOCKED" as Status : securityFindings.length === 0 && (!item.requiresAuth || hasRealAuthProvider) ? "PARTIAL" as Status : "FAIL" as Status,
       final,
     },
     initialTerminal: initial.terminal,
@@ -558,8 +564,7 @@ async function qualify(item: QualificationCase) {
     databaseProbe: database,
     qualificationPersistence: { status: "PASS" as Status, error: null as string | null },
   };
-  const evidencePath = path.join(outputDir, `project-${String(item.id).padStart(2, "0")}.json`);
-  fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+  writeQualificationEvidenceFile(outputDir, item.id, evidence);
   try {
     await durableProjectStore.saveQualificationEvidence(runId, evidence);
   } catch (error) {
@@ -569,36 +574,22 @@ async function qualify(item: QualificationCase) {
       status: "FAIL",
       error: error instanceof Error ? error.message : String(error),
     };
-    fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+    writeQualificationEvidenceFile(outputDir, item.id, evidence);
   }
   process.stdout.write(`QUALIFICATION_END project=${item.id} result=${evidence.statuses.final} generation=${initial.terminal.status} build=${build} auth=${auth} security=${evidence.statuses.security}\n`);
   return evidence;
 }
 
 async function main() {
+  const manifest = CASES.map((item) => ({ ...item, category: categoryFor(item.id) }));
+  ensureQualificationCatalog(outputDir, runId, manifest);
   if (process.env.BIGBAG_QUALIFICATION_LIST_ONLY === "true") {
-    const manifest = CASES.map((item) => ({
-      ...item,
-      category: categoryFor(item.id),
-    }));
-    fs.writeFileSync(path.join(outputDir, "catalog.json"), `${JSON.stringify({ runId, projects: manifest }, null, 2)}\n`);
     process.stdout.write(`QUALIFICATION_CATALOG_COMPLETE projects=${manifest.length} output=${path.relative(workspaceRoot, outputDir)}\n`);
     return;
   }
   const results = [];
   for (let index = 0; index < selected.length; index += concurrency) {
     const group = selected.slice(index, index + concurrency);
-    for (const item of group) {
-      const evidencePath = path.join(outputDir, `project-${String(item.id).padStart(2, "0")}.json`);
-      if (fs.existsSync(evidencePath)) {
-        const archiveDir = path.join(outputDir, "attempts");
-        fs.mkdirSync(archiveDir, { recursive: true });
-        fs.renameSync(
-          evidencePath,
-          path.join(archiveDir, `project-${String(item.id).padStart(2, "0")}-${Date.now()}-${randomUUID()}.json`)
-        );
-      }
-    }
     const settled = await Promise.allSettled(group.map(qualify));
     settled.forEach((result, resultIndex) => {
       if (result.status === "fulfilled") {
@@ -615,6 +606,8 @@ async function main() {
     return fs.existsSync(evidencePath) ? [JSON.parse(fs.readFileSync(evidencePath, "utf8"))] : [];
   });
   fs.writeFileSync(path.join(outputDir, `batch-${batch}.json`), `${JSON.stringify({ runId, batch, results: batchResults }, null, 2)}\n`);
+  const summary = writeQualificationReport(outputDir, runId);
+  process.stdout.write(`QUALIFICATION_REPORT ${JSON.stringify(summary.counts)}\n`);
   process.stdout.write(`QUALIFICATION_BATCH_COMPLETE batch=${batch} output=${path.relative(workspaceRoot, outputDir)}\n`);
 }
 

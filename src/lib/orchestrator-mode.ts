@@ -14,11 +14,7 @@ function remoteApiKey(): string {
 }
 
 export function hasConfiguredLocalModel(): boolean {
-  return Boolean(
-    process.env.GEMINI_API_KEY?.trim() ||
-      process.env.TELNYX_API_KEY?.trim() ||
-      process.env.CUSTOM_OPENAI_API_KEY?.trim()
-  );
+  return Boolean(process.env.ABOVE_API_KEY?.trim());
 }
 
 export function hasConfiguredRemoteOrchestrator(): boolean {

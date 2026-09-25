@@ -5,7 +5,7 @@ import { localProjectStore, persistentPreviewPath } from "./project-store";
 import { localFileManager } from "./file-manager";
 import { localSandboxManager } from "./sandbox-manager";
 import { e2bSandboxManager } from "./e2b-sandbox-manager";
-import { multiModelRouter } from "./multi-model-router";
+import { multiModelRouter, ProviderExhaustedError } from "./multi-model-router";
 import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import type { ConversationMessage } from "../vcaas-types";
@@ -58,8 +58,8 @@ To delete an obsolete file, output:
 - Pre-installed and ready: react, react-dom (v19), tailwindcss (v4), lucide-react, clsx, tailwind-merge, class-variance-authority, framer-motion, gsap, zustand, date-fns, axios, @tanstack/react-query, canvas-confetti, usehooks-ts, embla-carousel-react, react-hook-form, sonner, @supabase/supabase-js, @radix-ui/react-dialog, @radix-ui/react-dropdown-menu, @radix-ui/react-select, @radix-ui/react-tabs, @radix-ui/react-tooltip, @radix-ui/react-checkbox, @radix-ui/react-switch, @radix-ui/react-label, @radix-ui/react-separator.
 - For charts and analytics visualization, use lightweight semantic HTML, CSS, or inline SVG. Do not import recharts or another charting library; its module graph exceeds the production sandbox capacity. Preserve accessible labels and data tables alongside visual charts.
 - Pre-existing UI primitives: Button, Card (with variants), Input, Textarea, Label, Select, Checkbox, Switch, Separator, Badge, Skeleton, SkeletonCard, Alert, EmptyState, MetricCard, Table (with TableHeader/Body/Row/Head/Cell), Dialog (with DialogContent/Header/Footer/Title/Description), Sheet (with SheetContent/Header/Footer), DropdownMenu (with DropdownMenuContent/Item/Label/Separator), Tabs (with TabsList/Trigger/Content), Tooltip (with TooltipProvider/Content), Breadcrumbs, Pagination, FormField/FormLabel/FormMessage/FormDescription — all in @/components/ui/. Always import from @/components/ui/ or @/components/ui/index. Layout shells: DashboardShell, MarketingShell+HeroSection+FeatureGrid, StorefrontShell+ProductCard, EditorialShell+ArticleHeader+ArticleBody, FocusShell+StepProgress — all in @/components/layout/. Always use a shell; never build layout chrome from scratch.
-- MetricCard accepts label, value, numeric trend, trendLabel, icon, className, and description. Use label, not title. The trend prop renders a percentage and requires an actual historical comparison; put current counts in description instead. Radix Select uses separate Select, SelectTrigger, SelectContent, SelectItem, and SelectValue exports; never use Select.Trigger or similar namespace members.
-- Button size is one of xs, sm, default, lg, icon, icon-sm. Import every Dialog, DialogContent, DialogHeader, DialogTitle, and DialogDescription symbol you render from @/components/ui/dialog. Every DropdownMenu needs a DropdownMenuTrigger wrapping its interactive trigger (use asChild for a Button), followed by DropdownMenuContent; a bare Button inside DropdownMenu does not open it.
+- DashboardShell accepts brand, userName, navItems, actions as a ReactNode, pageTitle, and children. It has no onLogout, onSearch, or onNotifications props; render working controls inside actions. MetricCard accepts label, value, numeric trend, trendLabel, icon, className, and description. Use label, not title. The trend prop renders a percentage and requires an actual historical comparison; put current counts in description instead. Radix Select uses separate Select, SelectTrigger, SelectContent, SelectItem, and SelectValue exports; never use Select.Trigger or similar namespace members.
+- Button size is one of xs, sm, default, lg, icon, icon-sm. Import UI primitives by their named exports, such as { Button } and { Dialog, DialogContent }; never use namespace imports or invented members such as Button.Primary, Dialog.Root, Input.Root, or Card.Root. Import every Dialog, DialogContent, DialogHeader, DialogTitle, and DialogDescription symbol you render from @/components/ui/dialog. Every DropdownMenu needs a DropdownMenuTrigger wrapping its interactive trigger (use asChild for a Button), followed by DropdownMenuContent; a bare Button inside DropdownMenu does not open it.
 - DashboardShell accepts navItems, brand, userName, userAvatar, actions, onSearch, onNotifications, pageTitle, className, and children. It does not accept title, subtitle, nav, or searchPlaceholder. DashboardShell renders search and notifications only when functional zero-argument handlers are supplied. Every nav item needs a real href or onClick action; its icon is a React element such as <HomeIcon />, never the component function HomeIcon. Never render a control whose click does nothing.
 - Marketing CTAs must complete their stated action. A link to a pricing section is not a working "Start free trial" action, and a link to the top of the page is not "Talk to us". If signup, billing, contact delivery, or an integration is unavailable, use an honest waitlist/request-access action backed by the project database, or label the action unavailable. Do not claim a working trial, account connection, payment, webhook, or export unless the generated application implements it.
 - StorefrontShell renders search only when onSearchChange handles edits; supply searchValue too. If cart checkout changes the page, control the drawer with cartOpen and onCartOpenChange, and set cartOpen false before showing checkout. Never leave a cart sheet covering the checkout form.
@@ -332,17 +332,33 @@ const COMPACT_SYSTEM_PROMPT = `You generate complete, working React 19 and TypeS
 \`\`\`
 For deletion, use ### Delete: path. Never return partial code, prose, TODOs, fake behavior, fabricated production records, or placeholder credentials. Use plain ASCII code punctuation.
 
-Platform contract: Vite, Tailwind v4, React 19, TypeScript, lucide-react, sonner, and the already installed @/components/ui and @/components/layout primitives. Use a suitable supplied layout shell. Prefer installed packages, CSS, React and browser APIs; add a dependency only when essential. Do not import Next server modules. The runtime owns index.html, src/main.tsx, src/lib/db.ts, src/lib/auth.ts, src/lib/auth-bridge.ts, src/lib/files.ts, src/lib/utils.ts, all foundational src/components/ui/* and src/components/layout/* files, package metadata and build configuration. Import these but never output or overwrite them. Start initial output with exactly one valid default-export entrypoint. Include every custom imported file, complete and parseable.
+Platform contract: Vite, Tailwind v4, React 19, TypeScript, lucide-react, sonner, and the already installed @/components/ui and @/components/layout primitives. Import UI primitives by named exports: { Button } from "@/components/ui/button", { Dialog, DialogContent } from "@/components/ui/dialog", { Input }, { Label }, { Card }; never import * as Button/Dialog/Input/Label/Card or invent Button.Primary, Dialog.Root, Input.Root, or Card.Root. Use a suitable supplied layout shell. DashboardShell accepts brand, userName, navItems, actions (ReactNode), pageTitle and children, not onLogout/onSearch/onNotifications props. MarketingShell accepts brand, navItems ({label,href}), pageTitle, ctaLabel, ctaHref/onCtaClick, signInHref/onSignInClick and children; it does not accept userName or actions. Prefer installed packages, CSS, React and browser APIs; add a dependency only when essential. Do not import Next server modules. The runtime owns index.html, src/main.tsx, src/lib/db.ts, src/lib/auth.ts, src/lib/auth-bridge.ts, src/lib/files.ts, src/lib/utils.ts, all foundational src/components/ui/* and src/components/layout/* files, package metadata and build configuration. Import these but never output or overwrite them. Start initial output with exactly one valid default-export entrypoint. Include every custom imported file, complete and parseable.
 
-Build actual behavior: every visible navigation item, button, form, menu, search, filter, dialog and CTA must either work or state clearly that the integration is unavailable. Handle loading, empty, validation, authorization, network and error states. Use responsive semantic landmarks, labeled controls, visible focus, mobile navigation, accessible color contrast, and restrained motion. Never claim tests or successful payment, AI, email, upload or API calls without implementing them. Use a coherent visual hierarchy, professional typography, spacing, colors and realistic copy even for a short prompt. The user's specific features and design direction take priority.
+Build actual behavior: every visible navigation item, button, form, menu, search, filter, dialog and CTA must either work or state clearly that the integration is unavailable. Never use href="#" for an unfinished action or blocking window.prompt/alert/confirm for a user workflow. Handle loading, empty, validation, authorization, network and error states. Use exactly one <main> landmark per rendered page: DashboardShell, MarketingShell, EditorialShell and FocusShell already render it, so their children must use section or div. Give every SelectTrigger an accessible label. Use ordered headings, labeled controls, visible focus, mobile navigation, text contrast of at least 4.5:1, and restrained motion. Marketing and portfolio pages need an intentional above-the-fold composition with original CSS/SVG artwork, useful imagery, or distinctive typography; a centered heading over a mostly empty page is insufficient. Never point images at local files that do not exist. On light surfaces choose dark text and accents with sufficient contrast, not pale yellow or amber copy. Avoid blank hero media blocks with one icon and unverified claims about customers, security certifications, or available features. Never claim tests or successful payment, AI, email, upload or API calls without implementing them. Choose a domain-specific visual direction with a deliberate palette, typography, composition, spacing, and meaningful content; avoid generic blue dashboards and repeated three-card landing templates. Record the concrete design choices in a short source comment atop the entrypoint. The user's specific features and design direction take priority.
 
-Durable records: import db from "@/lib/db"; use db.collection<RecordType>("collection").list/create/update/remove and await writes. Records receive server-owned _id, createdAt and updatedAt. For SaaS, CRM, commerce, booking and operational apps use real persisted records, not hardcoded production data. Show an honest empty state and create flow when records are absent. Never store passwords or private credentials in project records or browser code. Use @/lib/auth for real account flows when requested or necessary for private data. Load the session, support sign in/out, and use auth.getProjectRole() or auth.getCommerceRole() for server-verified ownership. A local role selector is never authorization. Keep private collections owner-scoped; public catalogs may be read by visitors when the server permits.
+Durable records: import db from "@/lib/db"; use db.collection<RecordType>("collection").list/create/update/remove and await writes. list() returns { records, total }; use const { records } = await collection.list(), never treat the result as an array or pass a filter option (only limit and offset exist). Records receive server-owned _id, createdAt and updatedAt. For SaaS, CRM, commerce, booking and operational apps use real persisted records, not hardcoded production data. Show an honest empty state and create flow when records are absent. Never store passwords or private credentials in project records or browser code. For account flows import { auth, type Session } from "@/lib/auth" (no default export). Use auth.signIn(email, password), auth.signUp(email, password), auth.getSession(), auth.onAuthStateChange(callback), and auth.signOut(); there is no signInWithProvider method. auth.getSession() returns Session | null directly, never { data } or { session }; Session.user.email may be absent. For the one-argument auth.onAuthStateChange callback, the argument itself is Session | null, so use auth.onAuthStateChange((session) => setSession(session)). Signin/signup return { user, session }, and signup may have a null session. Render actual accessible sign-in and sign-up forms and a working sign-out control for authenticated apps; merely reading the session does not satisfy the request. Use auth.getProjectRole() or auth.getCommerceRole() for server-verified ownership. A local role selector is never authorization. Keep private collections owner-scoped; public catalogs may be read by visitors when the server permits.
 
 Commerce: only the project owner manages products; derive category filters from actual saved products. Persist guest and signed-in carts in carts, call db.claimGuestCart() after sign-in, and require sign-in to submit orders. Save orders with productId, variantId and qty; server computes price and pending_payment. Never call an unpaid order paid. Booking: use owner-managed public services and private bookings; server rejects conflicts. Restaurant apps use public tables/reservation_slots and private table_reservations. Marketplaces use published owner-managed catalogs and private buyer records. Real estate uses published listings, private favorites and server-owned inquiries. Do not expose other users' records or claim payment/booking success from browser-only checks.
 
 Private files: when requested, import { files } from "@/lib/files". Upload File bytes with files.upload(file, folderId), list metadata with db.collection<DocumentRecord>("documents"), download with files.download(record._id), delete with files.remove(record._id). Limit files to 8 MB. Never store data URLs, base64 bytes or blobs in database records. Keep optional external connectors unavailable with a clear message instead of breaking unrelated UI. Keep private keys on the server; only browser-safe public variables may be used in frontend code.
 
 Continuation: change only the files needed for the latest request, output complete replacements, preserve the rest and keep current imports/exports compatible. Do not rebuild the project for a small edit.`;
+
+export function generationContentForCompactProvider(baseContent: string, compactFollowUpContent: string | null): string {
+  return compactFollowUpContent ?? baseContent;
+}
+
+export function recoverableGeneratedPartialText(error: unknown): string | null {
+  if (!(error instanceof ProviderExhaustedError) ||
+    !["rate_limit", "network_timeout", "network_error", "provider_unavailable", "output_limit"].includes(error.category)) return null;
+  const partial = error.partialText.trim();
+  // A completed fenced file can be validated and built. A fragment without a
+  // closed file block cannot be applied safely to an existing project.
+  const completeBlocks = /(?:^|\n)\s*#{1,4}\s*(?:File:\s*)?[\w./-]+\.[\w-]+\s*\n```[\w-]*\s*\n[\s\S]+?\n```/g;
+  let lastCompleteEnd = 0;
+  for (const match of partial.matchAll(completeBlocks)) lastCompleteEnd = match.index + match[0].length;
+  return lastCompleteEnd ? partial.slice(0, lastCompleteEnd).trim() : null;
+}
 
 
 const RETRY_PROMPT = `Your previous response was incomplete or failed validation.
@@ -493,7 +509,7 @@ function restoreWorkspace(projectId: string, snapshot: Map<string, Buffer>): voi
   }
 }
 
-export function workspaceRepairContext(projectId: string, validationError = ""): string {
+export function workspaceRepairContext(projectId: string, validationError = "", maxCharacters = 200_000): string {
   const sourceExtensions = /\.(?:tsx?|jsx?|css|json|html)$/;
   const failingPaths = [...validationError.matchAll(/([^\s()]+?\.(?:tsx?|jsx?|css|json|html))(?=\(|:\d)/g)]
     .map((match) => normalizeGeneratedPath(match[1]));
@@ -537,7 +553,7 @@ export function workspaceRepairContext(projectId: string, validationError = ""):
     };
     return priority(right.path) - priority(left.path);
   });
-  let remaining = 42_000;
+  let remaining = Math.max(1, maxCharacters);
   const chunks: string[] = [];
   for (const entry of entries) {
     if (remaining <= 0) break;
@@ -552,7 +568,7 @@ export function workspaceRepairContext(projectId: string, validationError = ""):
 }
 
 /** Bounded complete files for model accounts with a smaller input-token allowance. */
-export function compactRepairContext(files: GeneratedSourceFile[], issues: string[], budget = 12_000): string {
+export function compactRepairContext(files: GeneratedSourceFile[], issues: string[], budget = 16_000): string {
   const issueText = issues.join("\n");
   const ordered = [...files].sort((left, right) =>
     Number(issueText.includes(normalizeGeneratedPath(right.path))) -
@@ -834,10 +850,20 @@ function availableWorkspacePaths(projectId: string): string[] {
   return paths;
 }
 
+export function isWorkspaceSourcePath(filePath: string): boolean {
+  const normalized = normalizeGeneratedPath(filePath);
+  const sourceDirectory = /^(?:src|app|pages|components|lib)\//.test(normalized);
+  const rootSource = !normalized.includes("/") && /\.(?:[cm]?[jt]sx?|css)$/.test(normalized) &&
+    !/^(?:vite|vitest|tailwind|postcss|eslint|next|jest|babel|prettier|playwright|tsup|webpack|rollup|astro|svelte|nuxt)\.config\./.test(normalized);
+  return (sourceDirectory || rootSource) &&
+    /\.(?:[cm]?[jt]sx?|css|json|html)$/.test(normalized) &&
+    !/(?:^|\/)(?:node_modules|dist|build|\.vite|\.next|coverage|\.git)(?:\/|$)/.test(normalized);
+}
+
 function availableWorkspaceSources(projectId: string): GeneratedSourceFile[] {
   return localFileManager
     .getTree(projectId)
-    .entries.filter((entry) => entry.type === "file")
+    .entries.filter((entry) => entry.type === "file" && isWorkspaceSourcePath(entry.path))
     .flatMap((entry) => {
       const file = localFileManager.getContent(projectId, entry.path);
       if (
@@ -1141,6 +1167,36 @@ export function postProcessGeneratedFiles(
       file.content = completeSemanticCss(file.content);
     }
   }
+  // Keep a generated palette intact while giving Tailwind colors stable CSS
+  // tokens. This is a semantics-preserving fix for the model's common raw-hex
+  // utility output and avoids spending a repair attempt on every color class.
+  const generatedColors = new Map<string, string>();
+  for (const file of files) {
+    if (!/\.[cm]?[jt]sx?$/.test(file.path)) continue;
+    file.content = file.content.replace(/\bclassName\s*=\s*(["'`])([^"'`]*?)\1/g,
+      (attribute, quote: string, classes: string) => {
+        const normalized = classes.replace(/\b(text|bg|border)-\[#([0-9a-fA-F]{3,8})\]/g,
+          (_match, utility: string, rawHex: string) => {
+            const hex = rawHex.toLowerCase();
+            const token = `--bb-generated-${hex}`;
+            generatedColors.set(token, `#${hex}`);
+            return `${utility}-[var(${token})]`;
+          });
+        return normalized === classes ? attribute : `className=${quote}${normalized}${quote}`;
+      });
+  }
+  if (generatedColors.size > 0) {
+    let cssFile = files.find((file) => normalizeGeneratedPath(file.path) === canonicalCss);
+    if (!cssFile) {
+      const existingCss = existingSources.find((file) => normalizeGeneratedPath(file.path) === canonicalCss);
+      cssFile = { path: canonicalCss, content: existingCss?.content || '@import "tailwindcss";\n' };
+      files.push(cssFile);
+    }
+    const declarations = [...generatedColors].filter(([token, color]) =>
+      !new RegExp(`${token}\\s*:\\s*${color}\\s*;`, "i").test(cssFile!.content))
+      .map(([token, color]) => `  ${token}: ${color};`);
+    if (declarations.length > 0) cssFile.content += `\n:root {\n${declarations.join("\n")}\n}\n`;
+  }
   const entrypointCandidates = files
     .map((file, index) => ({ file, index, path: normalizeGeneratedPath(file.path) }))
     .filter((entry) => APPLICATION_ENTRYPOINT_PATHS.has(entry.path));
@@ -1418,7 +1474,7 @@ export const localAgentEngine = {
               return rank(right) - rank(left);
             });
             const compactChunks: string[] = [];
-            let compactBudget = 12_000;
+            let compactBudget = 16_000;
             for (const entry of relevantEntries) {
               const file = localFileManager.getContent(projectId, entry.path);
               if (!file || file.encoding !== "utf8" || file.content.length > compactBudget) continue;
@@ -1589,10 +1645,15 @@ export const localAgentEngine = {
         // MotionSites-style prompts carry precise layout, motion and art direction.
         // Keep them intact and apply our quality constraints at the model boundary,
         // not to the conversation stored and shown to the user.
+        const compactBaseUserContent = userPromptContent;
         userPromptContent = withDesignSystemPrompt(userPromptContent);
-        const compactGenerationUserContent = compactFollowUpContent
-          ? withDesignSystemPrompt(compactFollowUpContent)
-          : userPromptContent;
+        // The compact system prompt already carries the design and platform
+        // contract. Repeating the full design manual for small-provider
+        // accounts pushes valid requests past their input limits.
+        const compactGenerationUserContent = generationContentForCompactProvider(
+          compactBaseUserContent,
+          compactFollowUpContent,
+        );
 
         // ═══⭐⭐ BUILD CONVERSATION HISTORY FOR THE AI ═════════════════════════
         //
@@ -1637,7 +1698,10 @@ export const localAgentEngine = {
           ],
         });
 
-        const routerResult = await multiModelRouter.complete(
+        const generationStartedAt = Date.now();
+        let content: string;
+        try {
+          const routerResult = await multiModelRouter.complete(
           messages,
           (statusMsg) => {
             if (controller.signal.aborted) return;
@@ -1658,7 +1722,7 @@ export const localAgentEngine = {
             totalTimeoutMs: 420_000,
             signal: controller.signal,
             requestLabel: "code_generation",
-            providerMessageTransform: (providerId, providerMessages) => providerId.startsWith("groq")
+            providerMessageTransform: (providerId, providerMessages) => (providerId === "above-glm53")
               ? providerMessages.map((message) => message.role === "system"
                 ? { ...message, content: COMPACT_SYSTEM_PROMPT }
                 : message === providerMessages.at(-1)
@@ -1666,18 +1730,41 @@ export const localAgentEngine = {
                   : message)
               : providerMessages,
           }
-        );
-        checkCancelled();
-        recordGenerationModelDiagnostics(projectId, generationId, {
-          providerId: routerResult.providerId,
-          model: routerResult.usedModel,
-          attempts: routerResult.attempts,
-          continuationAttempts: routerResult.continuationAttempts,
-          failureCategories: routerResult.failureCategories,
-          durationMs: routerResult.durationMs,
-        });
-
-        const content = routerResult.text;
+          );
+          checkCancelled();
+          recordGenerationModelDiagnostics(projectId, generationId, {
+            providerId: routerResult.providerId,
+            model: routerResult.usedModel,
+            attempts: routerResult.attempts,
+            continuationAttempts: routerResult.continuationAttempts,
+            failureCategories: routerResult.failureCategories,
+            durationMs: routerResult.durationMs,
+          });
+          content = routerResult.text;
+        } catch (error) {
+          checkCancelled();
+          const partial = recoverableGeneratedPartialText(error);
+          if (!partial) throw error;
+          console.warn(`[localAgentEngine] Validating ${partial.length} characters of complete file blocks after model interruption`);
+          const current = localProjectStore.getRecord(projectId);
+          localProjectStore.update(projectId, {
+            conversation: [...(current?.conversation || []), {
+              author: "agent",
+              message: "The model response was interrupted. BigBag is validating the completed files and will repair any missing or broken part before showing a preview.",
+              messageType: "building",
+              createdAt: new Date().toISOString(),
+            }],
+          });
+          recordGenerationModelDiagnostics(projectId, generationId, {
+            providerId: "interrupted-response",
+            model: "unknown",
+            attempts: error instanceof ProviderExhaustedError ? error.attempts : 0,
+            continuationAttempts: 0,
+            failureCategories: error instanceof ProviderExhaustedError ? [error.category] : [],
+            durationMs: Date.now() - generationStartedAt,
+          });
+          content = partial;
+        }
         // Extract files from generated markdown, with auto-retry on failure
         let files = extractFilesFromMarkdown(content);
         postProcessGeneratedFiles(files, availableWorkspaceSources(projectId));
@@ -1742,10 +1829,8 @@ export const localAgentEngine = {
               !finalDeletions.has(normalizeGeneratedPath(file.path))
             ),
           ];
-          const extractedContext = validationRepairContext(repairSources, validationIssues, 32_000);
-          const compactContext = compactRepairContext(repairSources, validationIssues);
+          const extractedContext = validationRepairContext(repairSources, validationIssues, 200_000);
           const fullContextComplete = repairContextIncludesAffectedFiles(repairSources, validationIssues, extractedContext);
-          const compactContextComplete = repairContextIncludesAffectedFiles(repairSources, validationIssues, compactContext);
           try {
             const retryResult = await multiModelRouter.complete(
               [
@@ -1762,15 +1847,9 @@ export const localAgentEngine = {
                 signal: controller.signal,
                 perProviderTimeoutMs: 180_000,
                 totalTimeoutMs: 300_000,
-                providerMessageTransform: (providerId, providerMessages) => {
-                  const compact = providerId.startsWith("groq");
-                  if (!(compact ? compactContextComplete : fullContextComplete)) return null;
-                  return compact
-                    ? providerMessages.map((message) => message.role === "assistant"
-                      ? { ...message, content: compactContext }
-                      : message)
-                    : providerMessages;
-                },
+                requestLabel: "code_repair",
+                providerMessageTransform: (_providerId, providerMessages) =>
+                  fullContextComplete ? providerMessages : null,
               }
             );
             checkCancelled();
@@ -2150,9 +2229,7 @@ export const localAgentEngine = {
               const repairRequest = `The generated app failed real production validation. Repair the implementation and return ONLY complete corrected file blocks. Never use @apply in CSS. Preserve every working feature and do not report success; the platform will rebuild and verify it.\n\nRepair strategy for this attempt:\n${strategy}\n\nOriginal request:\n${prompt}\n\nLatest validation error:\n${buildError}\n\nCurrent source (files named by the error are first):\n`;
               const fullBuildContext = workspaceRepairContext(projectId, buildError);
               const buildSources = availableWorkspaceSources(projectId);
-              const compactBuildContext = compactRepairContext(buildSources, [buildError]);
               const fullBuildContextComplete = repairContextIncludesAffectedFiles(buildSources, [buildError], fullBuildContext);
-              const compactBuildContextComplete = repairContextIncludesAffectedFiles(buildSources, [buildError], compactBuildContext);
               const repairResult = await multiModelRouter.complete(
                 [
                   {
@@ -2169,15 +2246,9 @@ export const localAgentEngine = {
                   signal: controller.signal,
                   perProviderTimeoutMs: 180_000,
                   totalTimeoutMs: 300_000,
-                  providerMessageTransform: (providerId, providerMessages) => {
-                    const compact = providerId.startsWith("groq");
-                    if (!(compact ? compactBuildContextComplete : fullBuildContextComplete)) return null;
-                    return compact
-                      ? providerMessages.map((message) => message.role === "user"
-                        ? { ...message, content: repairRequest + compactBuildContext }
-                        : message)
-                      : providerMessages;
-                  },
+                  requestLabel: "code_repair",
+                  providerMessageTransform: (_providerId, providerMessages) =>
+                    fullBuildContextComplete ? providerMessages : null,
                 }
               );
               checkCancelled();

@@ -1613,14 +1613,14 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
   --popover-foreground: hsl(222 47% 11%);
 
   /* ── Semantic roles ─────────────────────────────────────────────── */
-  --primary: hsl(239 84% 67%);
+  --primary: hsl(239 84% 60%);
   --primary-foreground: hsl(0 0% 100%);
 
   --secondary: hsl(214 32% 94%);
   --secondary-foreground: hsl(222 47% 20%);
 
   --muted: hsl(214 32% 94%);
-  --muted-foreground: hsl(215 16% 47%);
+  --muted-foreground: hsl(215 16% 45%);
 
   --accent: hsl(239 84% 95%);
   --accent-foreground: hsl(239 84% 30%);
@@ -1632,7 +1632,7 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
   /* Muted border: never harsh 1px solid black wireframe */
   --border: hsl(214 32% 91%);
   --input: hsl(214 32% 91%);
-  --ring: hsl(239 84% 67%);
+  --ring: hsl(239 84% 60%);
 }
 
 .dark {
@@ -1648,7 +1648,7 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
   --popover: hsl(224 45% 10%);
   --popover-foreground: hsl(213 31% 91%);
 
-  --primary: hsl(239 84% 67%);
+  --primary: hsl(239 84% 60%);
   --primary-foreground: hsl(0 0% 100%);
 
   --secondary: hsl(222 47% 14%);
@@ -1665,7 +1665,7 @@ export function writeStarterTemplate(dir: string, projectId: string): void {
 
   --border: hsl(216 34% 17%);
   --input: hsl(216 34% 17%);
-  --ring: hsl(239 84% 67%);
+  --ring: hsl(239 84% 60%);
 }
 
 /* ── Tailwind 4 theme bridge ────────────────────────────────────── */
@@ -1847,25 +1847,16 @@ import { Slot } from "@radix-ui/react-slot";
 import { cn } from "@/lib/utils";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "default" | "outline" | "ghost" | "secondary" | "destructive" | "link";
+  variant?: "default" | "primary" | "outline" | "ghost" | "secondary" | "destructive" | "link";
   size?: "xs" | "sm" | "default" | "lg" | "icon" | "icon-sm";
   isLoading?: boolean;
   asChild?: boolean;
 }
 
-export function Button({
-  className,
-  variant = "default",
-  size = "default",
-  isLoading = false,
-  asChild = false,
-  disabled,
-  children,
-  ...props
-}: ButtonProps) {
-  const buttonClass = cn(
+export function buttonVariants({ variant = "default", size = "default", className }: Pick<ButtonProps, "variant" | "size" | "className"> = {}) {
+  return cn(
     "inline-flex items-center justify-center gap-2 rounded-md font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98] whitespace-nowrap select-none",
-    variant === "default" && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-subtle",
+    (variant === "default" || variant === "primary") && "bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90 shadow-subtle",
     variant === "secondary" && "bg-[var(--secondary)] text-[var(--secondary-foreground)] hover:bg-[var(--muted)]",
     variant === "outline" && "border border-[var(--border)] bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
     variant === "ghost" && "bg-transparent text-[var(--foreground)] hover:bg-[var(--secondary)]",
@@ -1879,6 +1870,19 @@ export function Button({
     size === "icon-sm" && "h-8 w-8 p-0",
     className
   );
+}
+
+export function Button({
+  className,
+  variant = "default",
+  size = "default",
+  isLoading = false,
+  asChild = false,
+  disabled,
+  children,
+  ...props
+}: ButtonProps) {
+  const buttonClass = buttonVariants({ variant, size, className });
   if (asChild) {
     return <Slot
       {...props}
@@ -3634,14 +3638,13 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-export interface NavItem {
-  label: string;
+export type NavItem = {
   href?: string;
   icon?: React.ReactNode | React.ElementType;
   onClick?: () => void;
   active?: boolean;
   badge?: string | number;
-}
+} & ({ label: string; name?: string } | { name: string; label?: string });
 
 export interface DashboardShellProps {
   children: React.ReactNode;
@@ -3683,7 +3686,7 @@ function NavLink({ item, onSelect }: { item: NavItem; onSelect?: () => void }) {
       )}
     >
       {icon && <span className="flex h-4 w-4 shrink-0 items-center justify-center">{icon}</span>}
-      <span className="flex-1 truncate text-left">{item.label}</span>
+      <span className="flex-1 truncate text-left">{item.label ?? item.name}</span>
       {item.badge !== undefined && (
         <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--primary)] px-1.5 text-[10px] font-semibold text-[var(--primary-foreground)]">
           {item.badge}
@@ -3744,7 +3747,7 @@ export function DashboardShell({
       {/* Main content area */}
       <div className="flex flex-1 flex-col min-w-0">
         {/* Sticky topbar */}
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-4 backdrop-blur-sm sm:px-6">
+        <header className="sticky top-0 z-30 flex min-h-14 flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)]/80 px-4 py-2 backdrop-blur-sm sm:px-6 lg:h-14 lg:flex-nowrap lg:py-0">
           {/* Mobile menu trigger */}
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
@@ -3762,10 +3765,10 @@ export function DashboardShell({
           </Sheet>
 
           {pageTitle && (
-            <h1 className="text-sm font-semibold text-[var(--foreground)] truncate">{pageTitle}</h1>
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--foreground)] lg:flex-none">{pageTitle}</h1>
           )}
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center justify-end gap-2 lg:ml-auto lg:w-auto lg:flex-nowrap">
             {onSearch && <Button variant="ghost" size="icon" aria-label="Search" onClick={onSearch}>
               <Search className="h-4 w-4" />
             </Button>}
@@ -3808,6 +3811,8 @@ export interface MarketingShellProps {
   children: React.ReactNode;
   /** Brand name or logo element */
   brand?: React.ReactNode;
+  /** Optional browser tab title; the page's visible heading belongs in children. */
+  pageTitle?: string;
   /** Navigation anchor links */
   navItems?: MarketingNavItem[];
   /** Primary CTA button label */
@@ -3815,22 +3820,28 @@ export interface MarketingShellProps {
   /** Primary CTA click handler or href */
   ctaHref?: string;
   onCtaClick?: () => void;
+  signInHref?: string;
+  onSignInClick?: () => void;
   className?: string;
 }
 
 export function MarketingShell({
   children,
   brand,
+  pageTitle,
   navItems = [],
   ctaLabel = "Get Started",
   ctaHref,
   onCtaClick,
+  signInHref,
+  onSignInClick,
   className,
 }: MarketingShellProps) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   return (
     <div className={cn("min-h-screen bg-[var(--background)]", className)}>
+      {pageTitle && <title>{pageTitle}</title>}
       {/* Sticky glass navbar */}
       <header className="sticky top-0 z-40 w-full border-b border-[var(--border)]/60 bg-[var(--background)]/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -3856,14 +3867,12 @@ export function MarketingShell({
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="ghost" size="sm">Sign in</Button>
-            <Button
-              size="sm"
-              onClick={onCtaClick}
-              {...(ctaHref ? { as: "a", href: ctaHref } : {})}
-            >
-              {ctaLabel}
-            </Button>
+            {(signInHref || onSignInClick) && <Button variant="ghost" size="sm" onClick={onSignInClick} asChild={Boolean(signInHref)}>
+              {signInHref ? <a href={signInHref}>Sign in</a> : "Sign in"}
+            </Button>}
+            {(ctaHref || onCtaClick) && <Button size="sm" onClick={onCtaClick} asChild={Boolean(ctaHref)}>
+              {ctaHref ? <a href={ctaHref}>{ctaLabel}</a> : ctaLabel}
+            </Button>}
           </div>
 
           {/* Mobile menu */}
@@ -3889,12 +3898,14 @@ export function MarketingShell({
                     {item.label}
                   </a>
                 ))}
-                <div className="mt-4 flex flex-col gap-2">
-                  <Button variant="outline" className="w-full">Sign in</Button>
-                  <Button className="w-full" onClick={() => { onCtaClick?.(); setMobileOpen(false); }}>
-                    {ctaLabel}
-                  </Button>
-                </div>
+                {(signInHref || onSignInClick || ctaHref || onCtaClick) && <div className="mt-4 flex flex-col gap-2">
+                  {(signInHref || onSignInClick) && <Button variant="outline" className="w-full" onClick={() => { onSignInClick?.(); setMobileOpen(false); }} asChild={Boolean(signInHref)}>
+                    {signInHref ? <a href={signInHref}>Sign in</a> : "Sign in"}
+                  </Button>}
+                  {(ctaHref || onCtaClick) && <Button className="w-full" onClick={() => { onCtaClick?.(); setMobileOpen(false); }} asChild={Boolean(ctaHref)}>
+                    {ctaHref ? <a href={ctaHref}>{ctaLabel}</a> : ctaLabel}
+                  </Button>}
+                </div>}
               </nav>
             </SheetContent>
           </Sheet>

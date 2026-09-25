@@ -11,10 +11,10 @@ import { ensureWorkspaceDependencies } from "../src/lib/local-orchestrator/depen
 import { probeBuiltPreview } from "../src/lib/local-orchestrator/preview-readiness";
 import { generationValidationIssues, isRuntimeOwnedGeneratedPath, validationRepairContext } from "../src/lib/local-orchestrator/generation-validator";
 import { GENERATED_AUTH_CLIENT_SOURCE, GENERATED_DB_CLIENT_SOURCE, PREINSTALLED_DEPENDENCIES, writeStarterTemplate } from "../src/lib/local-orchestrator/starter-template";
-import { compactRepairContext, completeSemanticCss, fixCssImportOrder, hasRealGeneratedSource, postProcessGeneratedFiles, promptRequestsAuthentication, promptRequestsCommerce, promptRequestsPersistence, promptRequestsPrivateFiles, repairContextIncludesAffectedFiles, requestedSharedCatalogCollections, workspaceRepairContext } from "../src/lib/local-orchestrator/agent-engine";
+import { compactRepairContext, completeSemanticCss, fixCssImportOrder, generationContentForCompactProvider, hasRealGeneratedSource, isWorkspaceSourcePath, postProcessGeneratedFiles, promptRequestsAuthentication, promptRequestsCommerce, promptRequestsPersistence, promptRequestsPrivateFiles, recoverableGeneratedPartialText, repairContextIncludesAffectedFiles, requestedSharedCatalogCollections, workspaceRepairContext } from "../src/lib/local-orchestrator/agent-engine";
 import { localProjectStore } from "../src/lib/local-orchestrator/project-store";
 import { localFileManager } from "../src/lib/local-orchestrator/file-manager";
-import { multiModelRouter } from "../src/lib/local-orchestrator/multi-model-router";
+import { multiModelRouter, ProviderExhaustedError } from "../src/lib/local-orchestrator/multi-model-router";
 import { GET as getConnectorStatus } from "../src/app/api/connectors/status/route";
 import { AUTH_COOKIE, createAuthSession } from "../src/lib/auth-session";
 import { NextRequest } from "next/server";
@@ -51,6 +51,9 @@ test("a fresh starter workspace is not mistaken for an incremental user project"
     assert.equal(hasRealGeneratedSource(files), false);
     const shell = files.find((file) => file.path === "src/components/layout/dashboard-shell.tsx");
     assert.ok(shell);
+    const button = fs.readFileSync(path.join(workspace, "src/components/ui/button.tsx"), "utf8");
+    assert.match(button, /export function buttonVariants/);
+    assert.match(button, /buttonVariants\(\{ variant, size, className \}\)/);
     assert.equal(fs.readFileSync(path.join(workspace, "src/components/ui/skeleton-card.tsx"), "utf8"),
       'export { SkeletonCard } from "./skeleton";\n');
     assert.match(fs.readFileSync(path.join(workspace, "src/components/ui/spinner.tsx"), "utf8"), /LoaderCircle/);
@@ -71,6 +74,158 @@ test("a fresh starter workspace is not mistaken for an incremental user project"
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("repair source inventory excludes dependencies, generated output, and configuration", () => {
+  assert.equal(isWorkspaceSourcePath("src/App.tsx"), true);
+  assert.equal(isWorkspaceSourcePath("src/components/dashboard.tsx"), true);
+  assert.equal(isWorkspaceSourcePath("src/data/catalog.json"), true);
+  assert.equal(isWorkspaceSourcePath("app/page.tsx"), true);
+  assert.equal(isWorkspaceSourcePath("pages/index.tsx"), true);
+  assert.equal(isWorkspaceSourcePath("theme.css"), true);
+  assert.equal(isWorkspaceSourcePath("custom-view.tsx"), true);
+  for (const path of [".env.example", "package-lock.json", "vite.config.ts", "dist/assets/app.js", "build/app.js", "node_modules/lib/index.ts", "src/.vite/cache.ts", "src/coverage/report.json"]) {
+    assert.equal(isWorkspaceSourcePath(path), false, path);
+  }
+});
+
+test("compact follow-up keeps complete relevant source without repeating the design manual", () => {
+  const source = "export default function App() { return <main>Working application</main>; }";
+  const compact = `### File: src/App.tsx\n\`\`\`tsx\n${source}\n\`\`\`\n\nUser Request: Add search`;
+  const base = "Build a working appointment app";
+  const full = "[BIGBAG MASTER DESIGN SYSTEM]".repeat(1000) + base;
+  assert.equal(generationContentForCompactProvider(base, compact), compact);
+  assert.match(generationContentForCompactProvider(base, compact), /Working application/);
+  assert.equal(generationContentForCompactProvider(base, null), base);
+  assert.ok(generationContentForCompactProvider(base, null).length < full.length / 10);
+});
+
+test("an interrupted model response can keep only complete files for normal validation", () => {
+  const complete = '### File: src/App.tsx\n```tsx\nexport default function App() { return <main>Ready</main>; }\n```';
+  const interrupted = new ProviderExhaustedError("rate_limit", true, `${complete}\n### File: src/extra.ts\n\`\`\`ts\nexport const`, "length", 2);
+  assert.equal(recoverableGeneratedPartialText(interrupted), complete);
+  assert.equal(recoverableGeneratedPartialText(new ProviderExhaustedError("rate_limit", true, '### File: src/App.tsx\n```tsx\nexport default', "length", 2)), null);
+  assert.equal(recoverableGeneratedPartialText(new ProviderExhaustedError("authentication", false, complete, "", 1)), null);
+});
+
+test("generated landing-page calls to action cannot point to an inert hash", () => {
+  const inert = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: 'export default function App() { return <main><a href="#">Start Free Trial</a></main>; }',
+  }]);
+  assert.ok(inert.some((issue) => issue.includes('link to "#" with no click action')));
+  const real = generationValidationIssues([{
+    path: "src/App.tsx",
+    content: 'export default function App() { return <main><a href="/signup">Start Free Trial</a></main>; }',
+  }]);
+  assert.equal(real.some((issue) => issue.includes('link to "#" with no click action')), false);
+});
+
+test("a dashboard cannot hide broken navigation, nested landmarks, or an unnamed filter", () => {
+  const issues = generationValidationIssues([{ path: "src/App.tsx", content: `
+    import { DashboardShell } from "@/components/layout";
+    import { SelectTrigger } from "@/components/ui/select";
+    export default function App() {
+      const navItems = [{ label: "Properties", href: "#" }];
+      return <DashboardShell navItems={navItems}><main><SelectTrigger /></main></DashboardShell>;
+    }
+  ` }], [], { requireEntrypointFirst: true });
+  assert.ok(issues.some((issue) => issue.includes('inert navigation destination href: "#"')));
+  assert.ok(issues.some((issue) => issue.includes("nests <main> inside a layout shell")));
+  assert.ok(issues.some((issue) => issue.includes("SelectTrigger without an accessible name")));
+  assert.ok(generationValidationIssues([{ path: "src/App.tsx", content: 'export default function App(){ return <main><SelectTrigger id="filter" /></main>; }' }])
+    .some((issue) => issue.includes("SelectTrigger without an accessible name")));
+  assert.equal(generationValidationIssues([{ path: "src/App.tsx", content: 'export default function App(){ return <main><label htmlFor="filter">Filter</label><SelectTrigger id="filter" /></main>; }' }])
+    .some((issue) => issue.includes("SelectTrigger without an accessible name")), false);
+  const corrected = generationValidationIssues([{ path: "src/App.tsx", content: `
+    import { DashboardShell } from "@/components/layout";
+    import { SelectTrigger } from "@/components/ui/select";
+    export default function App() {
+      const navItems = [{ label: "Properties", href: "/properties" }];
+      return <DashboardShell navItems={navItems}><section><SelectTrigger aria-label="Filter properties" /></section></DashboardShell>;
+    }
+  ` }], [], { requireEntrypointFirst: true });
+  assert.equal(corrected.some((issue) => /inert navigation|nests <main>|SelectTrigger without/.test(issue)), false);
+});
+
+test("requested authentication must offer a real account entry and exit", () => {
+  const sessionOnly = generationValidationIssues([{ path: "src/App.tsx", content: `
+    import { auth } from "@/lib/auth";
+    export default function App() { void auth.getSession(); return <main>Dashboard</main>; }
+  ` }], [], { requireAuthentication: true });
+  assert.ok(sessionOnly.some((issue) => issue.includes("no usable sign-in or sign-up action")));
+  assert.ok(sessionOnly.some((issue) => issue.includes("no sign-out action")));
+  const complete = generationValidationIssues([{ path: "src/App.tsx", content: `
+    import { auth } from "@/lib/auth";
+    export default function App() { return <main>
+      <button onClick={() => auth.signIn("person@example.test", "test")}>Sign in</button>
+      <button onClick={() => auth.signOut()}>Sign out</button>
+    </main>; }
+  ` }], [], { requireAuthentication: true });
+  assert.equal(complete.some((issue) => /no usable sign-in|no sign-out action/.test(issue)), false);
+});
+
+test("generated account flows use accessible forms instead of browser prompts", () => {
+  const issues = generationValidationIssues([{ path: "src/App.tsx", content: `
+export default function App() { const signIn = () => { const email = window.prompt("Enter email"); return email; }; return <main><button onClick={signIn}>Sign in</button></main>; }` }]);
+  assert.ok(issues.some((issue) => issue.includes("blocking browser prompt")));
+});
+
+test("starter semantic colors keep body copy and primary actions above AA contrast", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-contrast-"));
+  try {
+    writeStarterTemplate(workspace, "contrast-check");
+    const css = fs.readFileSync(path.join(workspace, "src/app/globals.css"), "utf8");
+    const root = css.match(/:root\s*\{([^}]+)\}/)?.[1] || "";
+    const color = (name: string): number[] => {
+      const match = root.match(new RegExp(`--${name}:\\s*hsl\\((\\d+)\\s+(\\d+)%\\s+(\\d+)%\\)`));
+      assert.ok(match, `missing ${name}`);
+      const h = Number(match[1]) / 360; const s = Number(match[2]) / 100; const l = Number(match[3]) / 100;
+      if (!s) return [l, l, l];
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      return [h + 1 / 3, h, h - 1 / 3].map((part) => {
+        let t = part;
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      });
+    };
+    const luminance = (rgb: number[]) => rgb.map((channel) => channel <= 0.04045
+      ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const contrast = (left: number[], right: number[]) => {
+      const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
+      return (values[0] + 0.05) / (values[1] + 0.05);
+    };
+    const primary = color("primary");
+    const background = color("background");
+    const hover = primary.map((channel, index) => channel * 0.9 + background[index] * 0.1);
+    assert.ok(contrast(color("primary-foreground"), primary) >= 4.5);
+    assert.ok(contrast(color("primary-foreground"), hover) >= 4.5);
+    assert.ok(contrast(color("muted-foreground"), background) >= 4.5);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("initial generated pages need a semantic main landmark or supplied layout shell", () => {
+  const missing = generationValidationIssues([{
+    path: "src/App.tsx", content: 'export default function App() { return <div>Content</div>; }',
+  }], [], { requireEntrypointFirst: true });
+  assert.ok(missing.some((issue) => issue.includes("no main landmark")));
+  const nested = generationValidationIssues([
+    { path: "src/App.tsx", content: 'import { Page } from "./Page"; export default function App() { return <Page />; }' },
+    { path: "src/Page.tsx", content: 'export function Page() { return <main>Content</main>; }' },
+  ], [], { requireEntrypointFirst: true });
+  assert.equal(nested.some((issue) => issue.includes("no main landmark")), false);
+  const storefront = generationValidationIssues([{
+    path: "src/App.tsx", content: 'import { StorefrontShell } from "@/components/layout"; export default function App() { return <StorefrontShell>Catalog</StorefrontShell>; }',
+  }], [], { requireEntrypointFirst: true });
+  assert.ok(storefront.some((issue) => issue.includes("no main landmark")));
 });
 
 test("an unimported generated stylesheet replaces the stylesheet loaded by the runtime", () => {
@@ -195,6 +350,49 @@ test("generated apps may import the supplied SkeletonCard alias", () => {
   assert.equal(issues.some((issue) => issue.includes("imports missing local module @/components/ui/skeleton-card")), false);
 });
 
+test("managed auth and list contract mistakes are rejected before preview", () => {
+  const issues = generationValidationIssues([{ path: "src/App.tsx", content: `import auth from "@/lib/auth";
+import db from "@/lib/db";
+async function load() { await auth.signInWithProvider("google"); return db.collection("items").list({ filter: { title: "a" } }); }
+export default function App() { return <main>Ready</main>; }` }], [], { requireEntrypoint: true });
+  assert.ok(issues.some((issue) => issue.includes("default auth client")));
+  assert.ok(issues.some((issue) => issue.includes("unsupported auth.signInWithProvider")));
+  assert.ok(issues.some((issue) => issue.includes("unsupported filter")));
+  const optionsIssues = generationValidationIssues([{ path: "src/App.tsx", content: `import db from "@/lib/db";
+async function load() { return db.collection("appointments").list({ limit: 20, where: { ownerId: "a" }, orderBy: "start" }); }
+export default function App() { return <main>Ready</main>; }` }]);
+  assert.ok(optionsIssues.some((issue) => issue.includes("unsupported where, orderBy option(s)")));
+  const aliasIssues = generationValidationIssues([{ path: "src/App.tsx", content: `import db from "@/lib/db";
+const appointments = db.collection("appointments"); const saved = appointments;
+async function load() { await saved.list({ where: { ownerId: "a" } }); return calendar.list({ where: "today" }); }
+export default function App() { return <main>Ready</main>; }` }]);
+  assert.ok(aliasIssues.some((issue) => issue.includes("unsupported where option(s)")));
+  const unrelatedList = generationValidationIssues([{ path: "src/App.tsx", content: `import db from "@/lib/db";
+const appointments = db.collection("appointments");
+async function load() { await appointments.list({ limit: 20 }); return calendar.list({ where: "today" }); }
+export default function App() { return <main>Ready</main>; }` }]);
+  assert.equal(unrelatedList.some((issue) => issue.includes("unsupported where option(s)")), false);
+  const callbackIssues = generationValidationIssues([{ path: "src/App.tsx", content: `import { auth } from "@/lib/auth";
+auth.onAuthStateChange((value) => setSession(value.session));
+export default function App() { return <main>Ready</main>; }` }]);
+  assert.ok(callbackIssues.some((issue) => issue.includes("one-argument auth.onAuthStateChange callback")));
+});
+
+test("generated UI imports must use exported primitives rather than invented namespace members", () => {
+  const issues = generationValidationIssues([{ path: "src/App.tsx", content: `import * as Button from "@/components/ui/button";
+export default function App() { return <main><Button.Primary>Save</Button.Primary></main>; }` }]);
+  assert.ok(issues.some((issue) => issue.includes("as a UI namespace")));
+  const named = generationValidationIssues([{ path: "src/App.tsx", content: `import { Button } from "@/components/ui/button";
+export default function App() { return <main><Button variant="primary">Save</Button></main>; }` }]);
+  assert.equal(named.some((issue) => issue.includes("as a UI namespace")), false);
+});
+
+test("compact repair includes a complete medium-sized failing file", () => {
+  const file = { path: "src/App.tsx", content: "const value = 1;\n".repeat(900) + "export default function App() { return <main>Ready</main>; }" };
+  const context = compactRepairContext([file], ["src/App.tsx(1,1): example compiler error"]);
+  assert.equal(repairContextIncludesAffectedFiles([file], ["src/App.tsx(1,1): example compiler error"], context), true);
+});
+
 test("build repair sees a failing caller and its imported prop definition before unrelated files", () => {
   const projectId = `repair-context-${randomUUID()}`;
   localProjectStore.create({ projectId, tenantId: "synthetic", description: "Repair context ordering" });
@@ -236,21 +434,39 @@ test("compact repair includes complete affected files or rejects an unsafe provi
   assert.equal(full.includes("const middle = 1"), false);
 });
 
+test("GLM repair context retains a complete large failing source file", () => {
+  const source = "const item = 1;\n".repeat(5_000) + "export default function App() { return <main>Ready</main>; }";
+  const issues = ["syntax error in src/App.tsx: Declaration or statement expected"];
+  const context = validationRepairContext([{ path: "src/App.tsx", content: source }], issues, 200_000);
+  assert.ok(context.includes(source));
+  assert.equal(repairContextIncludesAffectedFiles([{ path: "src/App.tsx", content: source }], issues, context), true);
+  const projectId = `large-context-${randomUUID().slice(0, 8)}`;
+  localProjectStore.create({ projectId, tenantId: `tenant-${projectId}`, description: "Large repair source" });
+  try {
+    localFileManager.writeContent(projectId, "src/App.tsx", source, "utf8");
+    const buildContext = workspaceRepairContext(projectId, "src/App.tsx(1,1): syntax error");
+    assert.match(buildContext, /^### File: src\/App\.tsx/m);
+    assert.ok(buildContext.includes(source));
+  } finally {
+    localProjectStore.remove(projectId);
+  }
+});
+
 test("router skips a provider when complete repair source cannot fit", async () => {
-  const previousGroq = process.env.GROQ_API_KEY;
+  const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GROQ_API_KEY = "synthetic-groq-context-skip";
+  process.env.ABOVE_API_KEY = "synthetic-above-context-skip";
   let requests = 0;
   global.fetch = (async () => { requests += 1; throw new Error("Provider should not be called"); }) as typeof fetch;
   try {
     await assert.rejects(multiModelRouter.complete([{ role: "user", content: "Repair" }], undefined, {
-      onlyProviderId: "groq", providerMessageTransform: () => null,
+      onlyProviderId: "above-glm53", providerMessageTransform: () => null,
     }), (error: unknown) => Boolean(error && typeof error === "object" && "category" in error && error.category === "context_limit"));
     assert.equal(requests, 0);
   } finally {
     global.fetch = previousFetch;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
@@ -575,6 +791,37 @@ test("generated Vite template compiles Tailwind utilities into its preview CSS",
   }
 });
 
+test("generated raw-hex utility colors become working CSS tokens without changing the palette", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-color-token-check-"));
+  try {
+    writeStarterTemplate(workspace, "color-token-check");
+    const cssPath = "src/app/globals.css";
+    const files = [{ path: "src/App.tsx", content: 'export default function App() { return <main className="bg-[#ABC] text-[#ffffff]">Styled</main>; }' }];
+    const existingCss = fs.readFileSync(path.join(workspace, cssPath), "utf8");
+    postProcessGeneratedFiles(files, [{ path: cssPath, content: existingCss }]);
+    const app = files.find((file) => file.path === "src/App.tsx")!;
+    const css = files.find((file) => file.path === cssPath)!;
+    assert.match(app.content, /bg-\[var\(--bb-generated-abc\)\]/);
+    assert.match(app.content, /text-\[var\(--bb-generated-ffffff\)\]/);
+    assert.match(css.content, /--bb-generated-abc: #abc;/);
+    assert.match(css.content, /--bb-generated-ffffff: #ffffff;/);
+    assert.equal(generationValidationIssues(files, [], { requireEntrypoint: false }).some((issue) => issue.includes("raw hex color")), false);
+    for (const file of files) fs.writeFileSync(path.join(workspace, file.path), file.content);
+    fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(workspace, "node_modules"), "junction");
+    const build = spawnSync(process.execPath, [path.join(process.cwd(), "node_modules/vite/bin/vite.js"), "build"], {
+      cwd: workspace, encoding: "utf8", timeout: 60_000,
+    });
+    assert.equal(build.status, 0, build.stderr || build.stdout);
+    const builtCss = fs.readdirSync(path.join(workspace, "dist/assets")).filter((name) => name.endsWith(".css"))
+      .map((name) => fs.readFileSync(path.join(workspace, "dist/assets", name), "utf8")).join("\n");
+    assert.match(builtCss, /--bb-generated-abc:\s*#abc/);
+    assert.match(builtCss, /--bb-generated-ffffff:\s*#(?:fff|ffffff)/);
+    assert.match(builtCss, /background-color:var\(--bb-generated-abc\)/);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("new storefront shell compiles with controlled cart and functional search props", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-storefront-check-"));
   try {
@@ -631,245 +878,215 @@ test("starter accepts installed icon components and compact icon buttons", () =>
   }
 });
 
-test("a rejected AI credential enters a cooldown while a healthy fallback keeps working", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "synthetic-gemini-cooldown";
-  process.env.TELNYX_API_KEY = "synthetic-telnyx-cooldown";
-  const urls: string[] = [];
-  global.fetch = (async (input: RequestInfo | URL) => {
-    const url = String(input);
-    urls.push(url);
-    return url.includes("generativelanguage.googleapis.com")
-      ? Response.json({ error: { message: "invalid synthetic credential" } }, { status: 401 })
-      : Response.json({ choices: [{ finish_reason: "stop", message: { content: "Working fallback" } }] });
-  }) as typeof fetch;
+test("dashboard navigation accepts a generated name field without losing its accessible label", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-nav-name-check-"));
   try {
-    const first = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 });
-    const second = await multiModelRouter.complete([{ role: "user", content: "Build again" }], undefined, { retryDelayMs: 0 });
-    assert.equal(first.providerId, "telnyx-glm");
-    assert.equal(second.providerId, "telnyx-glm");
-    assert.deepEqual(first.failureCategories, ["authentication"]);
-    assert.deepEqual(second.failureCategories, ["authentication"]);
-    assert.equal(urls.filter((url) => url.includes("generativelanguage.googleapis.com")).length, 1);
-    assert.equal(urls.filter((url) => url.includes("api.telnyx.com")).length, 2);
-  } finally {
-    global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-  }
-});
-
-test("generation falls through rejected Gemini and Telnyx accounts to Groq", async () => {
-  const previous = Object.fromEntries(["GEMINI_API_KEY", "TELNYX_API_KEY", "GROQ_API_KEY", "GROQ_MODEL"]
-    .map((key) => [key, process.env[key]]));
-  const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "synthetic-gemini-three-provider";
-  process.env.TELNYX_API_KEY = "synthetic-telnyx-three-provider";
-  process.env.GROQ_API_KEY = "synthetic-groq-three-provider";
-  process.env.GROQ_MODEL = "gsk_synthetic_not_a_model_123456789";
-  const calls: string[] = [];
-  global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    calls.push(url);
-    if (url.includes("api.groq.com")) {
-      const request = JSON.parse(String(init?.body)) as { model: string; reasoning_format?: string };
-      assert.equal(request.model, "qwen/qwen3.8-27b");
-      assert.equal(request.reasoning_format, "hidden");
-      return Response.json({ choices: [{ finish_reason: "stop", message: { content: "Working Groq fallback" } }] });
-    }
-    return Response.json({ error: { message: "Synthetic provider rejection" } }, { status: 403 });
-  }) as typeof fetch;
-  try {
-    const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 });
-    assert.equal(result.providerId, "groq");
-    assert.equal(result.text, "Working Groq fallback");
-    assert.deepEqual(result.failureCategories, ["authentication", "authentication"]);
-    assert.equal(calls.length, 3);
-  } finally {
-    global.fetch = previousFetch;
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-});
-
-test("a rate-limited provider remains retryable during cooldown, while invalid credentials do not", async () => {
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousFetch = global.fetch;
-  try {
-    for (const [status, expectedRetryable] of [[429, true], [401, false]] as const) {
-      process.env.TELNYX_API_KEY = `synthetic-telnyx-cooldown-${status}`;
-      global.fetch = (async () => Response.json({ error: { message: "Synthetic provider failure" } }, { status })) as typeof fetch;
-      await assert.rejects(
-        multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { onlyProviderId: "telnyx-glm", retryDelayMs: 0 }),
-      );
-      await assert.rejects(
-        multiModelRouter.complete([{ role: "user", content: "Build again" }], undefined, { onlyProviderId: "telnyx-glm", retryDelayMs: 0 }),
-        (error: unknown) => Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === expectedRetryable)
-      );
-    }
-  } finally {
-    global.fetch = previousFetch;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-  }
-});
-
-test("a rate-limited continuation waits for the provider reset and keeps generated text", async () => {
-  const previousGroq = process.env.GROQ_API_KEY;
-  const previousFetch = global.fetch;
-  process.env.GROQ_API_KEY = "synthetic-groq-reset";
-  let requests = 0;
-  let rateLimitedAt = 0;
-  global.fetch = (async () => {
-    requests += 1;
-    if (requests === 1) return Response.json({ choices: [{ finish_reason: "length", message: { content: "### File: src/App.tsx\n```tsx\nexport default function App() {" } }] });
-    if (requests === 2) {
-      rateLimitedAt = Date.now();
-      return Response.json({ error: { message: "Synthetic token limit" } }, {
-        status: 429, headers: { "x-ratelimit-reset-tokens": "0.04s" },
-      });
-    }
-    return Response.json({ choices: [{ finish_reason: "stop", message: { content: " return <main>Ready</main>; }\n```" } }] });
-  }) as typeof fetch;
-  try {
-    const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, {
-      onlyProviderId: "groq", requestLabel: "code_generation", retryDelayMs: 0, totalTimeoutMs: 5_000,
+    writeStarterTemplate(workspace, "nav-name-check");
+    const shell = fs.readFileSync(path.join(workspace, "src/components/layout/dashboard-shell.tsx"), "utf8");
+    assert.match(shell, /item\.label \?\? item\.name/);
+    fs.writeFileSync(path.join(workspace, "src/App.tsx"), `
+      import { DashboardShell } from "@/components/layout";
+      export default function App() {
+        return <DashboardShell navItems={[{ name: "Overview", href: "/" }]}>
+          <main><h1>Overview</h1></main>
+        </DashboardShell>;
+      }
+    `);
+    fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(workspace, "node_modules"), "junction");
+    const typecheck = spawnSync(process.execPath, [path.join(process.cwd(), "node_modules/typescript/bin/tsc"), "--noEmit"], {
+      cwd: workspace, encoding: "utf8", timeout: 60_000,
     });
-    assert.equal(requests, 3);
-    assert.ok(Date.now() - rateLimitedAt >= 40);
-    assert.match(result.text, /<main>Ready<\/main>/);
-    assert.ok(result.failureCategories.includes("rate_limit"));
+    assert.equal(typecheck.status, 0, typecheck.stderr || typecheck.stdout);
   } finally {
-    global.fetch = previousFetch;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test("reasoning-only length response retries from the original request", async () => {
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousFetch = global.fetch;
-  let attempts = 0;
-  delete process.env.GEMINI_API_KEY;
-  process.env.TELNYX_API_KEY = "synthetic-reasoning-retry";
-  global.fetch = (async () => {
-    attempts += 1;
-    return Response.json(attempts === 1
-      ? { choices: [{ finish_reason: "length", message: { content: "", reasoning_content: "thinking" } }] }
-      : { choices: [{ finish_reason: "stop", message: { content: "A complete application" } }] });
-  }) as typeof fetch;
+test("marketing shell accepts a page title and only renders connected account actions", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "bigbag-marketing-shell-check-"));
   try {
-    const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, {
-      onlyProviderId: "telnyx-glm", retryDelayMs: 0,
+    writeStarterTemplate(workspace, "marketing-shell-check");
+    const shell = fs.readFileSync(path.join(workspace, "src/components/layout/marketing-shell.tsx"), "utf8");
+    assert.match(shell, /\(signInHref \|\| onSignInClick\) && <Button/);
+    assert.match(shell, /\(ctaHref \|\| onCtaClick\) && <Button/);
+    fs.writeFileSync(path.join(workspace, "src/App.tsx"), `
+      import { MarketingShell } from "@/components/layout";
+      export default function App() {
+        return <MarketingShell brand="Example" pageTitle="Example app" ctaHref="/signup">
+          <h1>Build your project</h1>
+        </MarketingShell>;
+      }
+    `);
+    fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(workspace, "node_modules"), "junction");
+    const typecheck = spawnSync(process.execPath, [path.join(process.cwd(), "node_modules/typescript/bin/tsc"), "--noEmit"], {
+      cwd: workspace, encoding: "utf8", timeout: 60_000,
     });
-    assert.equal(result.text, "A complete application");
-    assert.equal(attempts, 2);
-    assert.ok(result.failureCategories.includes("output_limit"));
+    assert.equal(typecheck.status, 0, typecheck.stderr || typecheck.stdout);
   } finally {
-    global.fetch = previousFetch;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 
-test("provider error bodies cannot expose configured credentials in errors or logs", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
+async function withSyntheticGlm53<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  const originalLog = console.log;
-  const originalWarn = console.warn;
-  const originalError = console.error;
-  const secret = "synthetic-provider-secret-123456789";
-  const output: string[] = [];
-  process.env.GEMINI_API_KEY = secret;
-  delete process.env.TELNYX_API_KEY;
-  global.fetch = (async () => Response.json({ error: { message: `Invalid credential ${secret}` } }, { status: 401 })) as typeof fetch;
-  console.log = console.warn = console.error = (...args: unknown[]) => { output.push(args.join(" ")); };
-  try {
-    await assert.rejects(
-      multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 }),
-      (error: unknown) => error instanceof Error && !error.message.includes(secret)
-    );
-    assert.equal(output.join("\n").includes(secret), false);
-  } finally {
-    console.log = originalLog;
-    console.warn = originalWarn;
-    console.error = originalError;
+  process.env.ABOVE_API_KEY = key;
+  try { return await run(); }
+  finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previous === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previous;
   }
+}
+
+test("generation uses only the configured GLM 5.3 Flash model even with legacy AI keys", async () => {
+  await withSyntheticGlm53("synthetic-above-only-model", async () => {
+    const keys = ["GEMINI_API_KEY", "TELNYX_API_KEY", "GLM_API_KEY", "GROQ_API_KEY"] as const;
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    for (const key of keys) process.env[key] = `synthetic-${key}`;
+    const calls: string[] = [];
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(String(input));
+      const payload = JSON.parse(String(init?.body));
+      assert.equal(payload.model, "glm-5.3-flash-modal");
+      assert.equal(payload.max_tokens, 8_192);
+      assert.equal(payload.reasoning_effort, "low");
+      return Response.json({ choices: [{ finish_reason: "stop", message: { content: "Working GLM source" } }] });
+    }) as typeof fetch;
+    try {
+      assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), ["above-glm53"]);
+      const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { requestLabel: "code_generation" });
+      assert.equal(result.providerId, "above-glm53");
+      assert.equal(result.text, "Working GLM source");
+      assert.deepEqual(calls, ["https://api.above.dev/v1/chat/completions"]);
+    } finally {
+      for (const key of keys) {
+        if (previous[key] === undefined) delete process.env[key];
+        else process.env[key] = previous[key];
+      }
+    }
+  });
 });
 
-test("long code output continues with bounded context and survives a continuation timeout", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.TELNYX_API_KEY;
-  const previousFetch = global.fetch;
-  delete process.env.GEMINI_API_KEY;
-  process.env.TELNYX_API_KEY = "synthetic-telnyx-continuation";
-  const requestSizes: number[] = [];
-  let calls = 0;
-  global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls += 1;
-    requestSizes.push(String(init?.body || "").length);
-    if (calls === 1) return Response.json({ choices: [{ finish_reason: "length", message: { content: "<section>partial-" } }] });
-    if (calls === 2) throw new DOMException("Synthetic timeout", "TimeoutError");
-    return Response.json({ choices: [{ finish_reason: "stop", message: { content: "completed</section>" } }] });
-  }) as typeof fetch;
-  try {
-    const result = await multiModelRouter.complete([
-      { role: "system", content: "Long design instructions ".repeat(4_000) },
-      { role: "user", content: "Build a full-stack store" },
-    ], undefined, { requestLabel: "code_generation", retryDelayMs: 0,
-      perProviderTimeoutMs: 2_000, totalTimeoutMs: 8_000 });
-    assert.equal(result.text, "<section>partial-completed</section>");
-    assert.equal(calls, 3);
-    assert.ok(requestSizes[1] < requestSizes[0] / 2);
-    assert.ok(requestSizes[2] < requestSizes[0] / 2);
-  } finally {
-    global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
-    else process.env.TELNYX_API_KEY = previousTelnyx;
-  }
+test("an invalid GLM credential enters cooldown without switching models", async () => {
+  await withSyntheticGlm53("synthetic-above-auth-cooldown", async () => {
+    let calls = 0;
+    global.fetch = (async () => { calls++; return Response.json({ error: { message: "invalid credential" } }, { status: 401 }); }) as typeof fetch;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 }),
+        (error: Error & { category?: string }) => error.name === "ProviderExhaustedError" && error.category === "authentication");
+    }
+    assert.equal(calls, 1);
+  });
 });
 
-test("multimodal code continuation retains text requirements without repeating image data", async () => {
-  const previousGroq = process.env.GROQ_API_KEY;
-  const previousFetch = global.fetch;
-  process.env.GROQ_API_KEY = "synthetic-groq-multimodal-continuation";
-  const bodies: Array<{ messages: Array<{ content: unknown }> }> = [];
-  global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    bodies.push(JSON.parse(String(init?.body)));
-    return Response.json({ choices: [{ finish_reason: bodies.length === 1 ? "length" : "stop", message: { content: bodies.length === 1 ? "### File: src/App.tsx\n```tsx\n" : "export default function App() { return <main>Ready</main>; }\n```" } }] });
-  }) as typeof fetch;
-  try {
+test("a GLM rate limit remains retryable during cooldown", async () => {
+  await withSyntheticGlm53("synthetic-above-rate-limit", async () => {
+    let calls = 0;
+    global.fetch = (async () => { calls++; return Response.json({ error: { message: "quota reset" } }, { status: 429, headers: { "retry-after": "90" } }); }) as typeof fetch;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 }),
+        (error: Error & { category?: string; retryable?: boolean }) => error.name === "ProviderExhaustedError" && error.category === "rate_limit" && error.retryable === true);
+    }
+    assert.equal(calls, 1);
+  });
+});
+
+test("a transient GLM transport failure does not block the next generation", async () => {
+  await withSyntheticGlm53("synthetic-above-transient-timeout", async () => {
+    let calls = 0;
+    global.fetch = (async () => {
+      calls += 1;
+      if (calls <= 3) throw new DOMException("Synthetic timeout", "TimeoutError");
+      return Response.json({ choices: [{ finish_reason: "stop", message: { content: "Recovered source" } }] });
+    }) as typeof fetch;
+    await assert.rejects(multiModelRouter.complete([{ role: "user", content: "First build" }], undefined, { retryDelayMs: 0 }),
+      (error: Error & { category?: string }) => error.name === "ProviderExhaustedError" && error.category === "network_timeout");
+    const result = await multiModelRouter.complete([{ role: "user", content: "Second build" }], undefined, { retryDelayMs: 0 });
+    assert.equal(result.text, "Recovered source");
+    assert.equal(calls, 4);
+  });
+});
+
+test("token-limited GLM output continues in compact context", async () => {
+  await withSyntheticGlm53("synthetic-above-continuation", async () => {
+    const bodies: Array<{ messages: Array<{ content: unknown }> }> = [];
+    global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ choices: [{ finish_reason: bodies.length === 1 ? "length" : "stop", message: {
+        content: bodies.length === 1 ? "### File: src/App.tsx\n```tsx\n" : "export default function App() { return <main>Ready</main>; }\n```",
+      } }] });
+    }) as typeof fetch;
     const result = await multiModelRouter.complete([{ role: "user", content: [
       { type: "text", text: "Build a booking app with real forms" },
       { type: "image_url", image_url: { url: "data:image/png;base64,SYNTHETIC_IMAGE_DATA" } },
-    ] }], undefined, { onlyProviderId: "groq", requestLabel: "code_generation", retryDelayMs: 0 });
+    ] }], undefined, { requestLabel: "code_generation", retryDelayMs: 0 });
     assert.equal(bodies.length, 2);
     const continuation = JSON.stringify(bodies[1]);
     assert.match(continuation, /Build a booking app with real forms/);
     assert.doesNotMatch(continuation, /SYNTHETIC_IMAGE_DATA/);
     assert.match(result.text, /export default function App/);
-  } finally {
-    global.fetch = previousFetch;
-    if (previousGroq === undefined) delete process.env.GROQ_API_KEY;
-    else process.env.GROQ_API_KEY = previousGroq;
-  }
+  });
+});
+
+test("GLM provider errors cannot expose configured credentials", async () => {
+  const secret = "synthetic-above-secret-123456789";
+  await withSyntheticGlm53(secret, async () => {
+    global.fetch = (async () => Response.json({ error: { message: `Invalid key ${secret}` } }, { status: 401 })) as typeof fetch;
+    await assert.rejects(multiModelRouter.complete([{ role: "user", content: "Build" }], undefined, { retryDelayMs: 0 }),
+      (error: Error) => error.name === "ProviderExhaustedError" && !error.message.includes(secret));
+  });
+});
+
+test("streamed GLM code output waits for a terminal event before reporting success", async () => {
+  await withSyntheticGlm53("synthetic-above-stream", async () => {
+    global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(JSON.parse(String(init?.body)).stream, true);
+      const events = [
+        'data: {"choices":[{"delta":{"content":"### File: src/App.tsx\\n"}}]}',
+        'data: {"choices":[{"delta":{"content":"```tsx\\nexport default function App() { return <main>Ready</main>; }\\n```"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        'data: [DONE]',
+      ].join("\n\n") + "\n\n";
+      return new Response(events, { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    for (const requestLabel of ["code_generation", "code_repair"]) {
+      const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined,
+        { requestLabel, retryDelayMs: 0 });
+      assert.match(result.text, /<main>Ready<\/main>/);
+      assert.equal(result.finishReason, "stop");
+    }
+  });
+});
+
+test("a broken GLM stream resumes its partial files without a false success", async () => {
+  await withSyntheticGlm53("synthetic-above-broken-stream", async () => {
+    let requests = 0;
+    global.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests += 1;
+      if (requests === 1) {
+        let sent = false;
+        return new Response(new ReadableStream({
+          pull(controller) {
+            if (!sent) {
+              sent = true;
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"### File: src/App.tsx\\n```tsx\\n"}}]}\n\n'));
+            } else controller.error(new DOMException("Synthetic stream timeout", "TimeoutError"));
+          },
+        }), { headers: { "content-type": "text/event-stream" } });
+      }
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
+      assert.match(body.messages.at(-1)?.content || "", /src\/App\.tsx/);
+      return Response.json({ choices: [{ finish_reason: "stop", message: {
+        content: "export default function App() { return <main>Recovered</main>; }\n```",
+      } }] });
+    }) as typeof fetch;
+    const result = await multiModelRouter.complete([{ role: "user", content: "Build" }], undefined,
+      { requestLabel: "code_generation", retryDelayMs: 0 });
+    assert.equal(requests, 2);
+    assert.match(result.text, /<main>Recovered<\/main>/);
+    assert.deepEqual(result.failureCategories, ["network_timeout"]);
+  });
 });
 
 test("connector status requires a signed session and never returns credential values", async () => {
@@ -893,7 +1110,7 @@ test("connector status requires a signed session and never returns credential va
 test("generated build processes receive no private provider credentials", () => {
   const environment = generatedProcessEnvironment("production");
   assert.equal(environment.NODE_ENV, "production");
-  for (const name of ["HOME", "USERPROFILE", "E2B_API_KEY", "FIRECRAWL_API_KEY", "GEMINI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "TENANT_COOKIE_SECRET"]) {
+  for (const name of ["HOME", "USERPROFILE", "E2B_API_KEY", "FIRECRAWL_API_KEY", "ABOVE_API_KEY", "GEMINI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "TENANT_COOKIE_SECRET"]) {
     assert.equal(environment[name], undefined);
   }
   const issues = generationValidationIssues([
@@ -935,7 +1152,7 @@ test("requested commerce cannot silently omit auth or grant owner controls to ev
     ], [], { requireEntrypoint: false, requireCommerceRole: true });
     assert.ok(stateIssues.some((issue) => issue.includes("hardcodes the owner role")), initializer);
   }
-  const repaired = generationValidationIssues([{ path: "src/hooks/use-store-data.ts", content: 'import { auth } from "@/lib/auth"; import db from "@/lib/db"; async function load() { const session = await auth.getSession(); const role = await auth.getCommerceRole(); return { session, role, records: await db.collection("products").list(), cart: await db.collection("carts").list() }; }' }], [], {
+  const repaired = generationValidationIssues([{ path: "src/hooks/use-store-data.ts", content: 'import { auth } from "@/lib/auth"; import db from "@/lib/db"; async function load() { const session = await auth.getSession(); const role = await auth.getCommerceRole(); return { session, role, records: await db.collection("products").list(), cart: await db.collection("carts").list() }; } async function signIn(email: string, password: string) { await auth.signIn(email, password); } async function signOut() { await auth.signOut(); }' }], [], {
     requireEntrypoint: false,
     requireAuthentication: true,
     requireCommerceRole: true,

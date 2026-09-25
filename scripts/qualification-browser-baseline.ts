@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { normalizeQualificationRunId } from "../src/lib/qualification-run";
+import { writeQualificationEvidenceFile } from "../src/lib/qualification-evidence-file";
+import { writeQualificationReport } from "../src/lib/qualification-report";
 import type { QualificationEvidence } from "../src/lib/local-orchestrator/durable-project-store";
 import { generatedProcessEnvironment } from "../src/lib/local-orchestrator/process-env";
 
@@ -33,7 +35,7 @@ function browser(...args: string[]): string {
   return result.stdout.trim();
 }
 
-function pageMetrics(): { bodyChars: number; width: number; scrollWidth: number; controls: number; unlabeledButtons: number; h1Count: number; visibleErrorHeading: string | null } {
+function pageMetrics(): { bodyChars: number; width: number; scrollWidth: number; controls: number; unlabeledButtons: number; fallbackImages: number; h1Count: number; visibleErrorHeading: string | null } {
   const result = browser("eval", `(() => {
     const buttons = [...document.querySelectorAll('button')];
     const visibleErrorHeading = [...document.querySelectorAll('h1, h2, h3, [role="alert"]')]
@@ -48,6 +50,7 @@ function pageMetrics(): { bodyChars: number; width: number; scrollWidth: number;
       h1Count: [...document.querySelectorAll('h1')].filter((heading) => heading.getClientRects().length > 0).length,
       unlabeledButtons: buttons.filter((button) => !button.textContent?.trim() &&
         !button.getAttribute('aria-label') && !button.getAttribute('title')).length,
+      fallbackImages: [...document.images].filter((image) => image.dataset.fallbackApplied === 'true').length,
       visibleErrorHeading,
     };
   })()`);
@@ -108,6 +111,8 @@ async function main(): Promise<void> {
         ...(mobile.visibleErrorHeading && mobile.visibleErrorHeading !== desktop.visibleErrorHeading
           ? [`Mobile shows an error state: ${mobile.visibleErrorHeading}`] : []),
         ...(desktop.unlabeledButtons + mobile.unlabeledButtons > 0 ? ["Visible buttons are missing accessible names"] : []),
+        ...(desktop.fallbackImages + mobile.fallbackImages > 0
+          ? [`Generated image assets failed to load: ${Math.max(desktop.fallbackImages, mobile.fallbackImages)} fallback image(s)`] : []),
         ...(pageErrors || mobileErrors ? ["Browser reported a runtime exception"] : []),
         ...accessibilityViolations.map((violation) => `Accessibility: ${violation.id} (${violation.impact}, ${violation.nodeCount} nodes)`),
       ];
@@ -120,11 +125,17 @@ async function main(): Promise<void> {
       evidence.statuses.uiUx = issues.length ? "FAIL" : "PARTIAL";
       evidence.statuses.final = issues.length ? "FAIL" : evidence.browserBaselineOriginalFinal;
       await durableProjectStore.saveQualificationEvidence(runId, evidence);
-      fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+      writeQualificationEvidenceFile(evidenceDir, number, evidence);
       process.stdout.write(`BROWSER_BASELINE project=${number} result=${issues.length ? "FAIL" : "PARTIAL"} issues=${issues.length}\n`);
     } catch (error) {
       process.stdout.write(`BROWSER_BASELINE project=${number} result=BLOCKED reason=${error instanceof Error ? error.message : String(error)}\n`);
     }
+  }
+  if (fs.existsSync(path.join(evidenceDir, "catalog.json"))) {
+    const report = writeQualificationReport(evidenceDir, runId);
+    process.stdout.write(`QUALIFICATION_REPORT ${JSON.stringify(report.counts)}\n`);
+  } else {
+    process.stdout.write("BROWSER_BASELINE skipped: this run has no qualification catalogue yet\n");
   }
 }
 

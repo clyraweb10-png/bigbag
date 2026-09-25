@@ -31,7 +31,7 @@ const FORBIDDEN_GENERATED_CHARACTERS = /[\u00a0\u200b-\u200d\u2013\u2014\u2018\u
 const VITE_BUILT_IN_ENVIRONMENT_VARIABLES = new Set(["BASE_URL", "DEV", "MODE", "PROD", "SSR"]);
 const STARTER_UI_COMPONENTS = new Set([
   "button", "card", "label", "input", "textarea", "checkbox", "switch", "separator",
-  "badge", "skeleton", "skeleton-card", "alert", "empty-state", "metric-card", "table", "dialog",
+  "badge", "skeleton", "skeleton-card", "spinner", "alert", "empty-state", "metric-card", "table", "dialog",
   "sheet", "dropdown-menu", "tabs", "tooltip", "select", "breadcrumbs", "pagination",
   "form", "index", "sparkline", "chart-container", "image-frame",
 ]);
@@ -415,9 +415,99 @@ function jsxOpeningTags(content: string, tagName: "img" | "main" | "section"): s
   return tags;
 }
 
+function inactiveAnchorIssue(filePath: string, content: string): string | null {
+  const sourceFile = sourceFileFor(filePath, content);
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      node.tagName.getText(sourceFile).toLowerCase() === "a") {
+      const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+      const href = attributes.find((attribute) => attribute.name.getText(sourceFile) === "href")?.initializer;
+      const onClick = attributes.some((attribute) => attribute.name.getText(sourceFile) === "onClick");
+      if (href && ts.isStringLiteral(href) && href.text.trim() === "#" && !onClick) found = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found ? `${filePath} contains a link to "#" with no click action; wire it to a real destination or explain that the action is unavailable` : null;
+}
+
+function generatedNavigationAndLandmarkIssues(filePath: string, content: string): string[] {
+  const sourceFile = sourceFileFor(filePath, content);
+  const issues = new Set<string>();
+  const shellNames = new Set(["DashboardShell", "MarketingShell", "EditorialShell", "FocusShell"]);
+  const staticAttribute = (node: ts.JsxOpeningLikeElement, name: string): string | null => {
+    const attribute = node.attributes.properties.find((entry) => ts.isJsxAttribute(entry) && entry.name.getText(sourceFile) === name);
+    if (!attribute || !ts.isJsxAttribute(attribute)) return null;
+    if (attribute.initializer && ts.isStringLiteral(attribute.initializer)) return attribute.initializer.text.trim();
+    const expression = attribute.initializer && ts.isJsxExpression(attribute.initializer) ? attribute.initializer.expression : null;
+    return expression && ts.isStringLiteral(expression) ? expression.text.trim() : null;
+  };
+  const associatedLabelIds = new Set<string>();
+  const collectLabels = (node: ts.Node): void => {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      ["label", "Label"].includes(node.tagName.getText(sourceFile))) {
+      const target = staticAttribute(node, "htmlFor");
+      if (target) associatedLabelIds.add(target);
+    }
+    ts.forEachChild(node, collectLabels);
+  };
+  collectLabels(sourceFile);
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAssignment(node) && node.name.getText(sourceFile) === "href" &&
+      ts.isStringLiteral(node.initializer) && node.initializer.text.trim() === "#" &&
+      ts.isObjectLiteralExpression(node.parent) &&
+      !node.parent.properties.some((property) => ts.isPropertyAssignment(property) && property.name.getText(sourceFile) === "onClick")) {
+      issues.add(`${filePath} contains an inert navigation destination href: "#"; use a real route or an onClick action`);
+    }
+    if (ts.isJsxElement(node) && shellNames.has(node.openingElement.tagName.getText(sourceFile))) {
+      let nestedMain = false;
+      const findMain = (child: ts.Node): void => {
+        if ((ts.isJsxOpeningElement(child) || ts.isJsxSelfClosingElement(child)) && child.tagName.getText(sourceFile) === "main") {
+          nestedMain = true;
+        }
+        ts.forEachChild(child, findMain);
+      };
+      node.children.forEach(findMain);
+      if (nestedMain) issues.add(`${filePath} nests <main> inside a layout shell that already provides the main landmark; use a section or div for its children`);
+    }
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(sourceFile) === "SelectTrigger") {
+      const id = staticAttribute(node, "id");
+      if (!staticAttribute(node, "aria-label") && !staticAttribute(node, "aria-labelledby") &&
+        !(id && associatedLabelIds.has(id))) {
+        issues.add(`${filePath} uses SelectTrigger without an accessible name; add aria-label, aria-labelledby, or an id connected to a visible label`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...issues];
+}
+
+function blockingBrowserDialogIssue(filePath: string, content: string): string | null {
+  const sourceFile = sourceFileFor(filePath, content);
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      found ||= (ts.isIdentifier(callee) && ["prompt", "alert", "confirm"].includes(callee.text)) ||
+        (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) &&
+          callee.expression.text === "window" && ["prompt", "alert", "confirm"].includes(callee.name.text));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found ? `${filePath} uses a blocking browser prompt/alert/confirm for an app workflow; use an accessible form, dialog, or toast with validation instead` : null;
+}
+
 function visualQualityIssues(filePath: string, content: string): string[] {
   const issues: string[] = [];
   if (/\.(?:tsx?|jsx?)$/.test(filePath)) {
+    const inactiveAnchor = inactiveAnchorIssue(filePath, content);
+    if (inactiveAnchor) issues.push(inactiveAnchor);
+    const blockingDialog = blockingBrowserDialogIssue(filePath, content);
+    if (blockingDialog) issues.push(blockingDialog);
+    issues.push(...generatedNavigationAndLandmarkIssues(filePath, content));
     const imageTags = jsxOpeningTags(content, "img");
     for (const tag of imageTags) {
       if (!/(?:^|\s)alt\s*=/.test(tag)) {
@@ -592,11 +682,39 @@ function generatedSecurityIssues(filePath: string, content: string): string[] {
 }
 
 function generatedAuthContractIssues(filePath: string, content: string): string[] {
-  if (!/\.(?:tsx?|jsx?)$/.test(filePath) || !/\bauth\.(?:getSession|signIn|signUp)\s*\(/.test(content)) return [];
+  if (!/\.(?:tsx?|jsx?)$/.test(filePath)) return [];
 
   const issues: string[] = [];
   const sourceFile = sourceFileFor(filePath, content);
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "@/lib/auth" && statement.importClause?.name) {
+      issues.push(`${filePath} imports a default auth client; use import { auth } from "@/lib/auth"`);
+    }
+  }
   const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "auth" &&
+      node.expression.name.text === "signInWithProvider") {
+      issues.push(`${filePath} calls unsupported auth.signInWithProvider(); use auth.signIn(email, password) and an email/password form`);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "auth" &&
+      node.expression.name.text === "onAuthStateChange") {
+      const callback = node.arguments[0];
+      if (callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) && callback.parameters.length === 1 &&
+        ts.isIdentifier(callback.parameters[0].name)) {
+        const parameter = callback.parameters[0].name.text;
+        const inspect = (child: ts.Node) => {
+          if (ts.isPropertyAccessExpression(child) && child.name.text === "session" &&
+            ts.isIdentifier(child.expression) && child.expression.text === parameter) {
+            issues.push(`${filePath} reads .session from the one-argument auth.onAuthStateChange callback; its argument is Session | null directly`);
+          }
+          ts.forEachChild(child, inspect);
+        };
+        inspect(callback.body);
+      }
+    }
     if (
       ts.isVariableDeclaration(node) &&
       ts.isObjectBindingPattern(node.name) &&
@@ -632,11 +750,34 @@ function generatedAuthContractIssues(filePath: string, content: string): string[
   return issues;
 }
 
+function generatedUiImportIssues(filePath: string, content: string): string[] {
+  if (!/\.(?:tsx?|jsx?)$/.test(filePath)) return [];
+  const sourceFile = sourceFileFor(filePath, content);
+  const issues: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !/^@\/components\/ui(?:\/|$)/.test(statement.moduleSpecifier.text)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      issues.push(`${filePath} imports ${bindings.name.text} as a UI namespace; import the supported named components instead (for example { Button }, { Dialog, DialogContent }, { Input }, { Label }, { Card })`);
+    }
+  }
+  return issues;
+}
+
+function generatedDbListOptionIssues(filePath: string, content: string): string[] {
+  if (!/\.(?:tsx?|jsx?)$/.test(filePath)) return [];
+  const unsupported = managedDatabaseCalls(filePath, content).unsupportedListOptions;
+  return unsupported.length > 0
+    ? [`${filePath} passes unsupported ${unsupported.join(", ")} option(s) to collection.list(); only limit and offset exist; load authorized records and filter/sort in the view`]
+    : [];
+}
+
 const UNSUPPORTED_DIRECT_DATABASE_METHODS = new Set([
   "list", "get", "create", "update", "remove", "putMany", "query", "insert", "delete",
 ]);
 
-function managedDatabaseCalls(filePath: string, content: string): { unsupported: boolean; collection: boolean } {
+function managedDatabaseCalls(filePath: string, content: string): { unsupported: boolean; collection: boolean; unsupportedListOptions: string[] } {
   const compilerOptions: ts.CompilerOptions = {
     noLib: true,
     noResolve: true,
@@ -673,7 +814,7 @@ function managedDatabaseCalls(filePath: string, content: string): { unsupported:
       }
     }
   }
-  if (bindings.size === 0 && collectionBindings.size === 0) return { unsupported: false, collection: false };
+  if (bindings.size === 0 && collectionBindings.size === 0) return { unsupported: false, collection: false, unsupportedListOptions: [] };
 
   // Follow simple local aliases (`const store = client`) so renaming the import
   // cannot bypass validation. Repeat because aliases may form a short chain.
@@ -700,10 +841,59 @@ function managedDatabaseCalls(filePath: string, content: string): { unsupported:
     visitAliases(sourceFile);
   }
 
+  const isManagedCollectionFactory = (expression: ts.Expression): boolean => {
+    if (!ts.isCallExpression(expression)) return false;
+    if (ts.isPropertyAccessExpression(expression.expression) && expression.expression.name.text === "collection" &&
+      ts.isIdentifier(expression.expression.expression)) {
+      const receiver = checker.getSymbolAtLocation(expression.expression.expression);
+      return Boolean(receiver && bindings.has(receiver));
+    }
+    if (ts.isIdentifier(expression.expression)) {
+      const callee = checker.getSymbolAtLocation(expression.expression);
+      return Boolean(callee && collectionBindings.has(callee));
+    }
+    return false;
+  };
+  const collectionValues = new Set<ts.Symbol>();
+  let foundCollectionAlias = true;
+  while (foundCollectionAlias) {
+    foundCollectionAlias = false;
+    const visitCollectionAliases = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const value = node.initializer;
+        const valueSymbol = ts.isIdentifier(value) ? checker.getSymbolAtLocation(value) : undefined;
+        if (isManagedCollectionFactory(value) || (valueSymbol && collectionValues.has(valueSymbol))) {
+          const aliasSymbol = checker.getSymbolAtLocation(node.name);
+          if (aliasSymbol && !collectionValues.has(aliasSymbol)) {
+            collectionValues.add(aliasSymbol);
+            foundCollectionAlias = true;
+          }
+        }
+      }
+      ts.forEachChild(node, visitCollectionAliases);
+    };
+    visitCollectionAliases(sourceFile);
+  }
+
   let unsupported = false;
   let collection = false;
+  const unsupportedListOptions = new Set<string>();
   const visitCalls = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
+      if (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "list" &&
+        node.arguments[0] && ts.isObjectLiteralExpression(node.arguments[0])) {
+        const receiver = node.expression.expression;
+        const receiverSymbol = ts.isIdentifier(receiver) ? checker.getSymbolAtLocation(receiver) : undefined;
+        if (isManagedCollectionFactory(receiver) || (receiverSymbol && collectionValues.has(receiverSymbol))) {
+          for (const property of node.arguments[0].properties) {
+            if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) continue;
+            const name = property.name;
+            if ((ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text !== "limit" && name.text !== "offset") {
+              unsupportedListOptions.add(name.text);
+            }
+          }
+        }
+      }
       if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)) {
         const symbol = checker.getSymbolAtLocation(node.expression.expression);
         if (symbol && bindings.has(symbol)) {
@@ -718,7 +908,7 @@ function managedDatabaseCalls(filePath: string, content: string): { unsupported:
     ts.forEachChild(node, visitCalls);
   };
   visitCalls(sourceFile);
-  return { unsupported, collection };
+  return { unsupported, collection, unsupportedListOptions: [...unsupportedListOptions] };
 }
 
 function hasUnsupportedDirectDatabaseCall(filePath: string, content: string): boolean {
@@ -897,6 +1087,8 @@ export function generationValidationIssues(
     issues.push(...generatedSecurityIssues(file.path, file.content));
     issues.push(...sourceSecurityIssues(file.path, file.content));
     issues.push(...generatedAuthContractIssues(file.path, file.content));
+    issues.push(...generatedUiImportIssues(file.path, file.content));
+    issues.push(...generatedDbListOptionIssues(file.path, file.content));
     if (/\.(?:tsx?|jsx?)$/.test(file.path)) {
       const syntaxIssue = sourceSyntaxIssue(file.path, file.content);
       if (syntaxIssue) issues.push(`syntax error in ${file.path}: ${syntaxIssue}`);
@@ -920,9 +1112,23 @@ export function generationValidationIssues(
 
   const effectiveSources = [...normalizedFiles, ...(options.existingSources || []).filter((file) => !generatedPaths.has(normalizeGeneratedPath(file.path)))];
   const modelSources = effectiveSources.filter((file) => !isRuntimeOwnedGeneratedPath(file.path, file.content));
+  if (options.requireEntrypointFirst && !modelSources.some((file) =>
+    /\.(?:tsx|jsx)$/.test(file.path) && (
+      jsxOpeningTags(file.content, "main").length > 0 ||
+      /<(?:DashboardShell|MarketingShell|EditorialShell|FocusShell)(?:\s|>)/.test(file.content)
+    )
+  )) {
+    issues.push("generated app has no main landmark; wrap the primary page content in <main> or use a supplied layout shell");
+  }
   if (options.requireAuthentication) {
     if (!modelSources.some((file) => importsAuthentication(file.path, file.content) && /\bauth\.(?:getSession|onAuthStateChange|signIn|signUp)\s*\(/.test(file.content))) {
       issues.push("requested authentication has no real identity client usage; import auth from @/lib/auth and implement signup, signin, session loading, and logout");
+    }
+    if (!modelSources.some((file) => importsAuthentication(file.path, file.content) && /\bauth\.(?:signIn|signUp)\s*\(/.test(file.content))) {
+      issues.push("requested authentication has no usable sign-in or sign-up action; call the supported auth client from an accessible account form");
+    }
+    if (!modelSources.some((file) => importsAuthentication(file.path, file.content) && /\bauth\.signOut\s*\(/.test(file.content))) {
+      issues.push("requested authentication has no sign-out action; give signed-in users a working way to leave their account");
     }
   }
   if (options.requireCommerceRole) {

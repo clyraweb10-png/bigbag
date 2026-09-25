@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { AUTH_COOKIE, isQualificationOperator, verifyAuthSession } from "@/lib/auth-session";
 import { durableProjectStore, type QualificationEvidence } from "@/lib/local-orchestrator/durable-project-store";
 import { QUALIFICATION_PROJECTS } from "@/lib/qualification-projects";
+import { qualificationFinalStatus } from "@/lib/qualification-gates";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,6 +26,7 @@ function Pill({ value }: { value: string }) {
 }
 
 function valueAt(evidence: QualificationEvidence | undefined, key: string): string {
+  if (key === "final") return qualificationFinalStatus(evidence);
   const statuses = evidence?.statuses as Record<string, unknown> | undefined;
   return typeof statuses?.[key] === "string" ? String(statuses[key]) : "NOT_RUN";
 }

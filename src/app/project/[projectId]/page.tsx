@@ -453,7 +453,7 @@ export default function WorkspacePage() {
    * Kept in state (not persisted) so a reload re-infers from the conversation.
    */
   const [stage, setStage] = useState<ProjectStage>("idle");
-  /** True while the Groq/GLM planner is running — shows a brief "thinking" state. */
+  /** True while the GLM planner is running — shows a brief "thinking" state. */
   const [plannerRunning, setPlannerRunning] = useState(false);
   /** Model-authored next prompts for the current planning conversation. */
   const [plannerSuggestions, setPlannerSuggestions] = useState<string[]>([]);
@@ -536,7 +536,7 @@ export default function WorkspacePage() {
   }
 
   /**
-   * ⭐ CALL THE GROQ/GLM PLANNER for chat, plan generation, and plan refinement.
+   * Call the GLM 5.3 Flash planner for chat, plan generation, and plan refinement.
    * This is the "fast interaction tier" — ~200ms for chat, ~600ms for a plan.
    * On success, adds the planner response as a ConversationMessage to the list.
    */
@@ -832,7 +832,7 @@ export default function WorkspacePage() {
      * ⭐ PLANNING TIER ROUTING (local orchestrator only).
      *
      * In local mode, classify the user's intent and route to:
-     *  - "chat" | "plan" | "update_plan" → Groq/GLM fast tier (no code engine)
+     *  - "chat" | "plan" | "update_plan" → GLM planner (no code engine)
      *  - "confirm_build" | "direct_edit" → code engine (existing path)
      *
      * In cloud mode (Totalum API), skip intent routing and always use the code engine.

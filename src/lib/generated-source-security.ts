@@ -7,7 +7,7 @@ export interface GeneratedSourceLineFinding {
 
 const RULES: Array<GeneratedSourceLineFinding & { pattern: RegExp; clientOnly?: boolean }> = [
   {
-    pattern: /\b(?:VITE_|NEXT_PUBLIC_)?(?:SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY|DATABASE_URL|DATABASE_PASSWORD|STRIPE_SECRET_KEY|E2B_API_KEY|FIRECRAWL_API_KEY|GEMINI_API_KEY|GLM_API_KEY|GROQ_API_KEY|TELNYX_API_KEY|TENANT_COOKIE_SECRET)\b/i,
+    pattern: /\b(?:VITE_|NEXT_PUBLIC_)?(?:SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY|DATABASE_URL|DATABASE_PASSWORD|STRIPE_SECRET_KEY|E2B_API_KEY|FIRECRAWL_API_KEY|ABOVE_API_KEY|GEMINI_API_KEY|GLM_API_KEY|GROQ_API_KEY|TELNYX_API_KEY|TENANT_COOKIE_SECRET)\b/i,
     finding: "Server-only credential identifier appears in generated client source",
     severity: "CRITICAL",
     clientOnly: true,

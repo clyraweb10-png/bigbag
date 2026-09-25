@@ -220,7 +220,7 @@ function implementationContext(
 
 export async function runReferenceAnalysis(design: FirecrawlDesignAnalysis): Promise<ReferenceAnalysisResult> {
   const startedAt = Date.now();
-  const providerId = process.env.REFERENCE_ANALYSIS_PROVIDER_ID?.trim() || "telnyx-glm";
+  const providerId = "above-glm53";
   const provider = multiModelRouter.getProviders().find((entry) => entry.id === providerId);
   const model = provider?.model || providerId;
   const modes: Array<"full_visual" | "screenshot_only" | "metadata_only"> = ["full_visual"];

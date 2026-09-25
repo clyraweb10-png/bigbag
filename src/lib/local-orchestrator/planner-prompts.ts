@@ -1,5 +1,5 @@
 /**
- * Planner system prompts for the Groq / GLM "fast interaction tier".
+ * Planner system prompts for GLM 5.3 Flash.
  *
  * These are intentionally NOT code-generation prompts. The code engine has its
  * own `SYSTEM_PROMPT` in `agent-engine.ts`. These prompts drive:
