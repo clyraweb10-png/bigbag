@@ -23,7 +23,6 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { t } from "@/i18n";
 import { classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
-import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
 import { ProjectOnboardingDialog, type OnboardingAnswer } from "@/components/generate/ProjectOnboardingDialog";
 import {
   EMPTY_PROJECT_CONTEXT,
@@ -131,7 +130,6 @@ export default function GeneratePage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const directBuildStartedRef = useRef<DirectBuildRequest | null>(null);
-  const createdProjectRetryRef = useRef<{ projectId: string; instruction: string } | null>(null);
 
   /* ── Auth guard ── */
   useEffect(() => {
@@ -159,23 +157,16 @@ export default function GeneratePage() {
       const res = await fetch("/api/planner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent, message, history: history.slice(-10), stream: intent === "chat" }),
+        body: JSON.stringify({ intent, message, history: history.slice(-10) }),
       });
-      if (intent === "chat") {
-        setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-        await readPlannerStream(res, (text) => setMessages((prev) => [
-          ...prev.slice(0, -1), { role: "assistant", content: text },
-        ]));
-        return;
-      }
       const payload = await res.json() as { ok: boolean; data?: { text?: string; suggestions?: string[] }; error?: string };
       if (!payload.ok || !payload.data?.text) throw new Error(payload.error || "Assistant unavailable");
-      setTypingIndex(null);
+      setTypingIndex(history.length);
       setMessages((prev) => [...prev, { role: "assistant", content: payload.data!.text! }]);
       setSuggestions(Array.isArray(payload.data.suggestions) ? payload.data.suggestions.slice(0, 10) : []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not reach the assistant");
-      if (intent === "chat") setMessages((prev) => prev.at(-1)?.role === "assistant" ? prev.slice(0, -1) : prev);
+      setMessages((prev) => [...prev, { role: "assistant", content: "I couldn't reach the assistant. Try sending your message again." }]);
     } finally {
       setPlannerRunning(false);
     }
@@ -307,21 +298,19 @@ export default function GeneratePage() {
     setBuildCreating(true);
     setBuildError(null);
 
-    const buildInstruction = instructionOverride?.trim() ||
-      (createdProjectRetryRef.current?.projectId === id ? createdProjectRetryRef.current.instruction : "") || approvedPrompt.trim() ||
+    const buildInstruction = instructionOverride?.trim() || approvedPrompt.trim() ||
       messages.filter((m) => m.role === "user").map((m) => m.content).join("\n\n") ||
       "Build a complete modern web application.";
 
-    const retryExisting = createdProjectRetryRef.current?.projectId === id;
-    const res = retryExisting ? null : await vcaasApi.projects.create({ projectId: id, description: buildInstruction.slice(0, 200) });
-    if (res && !res.ok) {
+    const res = await vcaasApi.projects.create({ projectId: id, description: buildInstruction.slice(0, 200) });
+    if (!res.ok) {
       setBuildError(res.error || `Could not create "${id}"`);
       setBuildCreating(false);
       setNameModalOpen(true);
       return;
     }
 
-    const id2 = res?.data?.projectId || id;
+    const id2 = res.data?.projectId || id;
     if (id2 !== id) toast.info(`"${id}" was taken — your project is "${id2}"`);
 
     if (figmaToken) {
@@ -335,34 +324,9 @@ export default function GeneratePage() {
     setUploading(false);
     for (const fail of upload.failed) toast.error(`${fail.name}: ${fail.reason}`);
 
-    const displayPrompt = planRequest || approvedPrompt || buildInstruction;
-    const conversation = messages.length > 0 ? messages : [{ role: "user" as const, content: displayPrompt }];
-    if (process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local") {
-      const persisted = await vcaasApi.agent.appendConversation(id2, conversation.slice(-50).map((message) => ({
-        author: message.role === "user" ? "user" as const : "agent" as const,
-        message: message.content,
-        messageType: "regular" as const,
-        createdAt: new Date().toISOString(),
-      })), {
-        originalPrompt: displayPrompt,
-        projectName: projectContext.projectName,
-        projectType: projectContext.projectType,
-        onboardingAnswers: { ...projectContext },
-        referenceUrl: projectContext.referenceUrl,
-      });
-      if (!persisted.ok) {
-        createdProjectRetryRef.current = { projectId: id2, instruction: buildInstruction };
-        setBuildName(id2);
-        setBuildError(`Project ${id2} was created, but its conversation could not be saved: ${persisted.error || "try again"}. Retry to save it without creating another project.`);
-        setBuildCreating(false);
-        setNameModalOpen(true);
-        return;
-      }
-    }
-    createdProjectRetryRef.current = null;
-
     try {
       sessionStorage.setItem(`bigbag:pendingPrompt:${id2}`, buildInstruction);
+      const displayPrompt = planRequest || approvedPrompt;
       sessionStorage.setItem(`bigbag:pendingDisplayPrompt:${id2}`, displayPrompt);
       if (projectContext.referenceUrl) {
         sessionStorage.setItem(`bigbag:pendingVisualReferenceUrl:${id2}`, projectContext.referenceUrl);

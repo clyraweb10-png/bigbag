@@ -3,13 +3,11 @@ import path from "path";
 import net from "net";
 import http from "http";
 import { spawn, ChildProcess } from "child_process";
-import { setTimeout as delay } from "node:timers/promises";
 import { localProjectStore } from "./project-store";
 import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
 import { validateGeneratedRuntime } from "./runtime-validator";
 
 const activeProcesses = new Map<string, ChildProcess>();
-const activeBuildProcesses = new Map<string, ChildProcess>();
 const serverReadyPromises = new Map<string, Promise<void>>();
 const startLocks = new Map<string, Promise<string>>();
 const LOCAL_BUILD_TIMEOUT_MS = 120_000;
@@ -26,14 +24,13 @@ function killProcessTree(proc: ChildProcess): void {
 /**
  * Wait until the workspace runtime actually serves HTTP.
  */
-async function waitForServerReady(port: number, timeoutMs = 45000, signal?: AbortSignal): Promise<void> {
+async function waitForServerReady(port: number, timeoutMs = 45000): Promise<void> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    signal?.throwIfAborted();
     const ok = await new Promise<boolean>((resolve) => {
       const req = http.get(
-        { hostname: "127.0.0.1", port, path: "/", timeout: 2000, signal },
+        { hostname: "127.0.0.1", port, path: "/", timeout: 2000 },
         (res) => {
           const healthy = (res.statusCode ?? 500) < 500;
           res.resume();
@@ -46,12 +43,11 @@ async function waitForServerReady(port: number, timeoutMs = 45000, signal?: Abor
         resolve(false);
       });
     });
-    signal?.throwIfAborted();
     if (ok) {
       console.log(`[local-sandbox] Server on port ${port} is ready`);
       return;
     }
-    await delay(250, undefined, { signal });
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
   throw new Error(`Server on port ${port} did not become ready within ${timeoutMs}ms`);
@@ -116,15 +112,14 @@ async function findFreePort(preferred: number): Promise<number> {
   return port;
 }
 
-async function buildWorkspace(dir: string, viteBin: string, projectId: string, signal?: AbortSignal): Promise<void> {
+async function buildWorkspace(dir: string, viteBin: string, projectId: string): Promise<void> {
   const tscSegments = ["node_modules", "typescript", "bin", "tsc"];
   const workspaceTsc = path.join(dir, ...tscSegments);
   const rootTsc = path.join(/* turbopackIgnore: true */ process.cwd(), ...tscSegments);
   const tscBin = fs.existsSync(workspaceTsc) ? workspaceTsc : rootTsc;
   if (!fs.existsSync(tscBin)) throw new Error("TypeScript compiler is unavailable for generated-app validation");
-  await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
-  await runBuildCommand(dir, [viteBin, "build"], projectId, "production build", signal);
-  signal?.throwIfAborted();
+  await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation");
+  await runBuildCommand(dir, [viteBin, "build"], projectId, "production build");
   await validateGeneratedRuntime(dir);
 }
 
@@ -132,10 +127,8 @@ async function runBuildCommand(
   dir: string,
   args: string[],
   projectId: string,
-  label: string,
-  signal?: AbortSignal
+  label: string
 ): Promise<void> {
-  signal?.throwIfAborted();
   await new Promise<void>((resolve, reject) => {
     const build = spawn(process.execPath, args, {
       cwd: dir,
@@ -143,13 +136,6 @@ async function runBuildCommand(
       windowsHide: true,
       env: { ...process.env, NODE_ENV: "production" },
     });
-    activeBuildProcesses.set(projectId, build);
-    const onAbort = () => {
-      killProcessTree(build);
-      reject(new Error(`Generated app ${label} stopped`));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
     let output = "";
     const collect = (data: Buffer) => {
       output = (output + data.toString()).slice(-8_000);
@@ -162,15 +148,10 @@ async function runBuildCommand(
     }, LOCAL_BUILD_TIMEOUT_MS);
     build.on("error", (error) => {
       clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      if (activeBuildProcesses.get(projectId) === build) activeBuildProcesses.delete(projectId);
       reject(error);
     });
     build.on("close", (code) => {
       clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      if (activeBuildProcesses.get(projectId) === build) activeBuildProcesses.delete(projectId);
-      if (signal?.aborted) { reject(new Error(`Generated app ${label} stopped`)); return; }
       if (code === 0) {
         console.log(`[local-sandbox] ${label} completed for ${projectId}`);
         resolve();
@@ -196,20 +177,18 @@ export const localSandboxManager = {
     return `http://127.0.0.1:${rec.port}`;
   },
 
-  async startDevServer(projectId: string, signal?: AbortSignal): Promise<string> {
-    signal?.throwIfAborted();
+  async startDevServer(projectId: string): Promise<string> {
     const inflight = startLocks.get(projectId);
     if (inflight) return inflight;
 
-    const run = this.startDevServerUnlocked(projectId, signal).finally(() => {
+    const run = this.startDevServerUnlocked(projectId).finally(() => {
       startLocks.delete(projectId);
     });
     startLocks.set(projectId, run);
     return run;
   },
 
-  async startDevServerUnlocked(projectId: string, signal?: AbortSignal): Promise<string> {
-    signal?.throwIfAborted();
+  async startDevServerUnlocked(projectId: string): Promise<string> {
     const record = localProjectStore.getRecord(projectId);
     if (!record) throw new Error(`Project ${projectId} not found`);
 
@@ -224,7 +203,7 @@ export const localSandboxManager = {
       if (pending) {
         await pending;
       }
-      await waitForServerReady(record.port, 45_000, signal);
+      await waitForServerReady(record.port);
       return `/api/preview/${projectId}`;
     }
     if (existing) {
@@ -255,8 +234,7 @@ export const localSandboxManager = {
     console.log(`[local-sandbox] Building ${projectId} before starting its preview on port ${record.port}...`);
 
     try {
-      await buildWorkspace(dir, viteBin, projectId, signal);
-      signal?.throwIfAborted();
+      await buildWorkspace(dir, viteBin, projectId);
       const devProc = spawn(process.execPath, [viteBin, "preview", "--host", "127.0.0.1", "--port", String(record.port)], {
         cwd: dir,
         stdio: ["ignore", "pipe", "pipe"],
@@ -299,15 +277,14 @@ export const localSandboxManager = {
       console.log(`[local-sandbox] Production preview started for ${projectId} on port ${record.port}, waiting for ready...`);
       
       // Wait for server to be ready before returning
-      const readyPromise = waitForServerReady(record.port, 45_000, signal)
+      const readyPromise = waitForServerReady(record.port)
         .then(() => {
-          signal?.throwIfAborted();
           console.log(`[local-sandbox] Dev server ready for ${projectId}`);
           localProjectStore.update(projectId, { serverStatus: "Active" });
         })
         .catch((err) => {
           console.error(`[local-sandbox] Dev server failed to become ready for ${projectId}:`, err);
-          localProjectStore.update(projectId, { serverStatus: signal?.aborted ? "Stopped" : "Error" });
+          localProjectStore.update(projectId, { serverStatus: "Error" });
           throw err;
         });
       
@@ -324,7 +301,7 @@ export const localSandboxManager = {
         activeProcesses.delete(projectId);
       }
       serverReadyPromises.delete(projectId);
-      localProjectStore.update(projectId, { serverStatus: signal?.aborted ? "Stopped" : "Error" });
+      localProjectStore.update(projectId, { serverStatus: "Error" });
       throw err;
     }
   },
@@ -338,10 +315,5 @@ export const localSandboxManager = {
     serverReadyPromises.delete(projectId);
     startLocks.delete(projectId);
     localProjectStore.update(projectId, { serverStatus: "Stopped" });
-  },
-
-  cancelBuild(projectId: string): void {
-    const build = activeBuildProcesses.get(projectId);
-    if (build) killProcessTree(build);
   },
 };

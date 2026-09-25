@@ -26,7 +26,6 @@ export interface RouterCompletionResult {
 }
 
 export type ProviderErrorCategory =
-  | "cancelled"
   | "rate_limit"
   | "provider_unavailable"
   | "network_timeout"
@@ -56,7 +55,6 @@ export interface ModelMessage {
 }
 
 export interface RouterCompletionOptions {
-  signal?: AbortSignal;
   perProviderTimeoutMs?: number;
   totalTimeoutMs?: number;
   deprioritizeProviderId?: string;
@@ -265,20 +263,19 @@ class MultiModelRouter {
       });
     }
 
-    // 2. Above.dev GLM-5.3-Flash
-    const aboveKey = (process.env.ABOVE_API_KEY || process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "sk-gw-a5f52c91f5de63ab96868e83cea9d61760c9b56b0db0369d").trim();
-    if (aboveKey) {
-      const aboveModel = (process.env.ABOVE_MODEL || process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "glm-5.3-flash-modal").trim();
-      const aboveBaseUrl = (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, "");
+    // 2. Telnyx GLM-5.3-Flash — fallback when Gemini is unavailable.
+    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (telnyxKey) {
+      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
       providers.push({
-        id: "above-glm53",
-        name: "Above.dev (GLM-5.3-Flash)",
-        baseUrl: aboveBaseUrl,
-        apiKey: aboveKey,
-        model: aboveModel,
-        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || "8192", 10),
+        id: "telnyx-glm",
+        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
+        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
+        apiKey: telnyxKey,
+        model: telnyxModel,
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
         maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: "low",
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
       });
     }
 
@@ -301,7 +298,6 @@ class MultiModelRouter {
       maxOutputContinuations: number;
       responseFormat?: "json_object";
       requestLabel: string;
-      signal?: AbortSignal;
     }
   ): Promise<RouterCompletionResult> {
     const startedAt = Date.now();
@@ -320,7 +316,6 @@ class MultiModelRouter {
     let lastError = new ProviderRequestError("Provider request failed", "unknown", false);
 
     for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
-      options.signal?.throwIfAborted();
       let remainingMs = options.deadlineAt === undefined
         ? undefined
         : options.deadlineAt - Date.now();
@@ -333,7 +328,6 @@ class MultiModelRouter {
         console.log(`[MultiModelRouter] Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`);
         onStatus?.(retryMsg);
         await sleep(options.retryDelayMs);
-        options.signal?.throwIfAborted();
         remainingMs = options.deadlineAt === undefined
           ? undefined
           : options.deadlineAt - Date.now();
@@ -347,7 +341,6 @@ class MultiModelRouter {
         let requestMessages = messages;
 
         for (let continuation = 0; continuation <= options.maxOutputContinuations; continuation += 1) {
-          options.signal?.throwIfAborted();
           remainingMs = options.deadlineAt === undefined
             ? undefined
             : options.deadlineAt - Date.now();
@@ -387,7 +380,6 @@ class MultiModelRouter {
           })}`);
 
           const res: Response = await this.enqueue(provider.id, () => {
-            options.signal?.throwIfAborted();
             const remainingAtFetchMs = options.deadlineAt === undefined
               ? undefined
               : options.deadlineAt - Date.now();
@@ -409,9 +401,7 @@ class MultiModelRouter {
               method: "POST",
               headers,
               body: JSON.stringify(payload),
-              signal: options.signal
-                ? AbortSignal.any([options.signal, AbortSignal.timeout(attemptTimeoutMs)])
-                : AbortSignal.timeout(attemptTimeoutMs),
+              signal: AbortSignal.timeout(attemptTimeoutMs),
             });
           }, remainingMs);
 
@@ -536,9 +526,6 @@ class MultiModelRouter {
           ];
         }
       } catch (err: any) {
-        if (options.signal?.aborted) {
-          throw new ProviderRequestError("Generation cancelled", "cancelled", false, "", "", requestAttempts);
-        }
         const message = err?.message || String(err);
         const isTimeout = err?.name === "TimeoutError" || /aborted|timeout/i.test(message);
         const isNetworkFailure = /fetch|network|socket/i.test(message);
@@ -580,13 +567,12 @@ class MultiModelRouter {
 
     if (configuredProviders.length === 0) {
       throw new Error(
-        "No AI API keys configured. Please configure ABOVE_API_KEY or GEMINI_API_KEY."
+        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
       );
     }
 
-    const targetProviderId = options.onlyProviderId === "telnyx-glm" ? "above-glm53" : options.onlyProviderId;
-    const eligibleProviders = targetProviderId
-      ? configuredProviders.filter((provider) => provider.id === targetProviderId)
+    const eligibleProviders = options.onlyProviderId
+      ? configuredProviders.filter((provider) => provider.id === options.onlyProviderId)
       : configuredProviders;
     if (eligibleProviders.length === 0) {
       throw new Error("The required AI capability is not configured.");
@@ -606,7 +592,6 @@ class MultiModelRouter {
     const perProviderTimeoutMs = options.perProviderTimeoutMs ?? 120_000;
 
     for (let i = 0; i < providers.length; i++) {
-      options.signal?.throwIfAborted();
       const provider = providers[i];
       const isLast = i === providers.length - 1;
       // Reserve a fair share of the remaining wall-clock budget for every
@@ -619,9 +604,7 @@ class MultiModelRouter {
         : Date.now() + Math.max(1, Math.floor(remainingTotalMs / providersRemaining));
 
       console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
-      // Model inference is still code generation, not a running build. Build
-      // status is emitted separately when validation starts.
-      onStatus?.("Generating the implementation…");
+      onStatus?.("Building your project…");
 
       try {
         return await this.tryProvider(provider, messages, onStatus, {
@@ -634,7 +617,6 @@ class MultiModelRouter {
             Math.min(MAX_OUTPUT_CONTINUATIONS, options.maxOutputContinuations ?? MAX_OUTPUT_CONTINUATIONS)
           ),
           responseFormat: options.responseFormat,
-          signal: options.signal,
           requestLabel: options.requestLabel?.trim() || "generation",
         });
       } catch (err: any) {

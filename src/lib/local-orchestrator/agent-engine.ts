@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { randomUUID } from "node:crypto";
-import { localProjectStore, persistentPreviewPath } from "./project-store";
+import { localProjectStore } from "./project-store";
 import { localFileManager } from "./file-manager";
 import { localSandboxManager } from "./sandbox-manager";
 import { e2bSandboxManager } from "./e2b-sandbox-manager";
@@ -118,17 +117,11 @@ const BUILD_REPAIR_STRATEGIES = [
 
 export function isSourceBuildFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Generated app failed to compile") && !isBuildResourceFailure(error);
-}
-
-export function isBuildResourceFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /(?:exit status 137|signal SIGKILL|out of memory|\bKilled\b)/i.test(message);
+  return message.includes("Generated app failed to compile");
 }
 
 type SharedAgentRunState = {
   runs: Map<string, Promise<void>>;
-  controllers: Map<string, { generationId: string; controller: AbortController }>;
 };
 
 const agentRunStateKey = Symbol.for("bigbag.local-orchestrator.agent-runs");
@@ -137,16 +130,8 @@ const agentGlobalState = globalThis as typeof globalThis & {
 };
 const sharedAgentRunState = agentGlobalState[agentRunStateKey] || {
   runs: new Map<string, Promise<void>>(),
-  controllers: new Map<string, { generationId: string; controller: AbortController }>(),
 };
-sharedAgentRunState.controllers ||= new Map();
 agentGlobalState[agentRunStateKey] = sharedAgentRunState;
-
-class GenerationCancelledError extends Error {
-  constructor() {
-    super("Generation stopped by the user");
-  }
-}
 
 function snapshotWorkspace(projectId: string): Map<string, Buffer> {
   const root = localProjectStore.getWorkspaceDir(projectId);
@@ -610,23 +595,6 @@ export const localAgentEngine = {
   ): Promise<void> {
     const record = localProjectStore.getRecord(projectId);
     if (!record) throw new Error(`Project ${projectId} not found`);
-    if (record.status === "init" || sharedAgentRunState.runs.has(projectId)) {
-      throw new Error("A generation is already running or stopping for this project");
-    }
-    const priorDeployment = record.deployment?.status === "success" ? {
-      deployment: { ...record.deployment },
-      previewUrl: record.previewUrl || persistentPreviewPath(projectId),
-      productionProjectUrl: record.productionProjectUrl,
-    } : null;
-    const generationId = randomUUID();
-    const controller = new AbortController();
-    sharedAgentRunState.controllers.set(projectId, { generationId, controller });
-    const checkCancelled = () => {
-      const current = localProjectStore.getRecord(projectId);
-      if (controller.signal.aborted || current?.activeGenerationId !== generationId || current.cancellationRequestedAt) {
-        throw new GenerationCancelledError();
-      }
-    };
 
     const now = new Date().toISOString();
     const priorMessages = record.conversation || [];
@@ -644,18 +612,12 @@ export const localAgentEngine = {
       message: `Starting AI Composer...`,
       messageType: "starting",
       createdAt: new Date().toISOString(),
-      generationEvent: { type: "generation_started", status: "started", generationId },
+      generationEvent: { type: "generation_started", status: "started" },
     };
 
-    // /generate persists the whole conversation before starting the first run.
-    // Reuse its existing user request instead of echoing it a second time.
-    const alreadyInInitialConversation = !priorMessages.some((message) => message.generationEvent?.type === "generation_started") &&
-      priorMessages.some((message) => message.author === "user" && message.message === userMsg.message);
-    const conversation = [...priorMessages, ...(alreadyInInitialConversation ? [] : [userMsg]), startMsg];
+    const conversation = [...priorMessages, userMsg, startMsg];
     localProjectStore.update(projectId, {
       status: "init",
-      activeGenerationId: generationId,
-      cancellationRequestedAt: undefined,
       agentStartedAt: now,
       conversation,
     });
@@ -668,16 +630,37 @@ export const localAgentEngine = {
       let previousWorkspace: Map<string, Buffer> | null = null;
 
       try {
-        checkCancelled();
         // Keep template and snapshot I/O inside the guarded path so a filesystem
         // failure is reported instead of leaving the project stuck in `init`.
         // The preview starts only after generated code passes a real compile.
         localSandboxManager.ensureProjectTemplate(projectId);
         previousWorkspace = snapshotWorkspace(projectId);
 
-        const providers = multiModelRouter.getProviders().filter((provider) => (provider.id === "above-glm53" || provider.id === "telnyx-glm") && /GLM-5\.3-Flash|glm-5\.3/i.test(provider.model));
+        const providers = multiModelRouter.getProviders();
         if (providers.length === 0) {
-          throw new Error("GLM 5.3 Flash is required for code generation; configure ABOVE_API_KEY");
+          let starterPreview: string | undefined;
+          try {
+            starterPreview = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          } catch (error) {
+            console.error("[localAgentEngine] Starter preview failed:", error);
+          }
+          const warnMsg: ConversationMessage = {
+            author: "agent",
+            message: starterPreview
+              ? "⚠️ No AI API keys found in `.env.local`.\n\nPlease add your API keys to `.env.local` to enable full autonomous code generation. In the meantime, the starter template is running in the live preview."
+              : "No AI API keys are configured, and the starter preview could not be started. Add an AI provider key to `.env.local`, verify the sandbox configuration, and retry.",
+            messageType: starterPreview ? "finished" : "error",
+            createdAt: new Date().toISOString(),
+          };
+          const currentConversation =
+            localProjectStore.getRecord(projectId)?.conversation || conversation;
+          localProjectStore.update(projectId, {
+            status: "done",
+            conversation: [...currentConversation, warnMsg],
+            previewUrl: starterPreview,
+            serverStatus: starterPreview ? "Active" : "Error",
+          });
+          return;
         }
 
         // ═══⭐⭐ FOLLOW-UP AWARENESS ══════════════════════════════════════════
@@ -771,23 +754,21 @@ export const localAgentEngine = {
           let referenceFailurePhase: "crawl" | "vision" = "crawl";
           try {
             const design = await analyzeWebsiteDesign(referenceUrl);
-            checkCancelled();
             const afterCrawl = localProjectStore.getRecord(projectId);
-            const crawlAssetMessages: ConversationMessage[] = design.referencePackage.assets.map((asset, imageIndex) => ({
+            const crawlAssetMessages: ConversationMessage[] = design.imageUrls.map((url, imageIndex) => ({
               author: "agent" as const,
               message: `Fetched visual reference ${imageIndex + 1}.`,
               messageType: "building" as const,
               createdAt: new Date().toISOString(),
               files: [{
-                name: asset.role === "screenshot" ? "reference-page-screenshot.png" : `reference-asset-${imageIndex + 1}`,
-                url: asset.url,
+                name: imageIndex === 0 ? "reference-page-screenshot.png" : `reference-asset-${imageIndex + 1}`,
+                url,
                 imageDescription: `Firecrawl visual reference ${imageIndex + 1} from ${design.sourceUrl}`,
-                mimeType: asset.contentType || "image/unknown",
               }],
               generationEvent: {
                 type: "crawl_asset_received" as const,
                 status: "completed" as const,
-                assetUrl: asset.url,
+                assetUrl: url,
                 sourceUrl: design.sourceUrl,
                 source: "crawl" as const,
               },
@@ -821,7 +802,6 @@ export const localAgentEngine = {
             referenceFailurePhase = "vision";
 
             const visualAnalysis = await runReferenceAnalysis(design);
-            checkCancelled();
 
             const afterVision = localProjectStore.getRecord(projectId);
             const visualMessages: ConversationMessage[] = [{
@@ -841,7 +821,6 @@ export const localAgentEngine = {
             });
             userPromptContent = `${userPromptContent}\n\n${visualAnalysis.implementationContext}`;
           } catch (error) {
-            checkCancelled();
             const message = error instanceof Error ? error.message : String(error);
             const diagnostics = error instanceof ReferenceAnalysisError ? error.diagnostics : undefined;
             console.warn(`[ReferenceAnalysis] ${JSON.stringify({
@@ -882,7 +861,6 @@ export const localAgentEngine = {
         // explicit CSS/SVG fallback instead of blocking generation.
         try {
           const imageryContext = await resolvePexelsImagery(prompt);
-          checkCancelled();
           if (imageryContext) userPromptContent = `${userPromptContent}\n\n${imageryContext}`;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -940,7 +918,6 @@ export const localAgentEngine = {
         const routerResult = await multiModelRouter.complete(
           messages,
           (statusMsg) => {
-            if (controller.signal.aborted) return;
             const currentRec = localProjectStore.getRecord(projectId);
             const switchMsg: ConversationMessage = {
               author: "agent",
@@ -953,9 +930,8 @@ export const localAgentEngine = {
               conversation: [...(currentRec?.conversation || []), switchMsg],
             });
           },
-          { perProviderTimeoutMs: 240_000, totalTimeoutMs: 360_000, onlyProviderId: providers[0]?.id || "above-glm53", signal: controller.signal, requestLabel: "code_generation" }
+          { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000 }
         );
-        checkCancelled();
 
         const content = routerResult.text;
         let usedProviderId = routerResult.providerId;
@@ -1016,13 +992,11 @@ export const localAgentEngine = {
               ],
               () => {},
               {
-                onlyProviderId: providers[0]?.id || "above-glm53",
-                signal: controller.signal,
-                perProviderTimeoutMs: 180_000,
-                totalTimeoutMs: 270_000,
+                deprioritizeProviderId: usedProviderId,
+                perProviderTimeoutMs: 120_000,
+                totalTimeoutMs: 210_000,
               }
             );
-            checkCancelled();
             const retryFiles = extractFilesFromMarkdown(retryResult.text);
             postProcessGeneratedFiles(retryFiles);
             const mergedActions = mergeGeneratedActions(
@@ -1048,7 +1022,6 @@ export const localAgentEngine = {
               console.log(`[localAgentEngine] Static correction succeeded with ${retryFiles.length} replacement files`);
             }
           } catch (retryError) {
-            checkCancelled();
             console.error(`[localAgentEngine] Static correction request failed:`, retryError);
             break;
           }
@@ -1065,7 +1038,6 @@ export const localAgentEngine = {
         const newMessages: ConversationMessage[] = [...(currentRec?.conversation || [])];
 
         for (const file of files) {
-          checkCancelled();
           const existedBeforeWrite = Boolean(localFileManager.getContent(projectId, file.path));
           let fileContent = file.content;
 
@@ -1096,7 +1068,6 @@ export const localAgentEngine = {
         }
 
         for (const delPath of finalDeletions) {
-          checkCancelled();
           if (localFileManager.deleteFile(projectId, delPath)) {
             newMessages.push({
               author: "agent",
@@ -1172,8 +1143,7 @@ export const localAgentEngine = {
           recoveredMessage: string
         ): Promise<void> => {
           let infrastructureError = initialError;
-          const maxInfrastructureRetries = isBuildResourceFailure(initialError) ? 0 : MAX_PREVIEW_INFRASTRUCTURE_RETRIES;
-          for (let attempt = 1; attempt <= maxInfrastructureRetries; attempt += 1) {
+          for (let attempt = 1; attempt <= MAX_PREVIEW_INFRASTRUCTURE_RETRIES; attempt += 1) {
             newMessages.push({
               author: "agent",
               message: `Preview infrastructure failed. Retrying startup (${attempt} of ${MAX_PREVIEW_INFRASTRUCTURE_RETRIES}) without changing your source...`,
@@ -1182,9 +1152,7 @@ export const localAgentEngine = {
             });
             localProjectStore.update(projectId, { conversation: newMessages, serverStatus: "Starting" });
             try {
-              checkCancelled();
-              const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
-              checkCancelled();
+              const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
               newMessages.push({
                 author: "agent",
                 message: "Validation and preview startup succeeded after infrastructure recovery.",
@@ -1214,52 +1182,31 @@ export const localAgentEngine = {
               });
               return;
             } catch (retryError) {
-              checkCancelled();
               infrastructureError = retryError;
               console.error(`[localAgentEngine] Preview infrastructure retry ${attempt} failed:`, retryError);
             }
           }
 
-          checkCancelled();
           if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
-          let restoredPreviewUrl = priorDeployment?.previewUrl;
-          if (!restoredPreviewUrl && !isBuildResourceFailure(initialError) && previousWorkspace) {
-            try {
-              restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
-            } catch (restoreError) {
-              checkCancelled();
-              console.error(`[localAgentEngine] Previous preview restore failed after infrastructure error:`, restoreError);
-            }
+          let restoredPreviewUrl: string | undefined;
+          try {
+            restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
+          } catch (restoreError) {
+            console.error(`[localAgentEngine] Previous preview restore failed after infrastructure error:`, restoreError);
           }
-          if (restoredPreviewUrl && priorDeployment) {
-            localProjectStore.update(projectId, {
-              deployment: priorDeployment.deployment,
-              productionProjectUrl: priorDeployment.productionProjectUrl,
-              previewUrl: restoredPreviewUrl,
-              serverStatus: "Active",
-            });
-          }
-          const failureMessage = isBuildResourceFailure(infrastructureError)
-            ? "The sandbox ran out of memory during the production build (exit 137). The generated source was not marked successful; a larger build sandbox is required."
-            : `Preview infrastructure could not validate the application: ${infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError)}`;
           newMessages.push({
             author: "agent",
-            message: failureMessage,
-            messageType: "building",
+            message: restoredPreviewUrl
+              ? "Preview infrastructure remained unavailable for the new build, so the previous working version was restored."
+              : `Preview infrastructure remained unavailable and the previous preview could not be restored: ${infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError)}`,
+            messageType: "error",
             createdAt: new Date().toISOString(),
             generationEvent: {
               type: "preview_failed",
               status: "failed",
               source: "infrastructure",
-              error: failureMessage,
+              error: infrastructureError instanceof Error ? infrastructureError.message : String(infrastructureError),
             },
-          });
-          newMessages.push({
-            author: "agent",
-            message: restoredPreviewUrl ? `${failureMessage} The previous validated preview remains available.` : failureMessage,
-            messageType: "error",
-            createdAt: new Date().toISOString(),
-            generationEvent: { type: "generation_failed", status: "failed", source: "infrastructure", error: failureMessage },
           });
           localProjectStore.update(projectId, {
             status: "done",
@@ -1272,9 +1219,7 @@ export const localAgentEngine = {
         // Compile before success is shown. This is the reliability boundary that
         // prevents a model response from becoming a broken user-facing preview.
         try {
-          checkCancelled();
-          const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
-          checkCancelled();
+          const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
           console.log(`[localAgentEngine] Disposable build passed and persistent preview deployed for ${projectId}`);
 
           newMessages.push({
@@ -1313,7 +1258,6 @@ export const localAgentEngine = {
             serverStatus: "Active",
           });
         } catch (sandboxErr) {
-          checkCancelled();
           console.error(`[localAgentEngine] Sandbox startup failed:`, sandboxErr);
 
           // Provisioning, persistence, dependency installation and preview
@@ -1331,7 +1275,6 @@ export const localAgentEngine = {
           let repaired = false;
 
           for (let attempt = 1; attempt <= MAX_BUILD_REPAIR_ATTEMPTS; attempt += 1) {
-            checkCancelled();
             const strategy = BUILD_REPAIR_STRATEGIES[attempt - 1];
             const buildError = repairError instanceof Error ? repairError.message : String(repairError);
             newMessages.push({
@@ -1353,13 +1296,11 @@ export const localAgentEngine = {
                 ],
                 () => undefined,
                 {
-                  onlyProviderId: providers[0]?.id || "above-glm53",
-                  signal: controller.signal,
-                  perProviderTimeoutMs: 180_000,
-                  totalTimeoutMs: 270_000,
+                  deprioritizeProviderId: usedProviderId,
+                  perProviderTimeoutMs: 120_000,
+                  totalTimeoutMs: 210_000,
                 }
               );
-              checkCancelled();
               const repairFiles = extractFilesFromMarkdown(repairResult.text);
               postProcessGeneratedFiles(repairFiles);
               const repairDeletions = new Set(
@@ -1383,7 +1324,6 @@ export const localAgentEngine = {
               );
 
               for (const file of repairFiles) {
-                checkCancelled();
                 const existedBeforeRepair = Boolean(localFileManager.getContent(projectId, file.path));
                 let fileContent = file.content;
                 if (file.path.endsWith(".css")) fileContent = sanitizeOrphanedCssProperties(stripGeneratedApplyRules(fileContent));
@@ -1413,8 +1353,7 @@ export const localAgentEngine = {
 
               let previewUrl: string;
               try {
-                previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
-                checkCancelled();
+                previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
               } catch (deploymentError) {
                 if (isSourceBuildFailure(deploymentError)) throw deploymentError;
                 console.error(`[localAgentEngine] Repair attempt ${attempt} reached preview infrastructure failure:`, deploymentError);
@@ -1455,21 +1394,18 @@ export const localAgentEngine = {
               repaired = true;
               break;
             } catch (attemptError) {
-              checkCancelled();
               repairError = attemptError;
               console.error(`[localAgentEngine] Repair attempt ${attempt} failed:`, attemptError);
             }
           }
 
           if (!repaired) {
-            checkCancelled();
             if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
 
             let restoredPreviewUrl: string | undefined;
             try {
-              restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
+              restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
             } catch (restoreError) {
-              checkCancelled();
               console.error(`[localAgentEngine] Previous preview restore failed:`, restoreError);
             }
 
@@ -1496,21 +1432,11 @@ export const localAgentEngine = {
           }
         }
       } catch (err: any) {
-        if (controller.signal.aborted || err instanceof GenerationCancelledError || localProjectStore.getRecord(projectId)?.cancellationRequestedAt) {
-          if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
-          if (priorDeployment) localProjectStore.update(projectId, {
-            deployment: priorDeployment.deployment,
-            previewUrl: priorDeployment.previewUrl,
-            productionProjectUrl: priorDeployment.productionProjectUrl,
-            serverStatus: "Active",
-          });
-          return;
-        }
         console.error("[localAgentEngine error]", err);
         if (previousWorkspace) restoreWorkspace(projectId, previousWorkspace);
         let restoredPreviewUrl: string | undefined;
         try {
-          restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, signal: controller.signal });
+          restoredPreviewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
         } catch (restoreError) {
           console.error("[localAgentEngine] Could not restore previous preview:", restoreError);
         }
@@ -1541,41 +1467,10 @@ export const localAgentEngine = {
       if (sharedAgentRunState.runs.get(projectId) === run) {
         sharedAgentRunState.runs.delete(projectId);
       }
-      if (sharedAgentRunState.controllers.get(projectId)?.generationId === generationId) sharedAgentRunState.controllers.delete(projectId);
       void localProjectStore.flush(projectId).catch((error) => {
         console.error(`[localAgentEngine] Final project persistence failed for ${projectId}:`, error);
       });
     };
     void run.then(clearRun, clearRun);
-  },
-
-  async cancelPrompt(projectId: string, generationId?: string): Promise<boolean> {
-    const record = localProjectStore.getRecord(projectId);
-    const currentGenerationId = record?.activeGenerationId;
-    if (!record || record.status !== "init" || !currentGenerationId ||
-        (generationId && generationId !== currentGenerationId)) return false;
-    const currentRun = sharedAgentRunState.controllers.get(projectId);
-    if (currentRun?.generationId !== currentGenerationId) return false;
-    localProjectStore.update(projectId, { cancellationRequestedAt: new Date().toISOString() });
-    currentRun.controller.abort(new GenerationCancelledError());
-    await e2bSandboxManager.cancelBuild(projectId);
-    const latest = localProjectStore.getRecord(projectId);
-    if (latest?.activeGenerationId !== currentGenerationId) return false;
-    localProjectStore.update(projectId, {
-      status: "done",
-      conversation: [...latest.conversation, {
-        author: "agent",
-        message: "Generation stopped. No further files, build, or preview will be started.",
-        messageType: "finished",
-        createdAt: new Date().toISOString(),
-        generationEvent: { type: "generation_cancelled", status: "cancelled", generationId: currentGenerationId },
-      }],
-    });
-    await localProjectStore.flush(projectId);
-    // Wait for the aborted worker to restore its previous source before the UI
-    // confirms Stop or allows another generation to enter this workspace.
-    await sharedAgentRunState.runs.get(projectId);
-    await localProjectStore.flush(projectId);
-    return true;
   },
 };

@@ -97,9 +97,9 @@ Create a `.env.local` file in the project root:
 ORCHESTRATOR_MODE=local
 SANDBOX_PROVIDER=e2b
 
-# AI Engine configuration:
-ABOVE_API_KEY=sk-gw-a5f52c91f5de63ab96868e83cea9d61760c9b56b0db0369d
+# Gemini is primary; Telnyx GLM-5.3-Flash is the automatic fallback:
 GEMINI_API_KEY=your_gemini_api_key
+TELNYX_API_KEY=your_telnyx_api_key
 
 # Fast chat and planning tier:
 GROQ_API_KEY=your_groq_api_key
@@ -133,13 +133,11 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | --- | :---: | --- |
 | `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
-| `ABOVE_API_KEY` | 🟩 Recommended | Above.dev API key for GLM 5.3 Flash code generation & planning. |
 | `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
-| `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key (legacy fallback for GLM-5.3-Flash). |
+| `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
 | `GROQ_API_KEY` | ⬜ Optional | Primary fast provider for chat, implementation planning, and plan refinement. |
 | `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
-| `E2B_BUILD_TEMPLATE` | ⬜ Optional | Existing E2B template ID/name sized for memory-heavy production builds; the default is `base`. An exit-137 memory kill requires a larger provisioned template, not model-generated source repairs. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
 | `PEXELS_API_KEY` | ⬜ Image prompts | Supplies licensed, theme-specific image candidates to image-forward generations; absent/failed searches use designed CSS/SVG fallbacks. |
 | `SUPABASE_DATABASE_URL` | ✅ Local orchestrator | Supabase PostgreSQL storage for durable metadata, generated source, and compiled preview artifacts. |

@@ -213,14 +213,11 @@ async function persistSnapshot(
   pool: Pool,
   record: LocalProjectRecord,
   kind: "source" | "deployment",
-  files: PersistedFile[],
-  signal?: AbortSignal
+  files: PersistedFile[]
 ): Promise<void> {
-  signal?.throwIfAborted();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    signal?.throwIfAborted();
     const ownerRes = await client.query(
       "SELECT tenant_id FROM public.builder_projects WHERE project_id = $1 LIMIT 1",
       [record.projectId]
@@ -250,7 +247,6 @@ async function persistSnapshot(
     );
 
     for (const file of files) {
-      signal?.throwIfAborted();
       await client.query(
         `INSERT INTO public.builder_project_files
          (project_id, tenant_id, kind, path, content, updated_at)
@@ -259,9 +255,6 @@ async function persistSnapshot(
       );
     }
 
-    // Cancellation before commit must roll back the entire deployment rather
-    // than replace the previous working artifact with a stopped generation.
-    signal?.throwIfAborted();
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -334,11 +327,11 @@ export const durableProjectStore = {
     await persistSnapshot(pool, record, "source", files);
   },
 
-  async saveDeployment(record: LocalProjectRecord, files: PersistedFile[], signal?: AbortSignal): Promise<void> {
+  async saveDeployment(record: LocalProjectRecord, files: PersistedFile[]): Promise<void> {
     if (files.length === 0) throw new Error("The successful build produced no deployment files");
     const pool = await ensureSchema();
     if (!pool) return;
-    await persistSnapshot(pool, record, "deployment", files, signal);
+    await persistSnapshot(pool, record, "deployment", files);
   },
 
   async restoreSource(projectId: string, tenantId: string, workspaceDir: string): Promise<number> {

@@ -66,10 +66,10 @@ const CHAT_PHRASES: RegExp[] = [
   /^(help|what can you do|what do you do)[\s!?.]*$/,
 ];
 
-const BUILD_ACTION = /\b(build|create|make|develop|design|generate|recreate|clone|implement|add|change|remove|update|fix|replace|redesign|adjust|modify|tweak|refine|resize|restyle|enlarge|darken|lighten|increase|decrease|rearrange|rename)\b/i;
+const BUILD_ACTION = /\b(build|create|make|develop|design|generate|recreate|clone|implement|add|change|remove|update|fix|replace|redesign)\b/i;
 const APP_SUBJECT = /\b(app|application|website|site|page|landing page|dashboard|portal|platform|store|shop|saas|crm|portfolio|blog|navbar|header|hero|section|form|auth|login|checkout|database)\b/i;
 const QUESTION_START = /^(what|how|why|when|where|who|which|whose|whom|can you|could you|would you|should|do you|is there|is it|are there|tell me|explain)\b/i;
-const EXPLANATORY_QUESTION_START = /^(?:(?:what|how|why|when|where|who)\b|(?:can|could|would) you (?:please )?(?:explain|describe|compare|clarify|tell me)\b|please (?:explain|describe|compare|clarify)\b)/i;
+const EXPLANATORY_QUESTION_START = /^(what|how|why|when|where|who)\b/i;
 const IMPLICIT_EDIT = /\b(should|needs?|must|want|prefer|hate|(?:do not|don't) like|too (?:big|small|dark|light|busy|plain)|more|less|bigger|smaller|different|wrong|broken)\b/i;
 const DOUBT_KEYWORDS = /\b(doubt|doubts|confused|not sure|wondering|clarify|clarification|explain|meaning|question|questions|difference between|how to|can I|can we|should I)\b/i;
 const PLATFORM_CAPABILITY_QUESTION = /^(?:can|could|would)\s+(?:bigbag|this platform|the platform)\b/i;
@@ -86,7 +86,6 @@ export function isQuestionOrDoubt(message: string): boolean {
 
 function isActiveEditRequest(message: string): boolean {
   if (EXPLANATORY_QUESTION_START.test(message)) return false;
-  if (/^(?:(?:can|could|should|would) i|is it possible for me to)\b/i.test(message)) return false;
   if (BUILD_ACTION.test(message)) return true;
   return APP_SUBJECT.test(message) && IMPLICIT_EDIT.test(message);
 }
@@ -130,7 +129,6 @@ export function classifyIntent(
   // "Can you build ...?" is a build request despite its grammar. Explanatory
   // questions such as "How can I build ...?" remain chat.
   if (PLATFORM_CAPABILITY_QUESTION.test(norm)) return "chat";
-  if (EXPLANATORY_QUESTION_START.test(norm)) return "chat";
   if (!EXPLANATORY_QUESTION_START.test(norm) && BUILD_ACTION.test(norm)) {
     return "plan";
   }

@@ -73,6 +73,5 @@ test("concrete build requests route to project setup while questions remain chat
 test("customer-visible model identity is always provider-neutral", () => {
   assert.equal(publicModelName("gemini-flash"), "AI");
   assert.equal(publicModelName("telnyx-glm"), "AI");
-  assert.equal(publicModelName("above-glm53"), "AI");
   assert.equal(publicModelName("any-future-provider"), "AI");
 });
