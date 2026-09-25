@@ -17,7 +17,7 @@ CREATE INDEX IF NOT EXISTS builder_projects_tenant_updated
 CREATE TABLE IF NOT EXISTS public.builder_project_files (
   project_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('source', 'preview', 'deployment')),
+  kind TEXT NOT NULL CHECK (kind IN ('source', 'deployment')),
   path TEXT NOT NULL,
   content BYTEA NOT NULL,
   updated_at TEXT NOT NULL,

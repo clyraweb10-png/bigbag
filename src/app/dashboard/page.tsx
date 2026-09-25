@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { SkeletonDashboard } from "@/components/primitives";
-import { DashboardContent } from "@/components/dashboard/DashboardExperience";
+import { DashboardContent } from "../page";
 import { useAuth } from "@/components/auth/AuthProvider";
 
 export default function DashboardPage() {

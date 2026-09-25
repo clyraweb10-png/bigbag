@@ -43,7 +43,7 @@ import { OperationBanner } from "@/components/workspace/OperationBanner";
 import { PublishedModal } from "@/components/workspace/PublishedModal";
 import { useProjectOperation } from "@/components/workspace/use-project-operation";
 import { OPERATION_COPY, OPERATION_PROFILES, shouldAdoptServerRebuild } from "@/lib/project-operation";
-import { getPublishedUrl, getPreviewUrlField } from "@/lib/project-status";
+import { getPublishedHost, getPreviewUrlField } from "@/lib/project-status";
 import { useVisualEditor } from "@/components/workspace/visual-editor/use-visual-editor";
 import { VisualEditorPanel } from "@/components/workspace/visual-editor/VisualEditorPanel";
 import { VisualChangesBar } from "@/components/workspace/visual-editor/VisualChangesBar";
@@ -51,7 +51,6 @@ import { t as translate } from "@/i18n";
 import { approvedBuildInstruction, classifyIntent, inferStageFromConversation } from "@/lib/local-orchestrator/intent-router";
 import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
 import type { ProjectStage } from "@/lib/local-orchestrator/intent-router";
-import { captureProjectScreenshot } from "@/lib/project-screenshot";
 
 // Pick the correct development preview URL following the Totalum API docs:
 // use `developmentUrlFieldToUse` to decide between the live server URL and the
@@ -66,30 +65,6 @@ function getPreviewUrlFromProject(proj: VcaasProject): string | null {
   }
 
   return finalUrl;
-}
-
-/**
- * Absolute URL for Firecrawl screenshot capture.
- * - Cloud mode: the API returns a fully-qualified public URL (e.g. *.totalum.app).
- * - Local mode: `temporalDevelopmentProjectUrl` is `/api/preview/[id]/` (relative).
- *   We prepend the app's public origin so Firecrawl can reach it.
- */
-function getRawPreviewUrlForScreenshot(proj: VcaasProject): string | null {
-  const field = proj.developmentUrlFieldToUse || "temporalDevelopmentProjectUrl";
-  const raw = ((proj as unknown as Record<string, unknown>)[field] ?? proj.temporalDevelopmentProjectUrl) as string | null | undefined;
-  if (!raw) return null;
-  // Already an absolute URL — return as-is.
-  if (/^https?:\/\//i.test(raw)) return raw;
-  // Relative path (local mode proxy) — make it absolute using the current origin.
-  try {
-    const origin = typeof window !== "undefined"
-      ? window.location.origin
-      : (process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? "");
-    if (!origin) return null;
-    return `${origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
-  } catch {
-    return null;
-  }
 }
 
 // True when the preview being shown is the cached snapshot (dev server not active).
@@ -276,7 +251,7 @@ export default function WorkspacePage() {
    * same sandbox, so starting one while another runs is refused rather than queued.
    */
   const operation = useProjectOperation(projectId);
-  const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  const [publishedHost, setPublishedHost] = useState<string | null>(null);
   const githubPulling = operation.kind === "githubPull";
   const restoringVersion = operation.kind === "restoreVersion";
 
@@ -453,7 +428,7 @@ export default function WorkspacePage() {
    * Kept in state (not persisted) so a reload re-infers from the conversation.
    */
   const [stage, setStage] = useState<ProjectStage>("idle");
-  /** True while the GLM planner is running — shows a brief "thinking" state. */
+  /** True while the Groq/GLM planner is running — shows a brief "thinking" state. */
   const [plannerRunning, setPlannerRunning] = useState(false);
   /** Model-authored next prompts for the current planning conversation. */
   const [plannerSuggestions, setPlannerSuggestions] = useState<string[]>([]);
@@ -536,7 +511,7 @@ export default function WorkspacePage() {
   }
 
   /**
-   * Call the GLM 5.3 Flash planner for chat, plan generation, and plan refinement.
+   * ⭐ CALL THE GROQ/GLM PLANNER for chat, plan generation, and plan refinement.
    * This is the "fast interaction tier" — ~200ms for chat, ~600ms for a plan.
    * On success, adds the planner response as a ConversationMessage to the list.
    */
@@ -684,19 +659,7 @@ export default function WorkspacePage() {
       if (terminal) {
         setRunStartedAt(null); setExpectedMinutes(null);
         const proj = await fetchProject(); await fetchConversation();
-        if (proj && mountedRef.current) {
-          setPreviewKey((k) => k + 1);
-          // Fire-and-forget: capture a fresh screenshot via Firecrawl and cache it in
-          // localStorage so the dashboard thumbnail stays up to date. We delay a few
-          // seconds to let the preview server finish serving the newly built app.
-          const rawUrl = getRawPreviewUrlForScreenshot(proj);
-          if (rawUrl) {
-            window.setTimeout(() => {
-              void captureProjectScreenshot(projectId, rawUrl);
-            }, 5_000);
-          }
-        }
-        return;
+        if (proj && mountedRef.current) setPreviewKey((k) => k + 1); return;
       }
     }
     pollingRef.current = setTimeout(pollAgentOnce, 10000);
@@ -708,27 +671,24 @@ export default function WorkspacePage() {
     if (res.ok && res.data) {
       if (res.data.status === "success") {
         setDeploying(false);
-        const wasPublishing = operation.isActive("publish");
         operation.end("publish");
-        if (wasPublishing) {
-          toast.success("Published successfully!");
-          const proj = await fetchProject();
-          /**
-           * ⭐ THE ONE OPERATION THAT EARNS A DIALOG. The whole point of publishing is the
-           * ADDRESS — to click, to copy, to send to somebody — and a toast that disappears
-           * in four seconds is the wrong place for it.
-           */
-          const liveUrl = getPublishedUrl(proj, projectId);
-          setPublishedUrl(liveUrl);
-          // Surface the deploy result in the chat and pull the latest conversation.
-          setMessages((prev) => [...prev, {
-            author: "agent",
-            message: `${"🚀 Your app is now live at"} ${liveUrl}`,
-            messageType: "finished",
-            createdAt: new Date().toISOString(),
-          }]);
-          fetchConversation();
-        }
+        toast.success("Published successfully!");
+        const proj = await fetchProject();
+        /**
+         * ⭐ THE ONE OPERATION THAT EARNS A DIALOG. The whole point of publishing is the
+         * ADDRESS — to click, to copy, to send to somebody — and a toast that disappears
+         * in four seconds is the wrong place for it.
+         */
+        setPublishedHost(getPublishedHost(proj, projectId));
+        // Surface the deploy result in the chat and pull the latest conversation.
+        const liveUrl = proj?.productionProjectUrl || project?.productionProjectUrl || `${projectId}.local`;
+        setMessages((prev) => [...prev, {
+          author: "agent",
+          message: `${"🚀 Your app is now live at"} https://${liveUrl}`,
+          messageType: "finished",
+          createdAt: new Date().toISOString(),
+        }]);
+        fetchConversation();
         return;
       }
       if (res.data.status === "error") { setDeploying(false); operation.end("publish"); toast.error("Deployment failed"); return; }
@@ -744,10 +704,7 @@ export default function WorkspacePage() {
       setLoading(false);
 
       if (proj?.agentProcessStatus === "init") startAgentPolling();
-      if (proj?.deployment?.status === "deploying" && operation.isActive("publish")) {
-        setDeploying(true);
-        pollDeployOnce();
-      }
+      if (proj?.deployment?.status === "deploying") { setDeploying(true); pollDeployOnce(); }
 
       void Promise.all([fetchGithubStatus(), vcaasApi.rebuild.status(projectId)]).then(([, rebuildStatus]) => {
         if (cancelled || !rebuildStatus) return;
@@ -832,7 +789,7 @@ export default function WorkspacePage() {
      * ⭐ PLANNING TIER ROUTING (local orchestrator only).
      *
      * In local mode, classify the user's intent and route to:
-     *  - "chat" | "plan" | "update_plan" → GLM planner (no code engine)
+     *  - "chat" | "plan" | "update_plan" → Groq/GLM fast tier (no code engine)
      *  - "confirm_build" | "direct_edit" → code engine (existing path)
      *
      * In cloud mode (Totalum API), skip intent routing and always use the code engine.
@@ -1149,17 +1106,6 @@ export default function WorkspacePage() {
       displayPrompt
     );
   }, [loading, project, projectId, sendPromptText]);
-
-  // ─── Starter template: clean up session storage without pre-filling composer ──
-  // The starter template prompt is already displayed as the first user message
-  // in the chat transcript. We keep the composer textarea clean and empty
-  // so the user can easily type their follow-up customization requests.
-  useEffect(() => {
-    if (loading || !project) return;
-    const key = `bigbag:starterTemplate:${projectId}`;
-    try { sessionStorage.removeItem(key); } catch { /* ignore */ }
-  }, [loading, project, projectId]);
-
   /**
    * ═══⭐⭐⭐ THE ONE PLACE A LONG OPERATION FINISHES ═════════════════════════
    *
@@ -1718,21 +1664,24 @@ export default function WorkspacePage() {
           </div>
           {/* RIGHT: preview width */}
           <div className="flex items-center flex-1 min-w-0 gap-2 px-3">
-            <div className={`flex items-center gap-1 shrink-0 p-1 rounded-full border ${btnBorder} bg-card shadow-xs`}>
+            <div className="flex items-center gap-1 shrink-0 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/40 dark:bg-[#121214]/90 backdrop-blur-md shadow-inner">
               {TABS.map((tab, idx) => {
                 const isActive = activeTab === tab.id;
                 return (
-                  <div key={tab.id} className="flex items-center gap-1">
-                    {idx > 0 && (
-                      <div className="w-px h-3.5 bg-border shrink-0" aria-hidden="true" />
+                  <div key={tab.id} className="flex items-center">
+                    {idx === 2 && activeTab !== "code" && (
+                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
+                    )}
+                    {idx === 1 && activeTab === "code" && (
+                      <div className="w-px h-3 bg-white/15 mx-0.5 shrink-0" aria-hidden="true" />
                     )}
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={
                         isActive
-                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-foreground transition-all shrink-0 cursor-pointer"
-                          : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                          ? "flex items-center gap-1.5 h-7 px-3.5 rounded-full text-xs font-semibold transition-all colourless-glass shrink-0 cursor-pointer"
+                          : "h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0 cursor-pointer"
                       }
                       title={tab.label}
                     >
@@ -1748,7 +1697,7 @@ export default function WorkspacePage() {
                 {/* ⭐ Logs open as a dialog from the address bar — the platform's placement. */}
                 <button onClick={() => setLogsOpen(true)} className="p-1 rounded shrink-0 text-muted-foreground hover:text-foreground" title={translate("workspace.logs.title")}><Terminal className="w-3.5 h-3.5" /></button>
                 <div className="w-px h-3.5 bg-border shrink-0" />
-                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0" title={mobilePreview ? "Switch to desktop view" : "Switch to mobile view"}>{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}</button>
+                <button onClick={() => setMobilePreview(!mobilePreview)} className="p-1 rounded text-muted-foreground hover:text-foreground shrink-0">{mobilePreview ? <Smartphone className="w-3.5 h-3.5" /> : <Laptop className="w-3.5 h-3.5" />}</button>
                 <PathPicker
                   projectId={projectId}
                   path={iframePath}
@@ -1944,14 +1893,14 @@ export default function WorkspacePage() {
       */}
       <ServerBlockedDialog reason={blocked.reason} onDismiss={blocked.dismiss} wake={serverWake} />
       <PublishedModal
-        open={publishedUrl !== null}
+        open={publishedHost !== null}
         onOpenChange={open => {
-          if (!open) setPublishedUrl(null);
+          if (!open) setPublishedHost(null);
         }}
-        url={publishedUrl ?? ""}
+        host={publishedHost ?? ""}
         hasCustomDomain={project.customDomain?.status === "active"}
-        onOpenDomain={process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local" ? undefined : () => {
-          setPublishedUrl(null);
+        onOpenDomain={() => {
+          setPublishedHost(null);
           setOpenModal("domain");
         }}
       />

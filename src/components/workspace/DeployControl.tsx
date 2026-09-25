@@ -16,7 +16,7 @@ import { CopyButton, Modal, StatusPill } from "@/components/primitives";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { getDomainProgress } from "@/lib/domain-status";
-import { getPublishedUrl } from "@/lib/project-status";
+import { getPublishedHost } from "@/lib/project-status";
 import { cn } from "@/lib/utils";
 import type { VcaasProject } from "@/lib/vcaas-types";
 import { DomainPendingBadge, DomainProgressCompact } from "./DomainProgress";
@@ -106,22 +106,22 @@ export function DeployControl({
 }: DeployControlProps) {
     const t = useT();
     const [open, setOpen] = React.useState(false);
-    const localMode = process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local";
 
     const isPublished = project?.deployment?.status === "success";
     const domain = project?.customDomain;
     const domainProgress = getDomainProgress(domain);
 
     /**
-     * The address the project serves on once published.
+     * The host the project serves on once published.
      *
-     * ⚠️ SHARED WITH THE JUST-PUBLISHED DIALOG through `getPublishedUrl`. The two
+     * ⚠️ SHARED WITH THE JUST-PUBLISHED DIALOG through `getPublishedHost`. The two
      * screens name the same address seconds apart — "it will be live at X" and then
      * "it is live at X" — so a second copy of this fallback chain is a second chance
      * for them to disagree.
      */
-    const liveUrl = getPublishedUrl(project, projectId);
-    const publishedHost = liveUrl.replace(/^https?:\/\//i, "");
+    const publishedHost = getPublishedHost(project, projectId);
+
+    const liveUrl = `https://${publishedHost}`;
 
     return (
         <>
@@ -270,16 +270,14 @@ export function DeployControl({
                             <Fact icon={<ClockIcon aria-hidden className="size-4" />}>
                                 {t("workspace.deploy.durationNotice")}
                             </Fact>
-                            {!localMode ? (
-                                <Fact icon={<CoinsIcon aria-hidden className="size-4" />}>
-                                    {t("workspace.deploy.costNotice")}
-                                </Fact>
-                            ) : null}
+                            <Fact icon={<CoinsIcon aria-hidden className="size-4" />}>
+                                {t("workspace.deploy.costNotice")}
+                            </Fact>
                         </ul>
                     </section>
 
                     {/* ── Custom domain ─────────────────────────────────────── */}
-                    {!localMode ? <section>
+                    <section>
                         <h3 className="text-2xs text-muted-foreground font-medium tracking-wider uppercase">
                             {t("workspace.deploy.domainSection")}
                         </h3>
@@ -365,7 +363,7 @@ export function DeployControl({
                                 </Button>
                             </div>
                         ) : null}
-                    </section> : null}
+                    </section>
                 </div>
             </Modal>
         </>

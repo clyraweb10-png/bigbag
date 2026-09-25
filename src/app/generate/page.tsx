@@ -24,7 +24,7 @@ import { toast } from "sonner";
 import { t } from "@/i18n";
 import { classifyIntent, type ProjectStage, type UserIntent } from "@/lib/local-orchestrator/intent-router";
 import { readPlannerStream } from "@/lib/local-orchestrator/planner-stream";
-import { SmartQuestionCard, type OnboardingAnswer } from "@/components/generate/SmartQuestionCard";
+import { ProjectOnboardingDialog, type OnboardingAnswer } from "@/components/generate/ProjectOnboardingDialog";
 import {
   EMPTY_PROJECT_CONTEXT,
   mergeProjectContext,
@@ -39,22 +39,12 @@ type DirectBuildRequest = { instruction: string; projectId: string };
 
 const PROJECT_TYPE_QUESTION: OnboardingQuestion = {
   kind: "project_type",
-  title: "What would you like me to build?",
-  description: "Choose the closest match — I\u2019ll only ask for details that genuinely matter.",
-  placeholder: "Describe the kind of project you have in mind\u2026",
+  title: "What would you like me to create?",
+  description: "Choose the closest starting point. I’ll only ask for details that are still missing.",
+  placeholder: "Describe the kind of project you have in mind…",
   optional: true,
   requestProjectName: false,
   paletteChoices: [],
-  allowOther: true,
-  multiline: false,
-  options: [
-    { id: "website", label: "Website or landing page", description: "A public-facing site with sections, content, and a clear visitor action" },
-    { id: "web-app", label: "Web app or tool", description: "An interactive product with forms, dashboards, data, or workflows" },
-    { id: "store", label: "Online store", description: "A product catalog with a shopping experience and optional checkout" },
-    { id: "portfolio-blog", label: "Portfolio or blog", description: "A content-driven site presenting work, writing, or a personal brand" },
-    { id: "dashboard", label: "Dashboard or admin panel", description: "Data views, reports, and controls for internal or customer use" },
-    { id: "saas", label: "SaaS product", description: "A subscription service with accounts, billing, and core product features" },
-  ],
 };
 
 function normalizeId(name: string): string {
@@ -84,12 +74,12 @@ function TypingMessage({ text, active, onComplete }: { text: string; active: boo
   useEffect(() => {
     if (!active || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { setLen(text.length); return; }
     setLen(0);
-    const t = setInterval(() => setLen((c) => Math.min(text.length, c + Math.max(4, Math.ceil(text.length / 30)))), 14);
+    const t = setInterval(() => setLen((c) => Math.min(text.length, c + Math.max(2, Math.ceil(text.length / 180)))), 18);
     return () => clearInterval(t);
   }, [active, text]);
   useEffect(() => {
     if (!active || len < text.length) return;
-    const t = setTimeout(() => onCompleteRef.current(), 80);
+    const t = setTimeout(() => onCompleteRef.current(), 180);
     return () => clearTimeout(t);
   }, [active, text.length, len]);
 
@@ -294,48 +284,6 @@ export default function GeneratePage() {
       return;
     }
 
-    // Natural-language answer: if a question card is visible, treat the composer
-    // message as the answer and fold it into the context instead of starting a
-    // new plan/chat round. The card closes and context continues.
-    if (onboardingQuestion && onboardingOpen) {
-      const next: Message[] = [...messages, { role: "user", content: msg }];
-      setMessages(next);
-      setPrompt("");
-      // Apply the free-text answer to the appropriate context field based on kind
-      const kind = onboardingQuestion.kind;
-      let answerContext: Partial<typeof projectContext> = {};
-      if (kind === "project_type" || kind === "free_text" || kind === "multi_choice" || kind === "yes_no") {
-        // For type questions, set as custom type; for others, extend description
-        if (kind === "project_type") {
-          answerContext = { projectType: "custom", customProjectType: msg };
-        } else {
-          const existing = projectContext.projectDescription;
-          answerContext = {
-            projectDescription: existing ? `${existing}\n\n${msg}` : msg,
-          };
-        }
-      } else if (kind === "project_details") {
-        answerContext = {
-          projectDescription: msg,
-        };
-      } else if (kind === "colour_direction") {
-        answerContext = { colourDirection: msg, customPaletteDirection: msg };
-      } else if (kind === "reference_url") {
-        // Detect if it looks like a URL
-        answerContext = { referenceUrl: msg.startsWith("http") ? msg : null };
-      } else {
-        answerContext = { projectDescription: msg };
-      }
-      const nextContext = mergeProjectContext(EMPTY_PROJECT_CONTEXT, {
-        ...projectContext,
-        ...answerContext,
-        skippedQuestions: projectContext.skippedQuestions,
-      });
-      setProjectContext(nextContext);
-      void requestOnboarding(sourcePrompt, next, nextContext);
-      return;
-    }
-
     const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")?.content;
     const intent = classifyIntent(msg, stage, lastAssistant);
 
@@ -480,35 +428,34 @@ export default function GeneratePage() {
   return (
     <div className="h-[100dvh] overflow-hidden flex flex-col bg-background text-foreground">
       {/* ── Header ── */}
-      <header className="relative z-50 border-b border-border/70 bg-background/90 backdrop-blur-md shrink-0">
-        <div className="mx-auto flex h-11 max-w-4xl items-center justify-between px-3 sm:px-4">
+      <header className="relative z-50 border-b border-border bg-background/92 backdrop-blur-xl shrink-0">
+        <div className="mx-auto flex h-14 max-w-5xl items-center px-4 sm:px-6">
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border/70 bg-card/60 px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground shadow-2xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Back</span>
+            <ArrowLeft className="h-4 w-4" />
+            Back
           </button>
-          <div className="text-center">
-            <h1 className="text-xs font-semibold text-foreground">Build something remarkable</h1>
-            <p className="text-[10px] text-muted-foreground">Ask questions or describe what to build</p>
+          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center hidden sm:block">
+            <h1 className="text-sm font-semibold">Build something remarkable</h1>
+            <p className="text-xs text-muted-foreground">Ask questions or chat</p>
           </div>
-          <div className="w-14" aria-hidden="true" />
         </div>
       </header>
 
       {/* ── Chat area ── */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-3 sm:px-4 py-4 space-y-3.5">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 space-y-6">
           {messages.length === 0 && !plannerRunning && (
-            <div className="flex items-start gap-2.5">
-              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-2xs">
-                <span className="font-mono text-[9px] font-bold">&lt;/&gt;</span>
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/15">
+                <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
               </div>
-              <div className="min-w-0 flex-1 rounded-xl rounded-tl-xs border border-border/70 bg-card/60 px-3.5 py-2.5 text-foreground/85">
-                <div className="text-xs sm:text-sm leading-relaxed">
-                  Hey! I&apos;m your AI assistant. Whether you have a quick question about how bigbag works, need help refining an app idea, or are ready to start building something amazing — I&apos;m here to help. What&apos;s on your mind?
+              <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-background/55 px-4 py-3 text-foreground/80">
+                <div className="text-sm leading-relaxed">
+                  Hey! I&apos;m your bigbag AI assistant. Whether you have a quick question about how bigbag works, need help refining an app idea, or are ready to start building something amazing — I&apos;m here to help you every step of the way. What&apos;s on your mind today?
                 </div>
               </div>
             </div>
@@ -516,18 +463,18 @@ export default function GeneratePage() {
 
           {messages.map((msg, i) =>
             msg.role === "user" ? (
-              <div key={i} className="flex items-end justify-end gap-2">
-                <div className="max-w-[78%] rounded-xl rounded-br-xs border border-border/80 bg-[color:var(--user-bubble)] px-3.5 py-2 text-xs sm:text-sm leading-relaxed text-foreground shadow-2xs">
+              <div key={i} className="flex items-end justify-end gap-2.5">
+                <div className="max-w-[82%] rounded-2xl rounded-br-md border border-border bg-[color:var(--user-bubble)] px-4 py-3 text-sm leading-6 text-foreground shadow-sm">
                   {msg.content}
                 </div>
-                <UserAvatar user={user} className="mb-0.5 h-6 w-6 shrink-0" />
+                <UserAvatar user={user} className="mb-0.5 h-8 w-8 shrink-0" />
               </div>
             ) : (
-              <div key={i} className="flex items-start gap-2.5">
-                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-2xs">
-                  <span className="font-mono text-[9px] font-bold">&lt;/&gt;</span>
+              <div key={i} className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/15">
+                  <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
                 </div>
-                <div className="min-w-0 flex-1 rounded-xl rounded-tl-xs border border-border/70 bg-card/60 px-3.5 py-2.5 text-foreground/85">
+                <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-border bg-background/55 px-4 py-3 text-foreground/80">
                   <TypingMessage
                     text={msg.content}
                     active={typingIndex === i}
@@ -539,57 +486,55 @@ export default function GeneratePage() {
           )}
 
           {(plannerRunning || onboardingRunning) && (
-            <div className="flex items-center gap-2.5 text-xs text-muted-foreground animate-in fade-in duration-200" role="status">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/90 text-primary-foreground shadow-2xs">
-                <span className="font-mono text-[9px] font-bold">&lt;/&gt;</span>
+            <div className="flex items-center gap-3 text-sm text-foreground/65" role="status">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+                <span className="font-mono text-[10px] font-bold">&lt;/&gt;</span>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-card/50 px-3 py-1.5 text-xs text-foreground/85">
-                <Loader2 className="h-3 w-3 animate-spin text-primary" />
-                <span>{onboardingRunning ? "Understanding your project…" : "Thinking…"}</span>
-              </div>
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {onboardingRunning ? "Understanding your project…" : "Thinking…"}
+              </span>
             </div>
           )}
 
           {onboardingQuestion && !onboardingOpen && !onboardingRunning && (
-            <div className="pl-0 sm:pl-9.5">
-              <Button size="sm" variant="outline" className="h-7 text-xs rounded-lg gap-1.5 cursor-pointer" onClick={() => setOnboardingOpen(true)}>
-                <span>Continue project setup</span>
-                <ArrowRight className="h-3.5 w-3.5" />
+            <div className="pl-0 sm:pl-11">
+              <Button variant="outline" onClick={() => setOnboardingOpen(true)}>
+                Continue project setup
+                <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
           )}
 
           {onboardingError && !onboardingQuestion && !onboardingRunning && (
-            <div className="pl-0 sm:pl-9.5">
+            <div className="pl-0 sm:pl-11">
               <Button
-                size="sm"
                 variant="outline"
-                className="h-7 text-xs rounded-lg gap-1.5 cursor-pointer"
                 onClick={() => void requestOnboarding(sourcePrompt, messages, projectContext)}
               >
-                <span>Retry project setup</span>
-                <ArrowRight className="h-3.5 w-3.5" />
+                Retry project setup
+                <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
           )}
 
           {/* Suggestion chips */}
           {suggestions.length > 0 && !plannerRunning && (
-            <section className="pl-0 sm:pl-9.5" aria-labelledby="ideas-heading">
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-foreground/70">
-                <Lightbulb className="h-3 w-3 text-[color:var(--studio-coral)]" />
+            <section className="pl-0 sm:pl-11" aria-labelledby="ideas-heading">
+              <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground/70">
+                <Lightbulb className="h-3.5 w-3.5 text-[color:var(--studio-coral)]" />
                 <h3 id="ideas-heading">Ideas generated for this conversation</h3>
               </div>
-              <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {suggestions.map((s, i) => (
                   <button
                     key={`${i}-${s.slice(0, 8)}`}
                     type="button"
                     onClick={() => { setPrompt(s); setTimeout(() => textareaRef.current?.focus(), 0); }}
-                    className="group flex min-h-8 items-start gap-2 rounded-lg border border-border/70 bg-card/60 px-2.5 py-2 text-left text-xs leading-snug text-foreground/75 transition-colors hover:border-primary/45 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+                    className="group flex min-h-11 items-start gap-2.5 rounded-xl border border-border bg-card px-3 py-2.5 text-left text-xs leading-5 text-foreground/75 transition-colors hover:border-primary/45 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    <span className="mt-0.5 font-mono text-[9px] font-semibold text-primary">{String(i + 1).padStart(2, "0")}</span>
-                    <span className="group-hover:text-foreground line-clamp-2">{s}</span>
+                    <span className="mt-0.5 font-mono text-[10px] font-semibold text-primary">{String(i + 1).padStart(2, "0")}</span>
+                    <span className="group-hover:text-foreground">{s}</span>
                   </button>
                 ))}
               </div>
@@ -601,9 +546,9 @@ export default function GeneratePage() {
       </div>
 
       {/* ── Composer ── */}
-      <div className="shrink-0 border-t border-border/70 bg-background/95 backdrop-blur-md px-3 py-2.5 sm:px-4">
-        <div className="mx-auto max-w-2xl">
-          <SmartQuestionCard
+      <div className="shrink-0 border-t border-border bg-background px-4 py-3 sm:px-6">
+        <div className="mx-auto max-w-3xl">
+          <ProjectOnboardingDialog
             open={onboardingOpen}
             question={onboardingQuestion}
             busy={onboardingRunning}
@@ -611,27 +556,27 @@ export default function GeneratePage() {
             onSubmit={submitOnboardingAnswer}
             onSkip={skipOnboardingQuestion}
           />
-          <div className="rounded-xl bg-card border border-border/80 shadow-2xs focus-within:ring-1 focus-within:ring-ring/50 focus-within:border-primary/60 transition-all flex flex-col justify-between overflow-hidden">
+          <div className="rounded-2xl bg-card dark:bg-[#444444] border border-border/80 dark:border-0 overflow-hidden shadow-xs focus-within:ring-2 focus-within:ring-ring/30 focus-within:border-primary/50 transition-all flex flex-col justify-between">
             <textarea
               ref={textareaRef}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Ask a question, or describe what to build…"
-              className="w-full resize-none bg-transparent px-3.5 pt-2.5 pb-1 text-xs sm:text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground min-h-[44px] max-h-32"
+              className="w-full resize-none bg-transparent p-5 pb-3 text-[15px] leading-7 text-foreground outline-none placeholder:text-muted-foreground min-h-[82px] max-h-40"
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSubmit(); } }}
               onPaste={(e) => { const f = filesFromClipboard(e.clipboardData); if (f.length) { e.preventDefault(); attachLocalFiles(f); } }}
             />
             <AttachmentPreviews
-              className="px-3.5 pb-1.5"
+              className="px-5 pb-2"
               items={attachedFiles.map((f) => ({ name: f.name, file: f.file, type: f.file.type, size: f.file.size }))}
               onRemove={(i) => setAttachedFiles((p) => p.filter((_, j) => j !== i))}
             />
-            <div className="flex items-center justify-between px-2.5 py-1.5 border-t border-border/40 bg-muted/15">
-              <div className="flex items-center gap-1">
-                <label className="cursor-pointer flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded-md hover:bg-muted/70">
+            <div className="flex items-center justify-between px-3 py-3 sm:px-4">
+              <div className="flex items-center gap-1.5">
+                <label className="cursor-pointer flex items-center gap-1.5 text-xs text-[#003399] hover:text-[#002266] dark:text-[#60a5fa] dark:hover:text-[#93c5fd] transition-colors px-2 py-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5">
                   <input type="file" multiple className="hidden" onChange={(e) => { if (e.target.files) { attachLocalFiles(Array.from(e.target.files)); e.target.value = ""; } }} accept="image/*,.pdf,.svg" />
-                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AttachChainIcon className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline font-medium text-[11px]">Attach</span>
+                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AttachChainIcon className="w-4 h-4" />}
+                  <span className="hidden sm:inline font-medium">Attach</span>
                 </label>
                 <FigmaPromptButton
                   onAdd={(text) => setPrompt((p) => p ? `${p}\n\n${text}` : text)}
@@ -647,9 +592,9 @@ export default function GeneratePage() {
                 onClick={() => void handleSubmit()}
                 disabled={(!prompt.trim() && attachedFiles.length === 0) || plannerRunning || onboardingRunning || buildCreating}
                 aria-label="Send"
-                className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-2xs transition-all hover:bg-primary/90 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full colourless-glass shadow-xs transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
-                {plannerRunning || onboardingRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                {plannerRunning || onboardingRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
               </button>
             </div>
           </div>

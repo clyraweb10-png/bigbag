@@ -57,7 +57,7 @@ function StepIcon({ status }: { status: ActivityStep["status"] }) {
  * After completion: collapses to a one-line summary badge.
  *
  * @example
- * // Used by ChatPanel for the GLM planning phase
+ * // Used by ChatPanel for the planning phase (Groq/GLM)
  * <AIActivity steps={planningSteps} isBuilding={isPlannerRunning} />
  */
 export function AIActivity({ steps, isBuilding, outcome = "success", className }: AIActivityProps) {

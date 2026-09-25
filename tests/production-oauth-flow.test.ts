@@ -9,22 +9,8 @@ import {
   resolveAppOrigin,
   safeAuthReturnPath,
 } from "../src/lib/auth-redirect";
-import {
-  configureRuntimeSupabase,
-  getSupabaseAnonKey,
-  getSupabaseClient,
-  getSupabaseUrl,
-} from "../src/lib/supabase";
-import { isQualificationOperator } from "../src/lib/auth-session";
 
 const RENDER_PROD_URL = "https://vibecode-spzy.onrender.com";
-
-test("runtime auth bootstrap preserves the existing Supabase client when credentials are unchanged", () => {
-  const first = getSupabaseClient();
-  assert.ok(first, "Supabase public configuration is required for this test");
-  configureRuntimeSupabase(getSupabaseUrl(), getSupabaseAnonKey());
-  assert.equal(getSupabaseClient(), first);
-});
 
 function setNodeEnv(value: string | undefined) {
   (process.env as Record<string, string | undefined>)["NODE_ENV"] = value;
@@ -111,28 +97,9 @@ test("3. Safe return path validation", () => {
 test("4. Protected page path recognition", () => {
   assert.equal(isProtectedPagePath("/dashboard"), true);
   assert.equal(isProtectedPagePath("/generate"), true);
-  assert.equal(isProtectedPagePath("/qualification"), true);
   assert.equal(isProtectedPagePath("/project/abc"), true);
   assert.equal(isProtectedPagePath("/auth/callback"), false, "/auth/callback must NOT be protected (must allow OAuth exchange)");
   assert.equal(isProtectedPagePath("/login"), false);
-});
-
-test("4b. Qualification evidence is restricted to explicitly enrolled operators", () => {
-  const previousQualificationOperators = process.env.QUALIFICATION_OPERATOR_UIDS;
-  const previousCloudOperators = process.env.VCAAS_OPERATOR_UIDS;
-  try {
-    process.env.QUALIFICATION_OPERATOR_UIDS = "qualification-operator,second-operator";
-    process.env.VCAAS_OPERATOR_UIDS = "cloud-only-operator";
-    assert.equal(isQualificationOperator({ sub: "qualification-operator", exp: Number.MAX_SAFE_INTEGER }), true);
-    assert.equal(isQualificationOperator({ sub: "ordinary-user", exp: Number.MAX_SAFE_INTEGER }), false);
-    delete process.env.QUALIFICATION_OPERATOR_UIDS;
-    assert.equal(isQualificationOperator({ sub: "cloud-only-operator", exp: Number.MAX_SAFE_INTEGER }), false);
-  } finally {
-    if (previousQualificationOperators === undefined) delete process.env.QUALIFICATION_OPERATOR_UIDS;
-    else process.env.QUALIFICATION_OPERATOR_UIDS = previousQualificationOperators;
-    if (previousCloudOperators === undefined) delete process.env.VCAAS_OPERATOR_UIDS;
-    else process.env.VCAAS_OPERATOR_UIDS = previousCloudOperators;
-  }
 });
 
 test("5. Live Supabase Google OAuth request construction", async () => {

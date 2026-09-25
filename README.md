@@ -97,8 +97,13 @@ Create a `.env.local` file in the project root:
 ORCHESTRATOR_MODE=local
 SANDBOX_PROVIDER=e2b
 
-# Server-only GLM 5.3 Flash for generation, chat, planning, and visual analysis:
-ABOVE_API_KEY=your_above_dev_api_key
+# Gemini is primary; Telnyx GLM-5.3-Flash is the automatic fallback:
+GEMINI_API_KEY=your_gemini_api_key
+TELNYX_API_KEY=your_telnyx_api_key
+
+# Fast chat and planning tier:
+GROQ_API_KEY=your_groq_api_key
+GLM_API_KEY=your_zhipu_bigmodel_api_key
 
 E2B_API_KEY=your_e2b_api_key
 FIRECRAWL_API_KEY=your_firecrawl_api_key
@@ -126,11 +131,12 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 
 | Variable | Required | What it is |
 | --- | :---: | --- |
-| `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in local orchestrator. |
+| `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
-| `ABOVE_API_KEY` | ✅ Local orchestrator | Server-only above.dev key for `glm-5.3-flash-modal` across generation, chat, planning, and reference analysis. |
-| `ABOVE_BASE_URL` | ⬜ Optional | OpenAI-compatible base URL; defaults to `https://api.above.dev/v1`. |
-| `ABOVE_MODEL` | ⬜ Optional | Above gateway model ID; defaults to `glm-5.3-flash-modal`. Set this if your account exposes GLM 5.3 Flash under a different ID. |
+| `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
+| `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
+| `GROQ_API_KEY` | ⬜ Optional | Primary fast provider for chat, implementation planning, and plan refinement. |
+| `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
 | `E2B_BUILD_TEMPLATE` | ⬜ Optional | Existing E2B template ID/name sized for memory-heavy production builds; the default is `base`. An exit-137 memory kill requires a larger provisioned template, not model-generated source repairs. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
@@ -389,4 +395,3 @@ Built with ❤️ on the [BigBag AI Engine](https://github.com/codewithumesh00-s
 </div>
 
 # bigbag
-# bigbag-

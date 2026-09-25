@@ -22,19 +22,6 @@ async function main() {
     pretendToBeVisual: true,
   });
   const window = dom.window;
-  for (const link of window.document.querySelectorAll('link[rel="stylesheet"][href]')) {
-    const href = link.getAttribute("href") || "";
-    const stylesheetUrl = new URL(href, "http://preview.invalid/");
-    // Optional font and third-party stylesheets do not determine whether our
-    // compiled application can start. Validate only build-owned CSS assets.
-    if (stylesheetUrl.origin !== "http://preview.invalid") continue;
-    const stylesheetPath = path.resolve(root, stylesheetUrl.pathname.replace(/^\/+/, ""));
-    if (!stylesheetPath.startsWith(root + path.sep)) throw new Error("Built preview references an unsafe stylesheet path");
-    const css = fs.readFileSync(stylesheetPath, "utf8");
-    if (!css.trim() || /@tailwind\s+utilities\b/.test(css)) {
-      throw new Error("Built preview stylesheet is empty or Tailwind utilities were not compiled");
-    }
-  }
   window.addEventListener("error", event => errors.push(event.error?.stack || event.message));
   window.addEventListener("unhandledrejection", event => errors.push(event.reason?.stack || String(event.reason)));
   window.matchMedia ||= () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
@@ -86,22 +73,9 @@ async function main() {
     'globalThis.Response = ValidatorResponse;',
     'globalThis.Request = ValidatorRequest;',
     'globalThis.__BIGBAG_WRITE_CAPABILITY__ = "runtime-validation-capability";',
-    'globalThis.__BIGBAG_GUEST_CAPABILITY__ = "runtime-validation-guest";',
-    'let authStorageValue = null;',
     'globalThis.fetch = async (input, init = {}) => {',
     '  const url = new URL(String(input), globalThis.location.href);',
     '  const prefix = "/api/preview/runtime-validation/__bigbag/data/";',
-    '  const authConfig = "/api/preview/runtime-validation/__bigbag/auth/config";',
-    '  const authStorage = "/api/preview/runtime-validation/__bigbag/auth/storage";',
-    '  if (url.origin === globalThis.location.origin && url.pathname === authConfig) {',
-    '    return new ValidatorResponse(JSON.stringify({ data: { url: "https://runtime-validation.supabase.invalid", anonKey: "runtime-validation-anon-key" } }), { status: 200, headers: { "content-type": "application/json" } });',
-    '  }',
-    '  if (url.origin === globalThis.location.origin && url.pathname === authStorage) {',
-    '    const method = String(init.method || "GET").toUpperCase();',
-    '    if (method === "POST") authStorageValue = JSON.parse(String(init.body || "{}")).value;',
-    '    if (method === "DELETE") authStorageValue = null;',
-    '    return new ValidatorResponse(JSON.stringify(method === "GET" ? { value: authStorageValue } : { ok: true }), { status: 200, headers: { "content-type": "application/json" } });',
-    '  }',
     '  if (url.origin !== globalThis.location.origin || !url.pathname.startsWith(prefix)) throw new Error("Runtime validation blocked a non-platform network request");',
     '  const method = String(init.method || "GET").toUpperCase();',
     '  const headers = new ValidatorHeaders(init.headers || {});',
@@ -179,16 +153,10 @@ export async function validateGeneratedRuntime(workspaceDir: string): Promise<vo
     const bubblewrapPath = "/usr/bin/bwrap";
     const prlimitPath = "/usr/bin/prlimit";
     if (!fs.existsSync(bubblewrapPath)) {
-      // Bubblewrap is a Linux-only network-isolation tool. In non-Linux
-      // development environments (Windows, macOS) it is not available; skip the
-      // sandboxed validation step rather than aborting the entire build pipeline.
-      // In production Linux deployments the tool IS present and the full check runs.
-      console.warn("[runtime-validator] Skipping sandboxed runtime validation: bubblewrap (bwrap) is not available on this host");
-      return;
+      throw new Error("Generated-app runtime validation requires Bubblewrap network isolation");
     }
     if (!fs.existsSync(prlimitPath)) {
-      console.warn("[runtime-validator] Skipping sandboxed runtime validation: prlimit is not available on this host");
-      return;
+      throw new Error("Generated-app runtime validation requires an OS memory limiter");
     }
     const scriptPath = path.join(temporaryDirectory, "validate.cjs");
     const moduleRootCandidate = path.join(/* turbopackIgnore: true */ process.cwd(), "node_modules");

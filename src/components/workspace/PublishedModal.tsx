@@ -31,7 +31,7 @@ import { useT } from "@/i18n";
 export function PublishedModal({
     open,
     onOpenChange,
-    url,
+    host,
     /** Opens the custom-domain dialog. Absent ⇒ the row is not offered. */
     onOpenDomain,
     /** `true` when a custom domain is already serving this project. */
@@ -39,12 +39,13 @@ export function PublishedModal({
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    /** Complete public URL, including protocol and any local preview path. */
-    url: string;
+    /** Hostname without a scheme, e.g. `my-app.bigbag.app`. */
+    host: string;
     onOpenDomain?: () => void;
     hasCustomDomain?: boolean;
 }) {
     const t = useT();
+    const url = `https://${host}`;
 
     return (
         <Modal
@@ -87,7 +88,7 @@ export function PublishedModal({
                     </p>
 
                     <div className="mt-2 flex items-start gap-2">
-                        <p className="min-w-0 flex-1 font-mono text-sm break-all">{url.replace(/^https?:\/\//i, "")}</p>
+                        <p className="min-w-0 flex-1 font-mono text-sm break-all">{host}</p>
                         <CopyButton value={url} size="icon" className="shrink-0" />
                     </div>
                 </section>

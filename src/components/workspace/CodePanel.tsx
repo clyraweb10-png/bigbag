@@ -345,34 +345,25 @@ function sortTree(node: TreeNode) {
   for (const c of node.children) if (c.isDir) sortTree(c);
 }
 
-// Pick a lucide icon for a file by extension — VS Code style colours.
+// Pick a lucide icon for a file by extension.
 function iconForFile(path: string) {
   const ext = getExt(path);
   const kind = detectKind(path);
-  // Images: soft pink, binaries: amber
-  if (kind === "image") return <ImageIcon className="w-3.5 h-3.5 text-rose-400 dark:text-rose-400 shrink-0" />;
-  if (kind === "binary") return <FileType2 className="w-3.5 h-3.5 text-amber-400 dark:text-amber-400 shrink-0" />;
+  if (kind === "image") return <ImageIcon className="w-3.5 h-3.5 text-pink-500 shrink-0" />;
+  if (kind === "binary") return <FileType2 className="w-3.5 h-3.5 text-amber-500 shrink-0" />;
   switch (ext) {
-    // React/JSX files → teal (like VS Code with a React icon theme)
-    case "tsx": case "jsx":
-      return <FileCode2 className="w-3.5 h-3.5 text-cyan-400 dark:text-cyan-400 shrink-0" />;
-    // Plain TS/JS → steel blue
-    case "ts": case "cts": case "mts":
-      return <FileCode2 className="w-3.5 h-3.5 text-blue-400 dark:text-blue-400 shrink-0" />;
-    case "js": case "mjs": case "cjs":
-      return <FileCode2 className="w-3.5 h-3.5 text-yellow-400 dark:text-yellow-400 shrink-0" />;
+    case "ts": case "tsx": case "js": case "jsx": case "mjs": case "cjs": case "cts": case "mts":
+      return <FileCode2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />;
     case "json":
-      return <FileJson className="w-3.5 h-3.5 text-yellow-500 dark:text-yellow-400 shrink-0" />;
+      return <FileJson className="w-3.5 h-3.5 text-yellow-500 shrink-0" />;
     case "md": case "mdx": case "txt":
-      return <FileText className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 shrink-0" />;
-    // CSS family → purple/violet
+      return <FileText className="w-3.5 h-3.5 text-gray-400 shrink-0" />;
     case "css": case "scss": case "less":
-      return <FileCode2 className="w-3.5 h-3.5 text-violet-400 dark:text-violet-400 shrink-0" />;
-    // Markup → orange
+      return <FileCode2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />;
     case "html": case "htm": case "xml":
-      return <FileCode2 className="w-3.5 h-3.5 text-orange-400 dark:text-orange-400 shrink-0" />;
+      return <FileCode2 className="w-3.5 h-3.5 text-orange-500 shrink-0" />;
     default:
-      return <FileIcon className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500 shrink-0" />;
+      return <FileIcon className="w-3.5 h-3.5 text-gray-400 shrink-0" />;
   }
 }
 
@@ -393,7 +384,7 @@ function TreeRow({
   onSelect: (path: string) => void;
 }) {
   const isOpen = expanded.has(node.path);
-  const pad = 6 + depth * 12;
+  const pad = 8 + depth * 12;
 
   if (node.isDir) {
     return (
@@ -401,17 +392,17 @@ function TreeRow({
         <button
           onClick={() => toggle(node.path)}
           style={{ paddingLeft: pad }}
-          className="w-full flex items-center gap-1 pr-2 py-[3px] text-[12.5px] text-gray-700 dark:text-gray-300 hover:bg-gray-200/60 dark:hover:bg-[#2a2d2e] transition-colors group select-none"
+          className="w-full flex items-center gap-1.5 pr-2 py-1 rounded-md text-[13px] text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/70 transition-colors group"
         >
           <ChevronRight
-            className={`w-3.5 h-3.5 text-gray-400 dark:text-gray-500 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
+            className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
           />
           {isOpen ? (
-            <FolderOpen className="w-3.5 h-3.5 text-[#dcb67a] dark:text-[#dcb67a] shrink-0" />
+            <FolderOpen className="w-3.5 h-3.5 text-violet-500 shrink-0" />
           ) : (
-            <Folder className="w-3.5 h-3.5 text-[#dcb67a] dark:text-[#dcb67a] shrink-0" />
+            <Folder className="w-3.5 h-3.5 text-violet-400 shrink-0" />
           )}
-          <span className="truncate leading-none">{node.name}</span>
+          <span className="truncate">{node.name}</span>
         </button>
         {isOpen && (
           <div>
@@ -436,15 +427,15 @@ function TreeRow({
   return (
     <button
       onClick={() => onSelect(node.path)}
-      style={{ paddingLeft: pad + 16 }}
-      className={`w-full flex items-center gap-1.5 pr-2 py-[3px] text-[12.5px] transition-colors select-none ${
+      style={{ paddingLeft: pad + 18 }}
+      className={`w-full flex items-center gap-1.5 pr-2 py-1 rounded-md text-[13px] transition-colors ${
         isSelected
-          ? "bg-[#094771] dark:bg-[#094771] text-white dark:text-white font-normal"
-          : "text-gray-600 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-[#2a2d2e]"
+          ? "bg-violet-100 dark:bg-violet-900/40 text-violet-800 dark:text-violet-200 font-medium"
+          : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800/70"
       }`}
     >
       {iconForFile(node.path)}
-      <span className="truncate leading-none">{node.name}</span>
+      <span className="truncate">{node.name}</span>
     </button>
   );
 }
@@ -920,25 +911,25 @@ export function CodePanel({ projectId, sourceRevision, darkMode, onAskAiEdit, wa
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-gray-200 dark:border-[#3c3c3c] flex items-center gap-2 shrink-0 bg-[#f3f3f3] dark:bg-[#252526]">
-        <FileCode2 className="w-4 h-4 text-blue-500 dark:text-blue-400" />
-        <span className="text-[11px] font-semibold tracking-widest uppercase text-gray-500 dark:text-gray-400">{"Explorer"}</span>
-        <span className="text-[11px] text-gray-400 dark:text-gray-600">· {filesCount} {"files"}</span>
+      <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2 shrink-0">
+        <FileCode2 className="w-4 h-4 text-violet-500" />
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{"Code Explorer"}</span>
+        <span className="text-[11px] text-gray-400">· {filesCount} {"files"}</span>
         <div className="ml-auto flex items-center gap-2">
           {/* Ask-AI-to-edit — only meaningful once a file is open */}
           {selected && onAskAiEdit && (
             <button
               onClick={() => onAskAiEdit(selected)}
               className="flex items-center gap-1.5 h-7.5 px-3.5 rounded-full text-xs font-semibold transition-all neon-glow-magenta shadow-sm cursor-pointer shrink-0"
-              title={"Edit with AI"}
+              title={"Ask AI to edit this file"}
             >
               <AiSparklesIcon className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden md:inline">{"Edit with AI"}</span>
+              <span className="hidden md:inline">{"Ask AI to edit this file"}</span>
             </button>
           )}
           <button
             onClick={() => fetchCode(true)}
-            className="flex items-center gap-1.5 h-7 px-2.5 rounded text-xs font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-[#3c3c3c] hover:bg-gray-100 dark:hover:bg-[#2a2d2e] transition-colors"
+            className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             title={"Refresh"}
           >
             <RefreshCw className="w-3.5 h-3.5" /> {"Refresh"}
@@ -949,16 +940,16 @@ export function CodePanel({ projectId, sourceRevision, darkMode, onAskAiEdit, wa
       {/* Body: tree + viewer */}
       <div className="flex-1 flex min-h-0">
         {/* Tree sidebar */}
-        <div className="w-60 shrink-0 border-r border-gray-200 dark:border-[#3c3c3c] flex flex-col bg-[#f3f3f3] dark:bg-[#252526]">
+        <div className="w-64 shrink-0 border-r border-gray-100 dark:border-gray-800 flex flex-col bg-gray-50/40 dark:bg-gray-900/40">
           {/* Search by file name or content */}
-          <div className="p-2 border-b border-gray-200 dark:border-[#3c3c3c] shrink-0">
+          <div className="p-2 border-b border-gray-100 dark:border-gray-800 shrink-0">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={"Search by file name or content..."}
-                className="w-full h-7 pl-8 pr-7 rounded text-[12px] bg-white dark:bg-[#3c3c3c] border border-gray-300 dark:border-[#5c5c5c] text-gray-700 dark:text-gray-200 placeholder:text-gray-400 dark:placeholder:text-gray-500 outline-none focus:ring-1 focus:ring-blue-400 dark:focus:ring-[#007acc] transition-shadow"
+                className="w-full h-8 pl-8 pr-7 rounded-lg text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 outline-none focus:ring-2 focus:ring-violet-200 dark:focus:ring-violet-900/40 transition-shadow"
               />
               {search && (
                 <button
@@ -971,7 +962,7 @@ export function CodePanel({ projectId, sourceRevision, darkMode, onAskAiEdit, wa
               )}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto py-1">
+          <div className="flex-1 overflow-y-auto py-1.5 px-1.5">
             {tree.children.length === 0 ? (
               <p className="text-xs text-gray-400 p-3">{query ? "No files match your search" : "Failed to load source code"}</p>
             ) : (

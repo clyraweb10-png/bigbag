@@ -1,14 +1,17 @@
-import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals";
-import nextTypescript from "eslint-config-next/typescript";
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
 
-const eslintConfig = defineConfig([
-  ...nextVitals,
-  ...nextTypescript,
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    linterOptions: {
-      reportUnusedDisableDirectives: "off",
-    },
     rules: {
       // Make ESLint very permissive - only catch syntax errors
       "@typescript-eslint/no-unused-vars": "off",
@@ -27,10 +30,6 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-this-alias": "off",
       "@typescript-eslint/ban-types": "off",
       "react-hooks/exhaustive-deps": "off",
-      "react-hooks/set-state-in-effect": "off",
-      "react-hooks/purity": "off",
-      "react-hooks/refs": "off",
-      "react-hooks/immutability": "off",
       "react/no-unescaped-entities": "off",
       "react/display-name": "off",
       "react/jsx-key": "off",
@@ -47,8 +46,7 @@ const eslintConfig = defineConfig([
       "no-empty": "off",
       "no-unreachable": "off"
     }
-  },
-  globalIgnores([".next/**", "build/**", "dist/**", "out/**", "workspaces/**", "data/**", "next-env.d.ts"]),
-]);
+  }
+];
 
 export default eslintConfig;

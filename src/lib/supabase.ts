@@ -1,26 +1,22 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+const DEFAULT_SUPABASE_URL = "https://dgtkizrvagvfnbdkdnfs.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_6rAsAZ251qMCTSBToJH0HA_9CglSc8U";
+
 let adminClient: SupabaseClient | null = null;
 let publicClient: SupabaseClient | null = null;
 let runtimeSupabaseUrl: string | null = null;
 let runtimeSupabaseAnonKey: string | null = null;
 
 export function configureRuntimeSupabase(url?: string | null, anonKey?: string | null): void {
-  const previousUrl = getSupabaseUrl();
-  const previousAnonKey = getSupabaseAnonKey();
   if (url && typeof url === "string") {
     runtimeSupabaseUrl = url.trim();
   }
   if (anonKey && typeof anonKey === "string") {
     runtimeSupabaseAnonKey = anonKey.trim();
   }
-  if (
-    publicClient &&
-    (getSupabaseUrl() !== previousUrl || getSupabaseAnonKey() !== previousAnonKey)
-  ) {
-    // Only replace a live auth client when its effective credentials changed.
-    // Recreating it for the same runtime config duplicates GoTrue listeners and
-    // storage locks during the AuthProvider bootstrap.
+  if (url || anonKey) {
+    // Reset publicClient so it reinitializes with updated credentials
     publicClient = null;
   }
 }
@@ -30,7 +26,7 @@ export function getSupabaseUrl(): string {
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
     runtimeSupabaseUrl ||
-    "";
+    DEFAULT_SUPABASE_URL;
   return (url || "").trim();
 }
 
@@ -39,7 +35,7 @@ export function getSupabaseAnonKey(): string {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
     runtimeSupabaseAnonKey ||
-    "";
+    DEFAULT_SUPABASE_ANON_KEY;
   return (key || "").trim();
 }
 

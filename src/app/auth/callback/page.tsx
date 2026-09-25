@@ -5,9 +5,6 @@ import { getSupabaseClient, configureRuntimeSupabase } from "@/lib/supabase";
 import { BigBagLogo } from "@/components/BigBagLogo";
 import { Loader2 } from "lucide-react";
 import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
-import { extractCleanUserName } from "@/lib/user-name";
-import { establishServerSession } from "@/lib/auth-server-session";
-import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 // The canonical destination after auth.
 // - In production: resolveAppOrigin() returns NEXT_PUBLIC_APP_URL (https://vibecode-spzy.onrender.com)
@@ -16,13 +13,6 @@ function getAuthDestination(searchParams: URLSearchParams): string {
   const next = safeAuthReturnPath(searchParams.get("next"), "");
   if (next) return next;
   try {
-    const starterTarget = sessionStorage.getItem("bigbag:target-starter-template");
-    if (starterTarget) {
-      const parsed = JSON.parse(starterTarget) as { id: string; action?: string };
-      if (parsed.id) {
-        return `/dashboard?tab=starter&template=${parsed.id}${parsed.action ? `&action=${parsed.action}` : ""}`;
-      }
-    }
     const pending = sessionStorage.getItem("bigbag:pending-prompt");
     if (pending) {
       sessionStorage.removeItem("bigbag:pending-prompt");
@@ -34,26 +24,6 @@ function getAuthDestination(searchParams: URLSearchParams): string {
 
 export default function AuthCallbackPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem("bigbag:auth:user-name") || sessionStorage.getItem("bigbag:auth:user-name");
-        if (cached) return extractCleanUserName(cached);
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && (key.startsWith("sb-") || key.includes("auth-token"))) {
-            const item = localStorage.getItem(key);
-            if (item) {
-              const parsed = JSON.parse(item);
-              const raw = parsed?.user?.user_metadata?.full_name || parsed?.user?.user_metadata?.name || parsed?.user?.email;
-              if (raw) return extractCleanUserName(raw);
-            }
-          }
-        }
-      } catch {}
-    }
-    return "";
-  });
 
   useEffect(() => {
     let active = true;
@@ -106,43 +76,33 @@ export default function AuthCallbackPage() {
         //    code_verifier it stored in localStorage during signInWithOAuth.
         const code = searchParams.get("code");
         if (code) {
-          const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
           if (exchangeError) {
             console.warn("Client code exchange error:", exchangeError.message);
             // Don't bail — getSession() below may still have a valid session
             // if an earlier exchange succeeded.
-          } else if (exchangeData?.user) {
-            const name = extractCleanUserName(
-              (exchangeData.user.user_metadata?.full_name as string) ||
-              (exchangeData.user.user_metadata?.name as string) ||
-              exchangeData.user.email
-            );
-            if (name) {
-              setUserName(name);
-              try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
-            }
           }
         }
 
         // 4. Helper: POST the access_token to our server to set the HttpOnly
         //    session cookie, then hard-navigate to the destination.
-        const completeAuth = async (accessToken: string, userHint?: SupabaseUser | null): Promise<boolean> => {
-          if (userHint) {
-            const name = extractCleanUserName(
-              (userHint.user_metadata?.full_name as string) ||
-              (userHint.user_metadata?.name as string) ||
-              userHint.email
-            );
-            if (name) {
-              setUserName(name);
-              try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
-            }
+        const completeAuth = async (accessToken: string): Promise<boolean> => {
+          const res = await fetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken }),
+          });
+          const payload = (await res.json().catch(() => null)) as {
+            ok?: boolean;
+          } | null;
+
+          if (payload?.ok) {
+            const destination = getAuthDestination(searchParams);
+            const origin = resolveAppOrigin();
+            window.location.href = `${origin}${destination}`;
+            return true;
           }
-          await establishServerSession(accessToken);
-          const destination = getAuthDestination(searchParams);
-          const origin = resolveAppOrigin();
-          window.location.href = `${origin}${destination}`;
-          return true;
+          return false;
         };
 
         // 5. Try to get the session immediately (exchange above may have set it)
@@ -150,21 +110,9 @@ export default function AuthCallbackPage() {
           data: { session },
         } = await supabase.auth.getSession();
 
-        if (session?.user) {
-          const name = extractCleanUserName(
-            (session.user.user_metadata?.full_name as string) ||
-            (session.user.user_metadata?.name as string) ||
-            session.user.email
-          );
-          if (name) {
-            setUserName(name);
-            try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
-          }
-        }
-
         if (session?.access_token) {
           if (!active) return;
-          const ok = await completeAuth(session.access_token, session.user);
+          const ok = await completeAuth(session.access_token);
           if (ok) return;
         }
 
@@ -177,19 +125,8 @@ export default function AuthCallbackPage() {
             (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
             currentSession?.access_token
           ) {
-            if (currentSession?.user) {
-              const name = extractCleanUserName(
-                (currentSession.user.user_metadata?.full_name as string) ||
-                (currentSession.user.user_metadata?.name as string) ||
-                currentSession.user.email
-              );
-              if (name) {
-                setUserName(name);
-                try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
-              }
-            }
             subscription.unsubscribe();
-            await completeAuth(currentSession.access_token, currentSession.user);
+            await completeAuth(currentSession.access_token);
           }
         });
 
@@ -238,13 +175,11 @@ export default function AuthCallbackPage() {
         </div>
 
         <h1 className="text-xl font-bold tracking-tight mb-2">
-          {userName ? `Welcome ${userName}` : "Welcome"}
+          Completing sign-in…
         </h1>
-        {errorMessage && (
-          <p className="text-sm text-red-500 dark:text-red-400">
-            {errorMessage}
-          </p>
-        )}
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          {errorMessage || "Securing your workspace session"}
+        </p>
       </div>
     </main>
   );

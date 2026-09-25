@@ -37,9 +37,9 @@ export function BigBagLogo({
     <div className={`inline-flex items-center gap-2 select-none group ${className}`}>
       {/* Code Badge: </> */}
       <div
-        className={`relative ${iconSizeClasses} rounded-lg flex items-center justify-center font-mono font-bold transition-all duration-300 shadow-xs border border-zinc-300 dark:border-white/20 bg-zinc-100 dark:bg-white/10 text-black dark:text-white group-hover:scale-105 group-hover:border-black/40 dark:group-hover:border-white/40 group-hover:shadow-sm`}
+        className={`relative ${iconSizeClasses} rounded-lg flex items-center justify-center font-mono font-bold transition-all duration-300 shadow-xs border border-border/80 dark:border-white/20 bg-secondary/80 dark:bg-white/10 text-foreground dark:text-white group-hover:scale-105 group-hover:border-foreground/40 dark:group-hover:border-white/40 group-hover:shadow-sm`}
         style={{
-          boxShadow: "0 0 12px -3px rgba(0, 0, 0, 0.08)",
+          boxShadow: "0 0 12px -3px rgba(255, 255, 255, 0.2)",
         }}
       >
         <svg
@@ -65,13 +65,13 @@ export function BigBagLogo({
       {/* Brand text */}
       {!hideText && (
         <div className="flex items-center tracking-tight">
-          <span className={`font-bold capitalize text-black dark:text-white transition-colors ${textSizeClasses}`}>
-            Big
+          <span className={`font-bold text-foreground dark:text-white transition-colors ${textSizeClasses}`}>
+            big
           </span>
-          <span className={`font-bold capitalize text-black dark:text-white transition-colors ${textSizeClasses}`}>
-            Bag
+          <span className={`font-bold text-foreground dark:text-white transition-colors ${textSizeClasses}`}>
+            bag
           </span>
-          <span className="w-1.5 h-1.5 rounded-full bg-black dark:bg-white ml-0.5 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-foreground dark:bg-white ml-0.5 animate-pulse" />
         </div>
       )}
     </div>

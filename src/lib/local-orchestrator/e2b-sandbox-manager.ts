@@ -3,17 +3,12 @@ import path from "path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Sandbox } from "e2b";
-import { localProjectStore, persistentPreviewPath, persistentPublishedUrl } from "./project-store";
+import { localProjectStore, persistentPreviewPath, persistentPreviewUrl } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import { GENERATED_RUNTIME_CHECK_SCRIPT } from "./runtime-validator";
-import { probeBuiltPreview, type PreviewReadiness } from "./preview-readiness";
-import { ensureWorkspaceDependencies } from "./dependency-scanner";
-import { isRuntimeOwnedGeneratedPath } from "./generation-validator";
 import {
   durableProjectStore,
-  durablePersistenceConfigured,
-  collectDirectoryFiles,
   requireDurablePersistence,
   type PersistedFile,
 } from "./durable-project-store";
@@ -21,7 +16,7 @@ import {
 const PREVIEW_PORT = 3000;
 const SANDBOX_TIMEOUT_MS = 3_600_000;
 const INSTALL_TIMEOUT_MS = 180_000;
-const BUILD_TIMEOUT_MS = 300_000;
+const BUILD_TIMEOUT_MS = 120_000;
 const IGNORED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
@@ -54,21 +49,12 @@ type StartOptions = {
   /** Re-sync, compile, and restart even when the current preview is healthy. */
   rebuild?: boolean;
   signal?: AbortSignal;
-  /** Set to true only when explicitly publishing to production */
-  isDeploy?: boolean;
 };
 
 type SharedE2BState = {
   activeSandboxes: Map<string, Sandbox>;
   activeUrls: Map<string, string>;
   initializing: Map<string, { promise: Promise<string>; rebuild: boolean; controller?: AbortController }>;
-  activeBuilds?: number;
-  buildWaiters?: Array<{
-    resolve: () => void;
-    reject: (error: unknown) => void;
-    signal?: AbortSignal;
-    onAbort?: () => void;
-  }>;
 };
 
 const stateKey = Symbol.for("bigbag.local-orchestrator.e2b-state");
@@ -77,75 +63,8 @@ const sharedState: SharedE2BState = globalState[stateKey] || {
   activeSandboxes: new Map<string, Sandbox>(),
   activeUrls: new Map<string, string>(),
   initializing: new Map<string, { promise: Promise<string>; rebuild: boolean; controller?: AbortController }>(),
-  activeBuilds: 0,
-  buildWaiters: [],
 };
 globalState[stateKey] = sharedState;
-
-function e2bBuildConcurrency(): number {
-  const configured = Number.parseInt(process.env.E2B_BUILD_CONCURRENCY || "1", 10);
-  return Number.isInteger(configured) && configured > 0 ? Math.min(configured, 10) : 1;
-}
-
-function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
-}
-
-function drainBuildWaiters(): void {
-  const waiters = sharedState.buildWaiters || (sharedState.buildWaiters = []);
-  sharedState.activeBuilds ||= 0;
-  while (sharedState.activeBuilds < e2bBuildConcurrency() && waiters.length > 0) {
-    const waiter = waiters.shift()!;
-    if (waiter.onAbort) waiter.signal?.removeEventListener("abort", waiter.onAbort);
-    if (waiter.signal?.aborted) {
-      waiter.reject(abortReason(waiter.signal));
-      continue;
-    }
-    sharedState.activeBuilds += 1;
-    waiter.resolve();
-  }
-}
-
-async function acquireE2BBuildSlot(signal?: AbortSignal): Promise<() => void> {
-  signal?.throwIfAborted();
-  const waiters = sharedState.buildWaiters || (sharedState.buildWaiters = []);
-  sharedState.activeBuilds ||= 0;
-  if (sharedState.activeBuilds < e2bBuildConcurrency() && waiters.length === 0) {
-    sharedState.activeBuilds += 1;
-  } else {
-    await new Promise<void>((resolve, reject) => {
-      const waiter: NonNullable<SharedE2BState["buildWaiters"]>[number] = { resolve, reject, signal };
-      waiters.push(waiter);
-      if (signal) {
-        waiter.onAbort = () => {
-          const index = waiters.indexOf(waiter);
-          if (index >= 0) waiters.splice(index, 1);
-          reject(abortReason(signal));
-        };
-        signal.addEventListener("abort", waiter.onAbort, { once: true });
-        if (signal.aborted) waiter.onAbort();
-      }
-    });
-  }
-
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    sharedState.activeBuilds = Math.max(0, (sharedState.activeBuilds || 1) - 1);
-    drainBuildWaiters();
-  };
-}
-
-export async function withE2BBuildSlot<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
-  const release = await acquireE2BBuildSlot(signal);
-  try {
-    signal?.throwIfAborted();
-    return await task();
-  } finally {
-    release();
-  }
-}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -174,13 +93,13 @@ class E2BSandboxManager {
   public isE2BEnabled(): boolean {
     return (
       (process.env.SANDBOX_PROVIDER || "local").toLowerCase() === "e2b" &&
-      Boolean(process.env.E2B_API_KEY?.trim())
+      Boolean(process.env.E2B_API_KEY)
     );
   }
 
   public getPreviewUrl(projectId: string): string | null {
     const record = localProjectStore.getRecord(projectId);
-    return record?.previewUrl || (record?.serverStatus === "Active" ? persistentPreviewPath(projectId) : null);
+    return record?.deployment?.status === "success" ? persistentPreviewPath(projectId) : null;
   }
 
   public async syncFile(projectId: string, relativePath: string, content: string): Promise<void> {
@@ -229,8 +148,17 @@ class E2BSandboxManager {
     console.log(`[E2B] Synced ${files.length} source files for ${projectId}`);
   }
 
-  private async previewIsReady(previewUrl: string, signal?: AbortSignal): Promise<PreviewReadiness> {
-    return probeBuiltPreview(previewUrl, { signal });
+  private async previewIsReady(previewUrl: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const response = await fetch(previewUrl, {
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4_000)]) : AbortSignal.timeout(4_000),
+        cache: "no-store",
+      });
+      return response.ok;
+    } catch {
+      signal?.throwIfAborted();
+      return false;
+    }
   }
 
   private async createSandbox(projectId: string, apiKey: string): Promise<Sandbox> {
@@ -284,20 +212,6 @@ class E2BSandboxManager {
 
   private async compileAndStart(projectId: string, sandbox: Sandbox, signal?: AbortSignal): Promise<{ previewUrl: string; files: PersistedFile[] }> {
     signal?.throwIfAborted();
-    const workspaceDir = localProjectStore.getWorkspaceDir(projectId);
-    const generatedSources = this.collectWorkspaceFiles(projectId)
-      .filter((file) => file.path.startsWith("src/") && /\.[cm]?[jt]sx?$/.test(file.path))
-      .map((file) => ({ path: file.path, content: Buffer.from(file.content).toString("utf8") }))
-      .filter((file) => !isRuntimeOwnedGeneratedPath(file.path, file.content));
-    const dependencyChanges = await ensureWorkspaceDependencies(generatedSources, workspaceDir, signal);
-    if (dependencyChanges.added.length || dependencyChanges.installed.length) {
-      await localProjectStore.persistSource(projectId);
-    }
-    signal?.throwIfAborted();
-    // TypeScript needs more heap than the small E2B base VM offers for complex
-    // apps. It parses source without executing it, with no provider secrets in
-    // its environment. The executable build and preview still run in E2B.
-    await localSandboxManager.validateTypes(projectId, signal);
     await this.syncAllWorkspaceFiles(projectId, sandbox);
     signal?.throwIfAborted();
 
@@ -308,6 +222,16 @@ class E2BSandboxManager {
       );
     } catch (error) {
       throw commandFailure("Dependency installation failed", error);
+    }
+    signal?.throwIfAborted();
+
+    // Vite transpiles TypeScript without type-checking. An undeclared runtime
+    // symbol can therefore bundle successfully and crash only in the browser.
+    // Reject that class of failure before a preview can be marked ready.
+    try {
+      await sandbox.commands.run("npm exec tsc -- --noEmit", { timeoutMs: BUILD_TIMEOUT_MS });
+    } catch (error) {
+      throw commandFailure("Generated app failed to compile during type validation", error);
     }
     signal?.throwIfAborted();
 
@@ -350,16 +274,13 @@ class E2BSandboxManager {
     signal?.throwIfAborted();
 
     const previewUrl = `https://${sandbox.getHost(PREVIEW_PORT)}`;
-    let readinessError = "Preview did not answer";
     for (let attempt = 0; attempt < 30; attempt += 1) {
       signal?.throwIfAborted();
-      const readiness = await this.previewIsReady(previewUrl, signal);
-      if (readiness.ok) {
+      if (await this.previewIsReady(previewUrl, signal)) {
         const files = await this.downloadBuild(sandbox);
         signal?.throwIfAborted();
         return { previewUrl, files };
       }
-      readinessError = readiness.error || readinessError;
       await delay(1_000, undefined, { signal });
     }
 
@@ -367,24 +288,18 @@ class E2BSandboxManager {
       .run("tail -n 120 /tmp/bigbag-preview.log 2>/dev/null || true", { timeoutMs: 10_000 })
       .then((result) => boundedLog(result.stdout || result.stderr))
       .catch(() => "No preview logs were available");
-    throw new Error(`Preview server did not become ready: ${readinessError}\n${logs}`);
+    throw new Error(`Preview server did not become ready:\n${logs}`);
   }
 
   public async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
     options.signal?.throwIfAborted();
-    if (process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b" && !process.env.E2B_API_KEY?.trim()) {
-      throw new Error("E2B_API_KEY is required when SANDBOX_PROVIDER=e2b");
-    }
     purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
     localSandboxManager.ensureProjectTemplate(projectId);
 
     if (!this.isE2BEnabled()) {
-      if (options.isDeploy) requireDurablePersistence();
-      if (options.isDeploy) {
-        localProjectStore.update(projectId, {
-          deployment: { status: "deploying", createdAt: new Date().toISOString() },
-        });
-      }
+      localProjectStore.update(projectId, {
+        deployment: { status: "deploying", createdAt: new Date().toISOString() },
+      });
       try {
         if (options.rebuild) {
           await this.stopDevServer(projectId);
@@ -394,39 +309,23 @@ class E2BSandboxManager {
           localSandboxManager.stopDevServer(projectId);
           options.signal.throwIfAborted();
         }
-        if (durablePersistenceConfigured()) {
-          const current = localProjectStore.update(projectId, {});
-          if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
-          await localProjectStore.flush(projectId);
-          const files = collectDirectoryFiles(path.join(localProjectStore.getWorkspaceDir(projectId), "dist"));
-          await durableProjectStore.savePreview(current, files, options.signal);
-          if (options.isDeploy) {
-            await durableProjectStore.saveDeployment(current, files, options.signal);
-          }
-        }
         localProjectStore.update(projectId, {
           previewUrl,
-          serverStatus: "Active",
-          ...(options.isDeploy ? {
-            deployment: {
-              status: "success",
-              createdAt: new Date().toISOString(),
-              versionId: randomUUID(),
-            },
-            productionProjectUrl: persistentPublishedUrl(projectId),
-          } : {}),
+          deployment: {
+            status: "success",
+            createdAt: new Date().toISOString(),
+            versionId: randomUUID(),
+          },
         });
         return previewUrl;
       } catch (error) {
-        if (!options.signal?.aborted && options.isDeploy) {
-          localProjectStore.update(projectId, {
-            deployment: {
-              status: "error",
-              createdAt: new Date().toISOString(),
-              errorMessage: errorText(error),
-            },
-          });
-        }
+        if (!options.signal?.aborted) localProjectStore.update(projectId, {
+          deployment: {
+            status: "error",
+            createdAt: new Date().toISOString(),
+            errorMessage: errorText(error),
+          },
+        });
         throw error;
       }
     }
@@ -444,7 +343,7 @@ class E2BSandboxManager {
         if (this.initializing.get(projectId)?.promise === ongoing.promise) {
           this.initializing.delete(projectId);
         }
-        return this.startDevServer(projectId, { rebuild: true, signal: options.signal, isDeploy: options.isDeploy });
+        return this.startDevServer(projectId, { rebuild: true, signal: options.signal });
       };
       return ongoing.promise.then(rebuildAfterOngoing, rebuildAfterOngoing);
     }
@@ -464,61 +363,50 @@ class E2BSandboxManager {
 
         localProjectStore.update(projectId, {
           serverStatus: "Starting",
-          ...(options.isDeploy ? {
-            deployment: { status: "deploying", createdAt: new Date().toISOString() },
-          } : {}),
+          deployment: { status: "deploying", createdAt: new Date().toISOString() },
         });
         // This is the durability boundary: the complete source is outside E2B
         // before any disposable build worker is created.
         await localProjectStore.persistSource(projectId);
         signal.throwIfAborted();
-        return await withE2BBuildSlot(signal, async () => {
-          const sandbox = await this.createSandbox(projectId, apiKey);
-          if (signal.aborted) {
-            await sandbox.kill().catch(() => undefined);
-            signal.throwIfAborted();
-          }
-          const onCancel = () => { void sandbox.kill().catch(() => undefined); };
-          signal.addEventListener("abort", onCancel, { once: true });
-          try {
-            const build = await this.compileAndStart(projectId, sandbox, signal);
-            signal.throwIfAborted();
-            // Claim a fresh deployment version for every validated build.
-            // Otherwise a retry of the same source has the previous snapshot
-            // timestamp and the durable store correctly rejects it as stale.
-            const current = localProjectStore.update(projectId, {});
-            if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
-            await localProjectStore.flush(projectId);
-            const deploymentFields: Record<string, unknown> = {
-              serverStatus: "Active" as const,
-              previewUrl: persistentPreviewPath(projectId),
-              sandboxId: undefined,
-            };
-            if (options.isDeploy) {
-              deploymentFields.deployment = {
-                status: "success" as const,
-                createdAt: new Date().toISOString(),
-                versionId: randomUUID(),
-              };
-              deploymentFields.productionProjectUrl = persistentPublishedUrl(projectId);
-            }
-            // A follow-up build updates only the editor preview. Publishing
-            // explicitly replaces the independently saved public artifact.
-            await durableProjectStore.savePreview({ ...current, ...deploymentFields }, build.files, signal);
-            if (options.isDeploy) {
-              await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
-            }
-            signal.throwIfAborted();
-            localProjectStore.update(projectId, deploymentFields);
-            await sandbox.kill().catch(() => undefined);
-            this.activeSandboxes.delete(projectId);
-            this.activeUrls.delete(projectId);
-            console.log(`[E2B] Build verified and deployed persistently for ${projectId}`);
-            return persistentPreviewPath(projectId);
-          } finally {
-            signal.removeEventListener("abort", onCancel);
-          }
-        });
+        const sandbox = await this.createSandbox(projectId, apiKey);
+        if (signal.aborted) {
+          await sandbox.kill().catch(() => undefined);
+          signal.throwIfAborted();
+        }
+        const onCancel = () => { void sandbox.kill().catch(() => undefined); };
+        signal.addEventListener("abort", onCancel, { once: true });
+        try {
+          const build = await this.compileAndStart(projectId, sandbox, signal);
+          signal.throwIfAborted();
+          const deployment = {
+            status: "success" as const,
+            createdAt: new Date().toISOString(),
+            versionId: randomUUID(),
+          };
+          const current = localProjectStore.getRecord(projectId);
+          if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
+          const deploymentFields = {
+            serverStatus: "Active" as const,
+            previewUrl: persistentPreviewPath(projectId),
+            productionProjectUrl: persistentPreviewUrl(projectId),
+            sandboxId: undefined,
+            deployment,
+          };
+          // Never advertise a successful preview before the transactional
+          // artifact snapshot commits. An aborted transaction keeps the last
+          // deployed version visible (or keeps this project unready).
+          await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
+          signal.throwIfAborted();
+          localProjectStore.update(projectId, deploymentFields);
+          await sandbox.kill().catch(() => undefined);
+          this.activeSandboxes.delete(projectId);
+          this.activeUrls.delete(projectId);
+          console.log(`[E2B] Build verified and deployed persistently for ${projectId}`);
+          return persistentPreviewPath(projectId);
+        } finally {
+          signal.removeEventListener("abort", onCancel);
+        }
       } catch (error) {
         const sandbox = this.activeSandboxes.get(projectId);
         if (sandbox) await sandbox.kill().catch(() => undefined);
@@ -527,13 +415,11 @@ class E2BSandboxManager {
         if (!signal.aborted) localProjectStore.update(projectId, {
           serverStatus: "Error",
           sandboxId: undefined,
-          ...(options.isDeploy ? {
-            deployment: {
-              status: "error",
-              createdAt: new Date().toISOString(),
-              errorMessage: errorText(error),
-            },
-          } : {}),
+          deployment: {
+            status: "error",
+            createdAt: new Date().toISOString(),
+            errorMessage: errorText(error),
+          },
         });
         throw error;
       }

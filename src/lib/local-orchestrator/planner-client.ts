@@ -1,16 +1,19 @@
 /**
- * Server-only GLM 5.3 Flash client for chat, planning, and plan refinement.
+ * Planner client — calls the GLM / Groq / Gemini fast interaction tier for chat, planning,
+ * and plan refinement. This is the server-side half; the browser calls /api/planner.
+ *
+ * Chat streams through Groq Qwen (up to 50 words) or Telnyx GLM 5.3 Flash
+ * (longer questions). Onboarding/planning use GLM 5.3 Flash; neither route
+ * produces project source code.
  *
  * ⚠️ SERVER ONLY — reads API keys from env; never import from a client component.
  */
 import "server-only";
-import { GLM_53_PROVIDER_ID, glm53Config } from "./ai-provider-config";
-import { providerChatDeltas } from "./provider-chat-stream";
 
 export interface PlannerResult {
   text: string;
   durationMs: number;
-  provider: typeof GLM_53_PROVIDER_ID;
+  provider: "glm-47-flash" | "groq" | "gemini-flash" | "glm-45-flash" | "telnyx-glm";
 }
 
 export type ChatStreamEvent =
@@ -27,11 +30,13 @@ export async function* streamChatResponse(
 ): AsyncGenerator<ChatStreamEvent> {
   const wordCount = userMessage.trim().split(/\s+/).length;
   const short = wordCount <= 50;
-
-  const config = glm53Config();
-  if (!config) throw new Error("GLM 5.3 Flash is not configured. Set ABOVE_API_KEY on the server.");
-  const { model, apiKey, baseUrl } = config;
-  const routingReason = "glm53_chat";
+  const model = short ? process.env.GROQ_MODEL || "qwen/qwen3.8-27b" : process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
+  const apiKey = short ? process.env.GROQ_API_KEY : process.env.TELNYX_API_KEY;
+  const baseUrl = short ? process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1" : process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai";
+  const routingReason = short ? "chat_or_question_at_most_50_words" : "chat_or_question_over_50_words";
+  if (!apiKey || (!short && !/GLM-5\.3-Flash/i.test(model))) {
+    throw new Error(`${short ? "Groq Qwen" : "GLM 5.3 Flash"} chat provider is not configured`);
+  }
   const startedAt = Date.now();
   console.info(`[planner] ${JSON.stringify({ event: "chat_request_started", model, routingReason, wordCount })}`);
   yield { type: "start", model, routingReason };
@@ -42,12 +47,38 @@ export async function* streamChatResponse(
     signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
   });
   if (!response.ok || !response.body) throw new Error(`Chat provider HTTP ${response.status}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
   let responseLength = 0;
   let firstTokenMs = -1;
-  for await (const delta of providerChatDeltas(response)) {
-    if (firstTokenMs < 0) firstTokenMs = Date.now() - startedAt;
-    responseLength += delta.length;
-    yield { type: "delta", text: delta };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      if (done && buffer.trim()) lines.push(buffer);
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+        let delta: string | undefined;
+        try {
+          const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }> };
+          delta = parsed.choices?.[0]?.delta?.content;
+        } catch {
+          continue;
+        }
+        if (!delta) continue;
+        if (firstTokenMs < 0) firstTokenMs = Date.now() - startedAt;
+        responseLength += delta.length;
+        yield { type: "delta", text: delta };
+      }
+      if (done) break;
+    }
+  } finally {
+    reader.releaseLock();
   }
   if (!responseLength) throw new Error("Chat provider returned no response text");
   const durationMs = Date.now() - startedAt;
@@ -64,7 +95,7 @@ interface OpenAIChoice {
   finish_reason?: string | null;
   message?: {
     content?: string | null;
-    // Some GLM-compatible responses place reasoning in this separate field.
+    // GLM-4.7-Flash thinking model: reasoning lives here
     reasoning_content?: string | null;
   };
 }
@@ -103,7 +134,8 @@ async function callOpenAICompat(
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(`Provider returned HTTP ${res.status}`);
+      const body = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
 
     const data = (await res.json()) as OpenAIResponse;
@@ -117,9 +149,6 @@ async function callOpenAICompat(
     if (!content.trim()) {
       throw new Error(choice.finish_reason === "length" ? "Planning output limit: model produced no visible response" : "Planning model returned empty content");
     }
-    if (choice.finish_reason === "length") {
-      throw new Error("Planning output limit: model response was incomplete");
-    }
 
     return content;
   } finally {
@@ -127,22 +156,120 @@ async function callOpenAICompat(
   }
 }
 
-/** Generate a concise plan or refinement with the same GLM 5.3 Flash model as code generation. */
+/**
+ * Call the planner with the given system prompt and user message.
+ * Falls back through GLM-4.7-Flash → Groq → Gemini → glm-4.5-flash.
+ *
+ * @param systemPrompt  One of CHAT_PROMPT, PLANNER_PROMPT, or REFINE_PROMPT.
+ * @param messages      Full conversation history to send (system prompt prepended internally).
+ */
 export async function callPlanner(
   systemPrompt: string,
   messages: OpenAIMessage[],
   options: { groqMaxTokens?: number; onlyGlm53?: boolean } = {}
 ): Promise<PlannerResult> {
-  const config = glm53Config();
-  if (!config) throw new Error("GLM 5.3 Flash is not configured. Set ABOVE_API_KEY on the server.");
-  const startedAt = Date.now();
-  const text = await callOpenAICompat(
-    config.baseUrl,
-    config.apiKey,
-    config.model,
-    [{ role: "system", content: systemPrompt }, ...messages],
-    options.onlyGlm53 ? 4_096 : Math.min(2_048, Math.max(512, options.groqMaxTokens ?? 2_048)),
-    45_000
+  if (options.onlyGlm53) {
+    const apiKey = process.env.TELNYX_API_KEY;
+    const model = process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
+    if (!apiKey || !/GLM-5\.3-Flash/i.test(model)) throw new Error("GLM 5.3 Flash planning provider is not configured");
+    const startedAt = Date.now();
+    const text = await callOpenAICompat(
+      process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai",
+      apiKey, model, [{ role: "system", content: systemPrompt }, ...messages],
+      4_096, 45_000
+    );
+    return { text, durationMs: Date.now() - startedAt, provider: "telnyx-glm" };
+  }
+  const groqApiKey = process.env.GROQ_API_KEY;
+  const groqBaseUrl = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+  const groqModel = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+  const groqMaxTokens = Math.min(
+    950,
+    Math.max(256, parseInt(process.env.GROQ_MAX_TOKENS || "950", 10) || 950)
   );
-  return { text, durationMs: Date.now() - startedAt, provider: GLM_53_PROVIDER_ID };
+
+  const glmApiKey = process.env.GLM_API_KEY;
+  const glmBaseUrl = process.env.GLM_BASE_URL || "https://open.bigmodel.cn/api/paas/v4";
+  const glmModel = process.env.GLM_MODEL || "GLM-4.7-Flash";
+
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const geminiBaseUrl = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai";
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const geminiMaxTokens = Math.min(
+    2_048,
+    Math.max(512, parseInt(process.env.GEMINI_MAX_TOKENS || "2048", 10) || 2_048)
+  );
+
+  const fullMessages: OpenAIMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...messages,
+  ];
+
+  // --- Try GLM-4.7-Flash first for interactive chat and context questions ---
+  if (glmApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(
+        glmBaseUrl,
+        glmApiKey,
+        glmModel,
+        fullMessages,
+        1_500
+      );
+      return { text, durationMs: Date.now() - start, provider: "glm-47-flash" };
+    } catch (err) {
+      console.warn("[planner] Primary interaction provider failed; trying the next provider:", (err as Error).message);
+    }
+  }
+
+  // --- Then Groq ---
+  if (groqApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(
+        groqBaseUrl,
+        groqApiKey,
+        groqModel,
+        fullMessages,
+        Math.min(groqMaxTokens, options.groqMaxTokens ?? groqMaxTokens)
+      );
+      return { text, durationMs: Date.now() - start, provider: "groq" };
+    } catch (err) {
+      console.warn("[planner] Secondary interaction provider failed; trying the next provider:", (err as Error).message);
+    }
+  }
+
+  // --- Then Gemini ---
+  if (geminiApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(
+        geminiBaseUrl,
+        geminiApiKey,
+        geminiModel,
+        fullMessages,
+        geminiMaxTokens,
+        15_000,
+        { reasoning_effort: "none" }
+      );
+      return { text, durationMs: Date.now() - start, provider: "gemini-flash" };
+    } catch (err) {
+      console.warn("[planner] Tertiary interaction provider failed; trying the final provider:", (err as Error).message);
+    }
+  }
+
+  // --- Finish with the non-reasoning GLM fallback when the same endpoint is available ---
+  if (glmApiKey) {
+    try {
+      const start = Date.now();
+      const text = await callOpenAICompat(glmBaseUrl, glmApiKey, "glm-4.5-flash", fullMessages, 1_024);
+      return { text, durationMs: Date.now() - start, provider: "glm-45-flash" };
+    } catch (err) {
+      console.warn("[planner] Final interaction provider failed:", (err as Error).message);
+    }
+  }
+
+  throw new Error(
+    "All planner providers failed. Configure at least one supported interaction provider."
+  );
 }

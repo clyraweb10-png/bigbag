@@ -69,7 +69,7 @@ export async function POST(req: NextRequest): Promise<Response> {
       ].join("\n\n"),
     }];
     try {
-      let result = await callPlanner(ONBOARDING_PROMPT, messages);
+      let result = await callPlanner(ONBOARDING_PROMPT, messages, { onlyGlm53: true });
       let durationMs = result.durationMs;
       let analysis = parseOnboardingOutput(result.text, context, { allowAnsweredQuestion: true });
       if (
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             content: `${answeredKind} is already answered in the structured context. Return corrected JSON that preserves every known fact and either asks one genuinely missing question or returns nextQuestion as null.`,
           }
         );
-        result = await callPlanner(ONBOARDING_PROMPT, messages);
+        result = await callPlanner(ONBOARDING_PROMPT, messages, { onlyGlm53: true });
         durationMs += result.durationMs;
         analysis = parseOnboardingOutput(result.text, analysis.context);
       }
@@ -141,7 +141,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   }
 
   try {
-    const result = await callPlanner(systemPrompt, messages);
+    const result = await callPlanner(systemPrompt, messages, { onlyGlm53: true });
     const plannerOutput = parsePlannerOutput(result.text);
     const response: { ok: true; data: PlannerResponseData } = {
       ok: true,

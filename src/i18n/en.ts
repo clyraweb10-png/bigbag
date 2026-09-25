@@ -4074,7 +4074,7 @@ export const en = {
       fileCount: "{count} files",
       files: "Files",
       breadcrumb: "File path",
-      askAi: "Edit with AI",
+      askAi: "Ask AI to edit",
       askAiPrompt: "In {path}, ",
       download: "Download this file",
       githubConnect: "Sync with GitHub",
@@ -5086,7 +5086,7 @@ export const en = {
     nameTaken: "You already have a project with that name.",
     createdDescription: "Imported project",
     partialCreated:
-      "The project {project} was created, but the import did not finish.",
+      "The project {project} WAS created and has been charged for, but the import did not finish.",
     openIt: "Open it",
     nothingCreated: "No project was created, so nothing is left behind.",
 

@@ -35,31 +35,25 @@ const { normalizePlannerText, parsePlannerOutput } = require("../src/lib/local-o
 const { EMPTY_PROJECT_CONTEXT, mergeProjectContext, parseOnboardingOutput, projectContextForPrompt, questionAlreadyAnswered } = require("../src/lib/local-orchestrator/onboarding-context") as typeof import("../src/lib/local-orchestrator/onboarding-context");
 const { CHAT_PROMPT, PLANNER_PROMPT, REFINE_PROMPT, plannerPromptForIntent } = require("../src/lib/local-orchestrator/planner-prompts") as typeof import("../src/lib/local-orchestrator/planner-prompts");
 const {
-  consumePreviewGuestMutationBudget,
   createPreviewWriteCapability,
   isPreviewInitiatedRequest,
-  openPreviewAuthStorage,
-  sealPreviewAuthStorage,
   verifyPreviewWriteCapability,
 } = require("../src/lib/local-orchestrator/tenant-context") as typeof import("../src/lib/local-orchestrator/tenant-context");
 const {
   appendContinuationChunk,
-  GLM_53_MAX_RETRIES,
+  GEMINI_MAX_RETRIES,
   multiModelRouter,
   publicModelName,
 } = require("../src/lib/local-orchestrator/multi-model-router") as typeof import("../src/lib/local-orchestrator/multi-model-router");
-const { extractDeletionsFromMarkdown, generatedSourcesRequireEndUserAuth, hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, localAgentEngine, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
-const { withE2BBuildSlot } = require("../src/lib/local-orchestrator/e2b-sandbox-manager") as typeof import("../src/lib/local-orchestrator/e2b-sandbox-manager");
+const { hasRealGeneratedSource, isSourceBuildFailure, isBuildResourceFailure, mergeGeneratedActions, postProcessGeneratedFiles, stripGeneratedApplyRules } = require("../src/lib/local-orchestrator/agent-engine") as typeof import("../src/lib/local-orchestrator/agent-engine");
 const {
-  GENERATED_AUTH_BRIDGE_SOURCE,
-  GENERATED_AUTH_CLIENT_SOURCE,
   GENERATED_DB_CLIENT_SOURCE,
   LEGACY_GENERATED_DB_CLIENT_SOURCE,
   legacyStarterLayoutSource,
   legacyStarterPageSource,
   writeStarterTemplate,
 } = require("../src/lib/local-orchestrator/starter-template") as typeof import("../src/lib/local-orchestrator/starter-template");
-const { generationValidationIssues, seedRecordIntent, validationRepairContext } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
+const { generationValidationIssues } = require("../src/lib/local-orchestrator/generation-validator") as typeof import("../src/lib/local-orchestrator/generation-validator");
 const { GENERATED_RUNTIME_CHECK_SCRIPT } = require("../src/lib/local-orchestrator/runtime-validator") as typeof import("../src/lib/local-orchestrator/runtime-validator");
 const { buildPexelsSearchPlan, resolvePexelsImagery } = require("../src/lib/local-orchestrator/pexels-imagery") as typeof import("../src/lib/local-orchestrator/pexels-imagery");
 const { proxy } = require("../src/proxy") as typeof import("../src/proxy");
@@ -150,7 +144,6 @@ test("source and deployment survive sandbox loss while the preview URL stays sta
 
   fs.mkdirSync(path.join(workspace, "public", "uploads"), { recursive: true });
   fs.writeFileSync(path.join(workspace, "public", "uploads", "logo.txt"), "durable-upload");
-  project.lastModifiedAt = new Date(Date.parse(project.lastModifiedAt) + 1_000).toISOString();
   await durableProjectStore.saveSource(project, workspace);
   const upload = await durableProjectStore.readPublicSourceFile(project.projectId, "public/uploads/logo.txt");
   assert.equal(Buffer.from(upload!.content).toString("utf8"), "durable-upload");
@@ -159,7 +152,6 @@ test("source and deployment survive sandbox loss while the preview URL stays sta
   // changes, but routing remains the same project-specific Render URL.
   project.sandboxId = undefined;
   project.deployment.versionId = "build-v2";
-  project.lastModifiedAt = new Date(Date.parse(project.lastModifiedAt) + 1_000).toISOString();
   await durableProjectStore.saveDeployment(project, [
     { path: "index.html", content: Buffer.from("<main>deployed-v2</main>") },
   ]);
@@ -288,84 +280,6 @@ test("a cancelled generation rejects late worker events but keeps ordinary chat 
     assert.equal(localProjectStore.getRecord(id)?.conversation.at(-1)?.message, chat.message);
   } finally {
     localProjectStore.remove(id);
-  }
-});
-
-test("qualification retries can enumerate every preserved project attempt", () => {
-  const base = `attempt-history-${randomUUID().slice(0, 8)}`;
-  const tenantId = randomUUID();
-  const first = localProjectStore.create({ tenantId, projectId: base, description: "First attempt" });
-  const second = localProjectStore.create({ tenantId, projectId: base, description: "Retest" });
-  try {
-    assert.deepEqual(
-      localProjectStore.findRecordsByProjectIdPrefix(base).map((record) => record.projectId),
-      [first.projectId, second.projectId]
-    );
-  } finally {
-    localProjectStore.remove(first.projectId);
-    localProjectStore.remove(second.projectId);
-  }
-});
-
-test("Stop aborts the active provider request and remains terminal", async () => {
-  const originalComplete = multiModelRouter.complete;
-  const originalGetProviders = multiModelRouter.getProviders;
-  const tenantId = randomUUID();
-  const created = localProjectStore.create({
-    tenantId,
-    projectId: `cancel-live-${randomUUID().slice(0, 8)}`,
-    description: "Cancellation provider-abort regression",
-  });
-  const id = created.projectId;
-  let providerAborted = false;
-
-  (multiModelRouter as any).getProviders = () => [{
-    id: "above-glm53",
-    name: "Cancellation test provider",
-    model: "glm-5.3-flash-modal",
-  }];
-  (multiModelRouter as any).complete = async (
-    _messages: unknown,
-    _status: unknown,
-    options: { signal?: AbortSignal } = {}
-  ) => new Promise((_resolve, reject) => {
-    const abort = () => {
-      providerAborted = true;
-      reject(options.signal?.reason || new Error("aborted"));
-    };
-    if (options.signal?.aborted) abort();
-    else options.signal?.addEventListener("abort", abort, { once: true });
-  });
-
-  try {
-    await localAgentEngine.runPrompt(id, "Build an authenticated task app");
-    const deadline = Date.now() + 5_000;
-    while (
-      Date.now() < deadline &&
-      !localProjectStore.getRecord(id)?.conversation.some((message) =>
-        message.generationEvent?.type === "file_generation_started"
-      )
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    const generationId = localProjectStore.getRecord(id)?.activeGenerationId;
-    assert.ok(generationId, "generation did not become active");
-    assert.equal(await localAgentEngine.cancelPrompt(id, generationId), true);
-    assert.equal(providerAborted, true, "provider request was not aborted");
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const record = localProjectStore.getRecord(id);
-    const events = record?.conversation.flatMap((message) => message.generationEvent || []) || [];
-    assert.equal(record?.status, "done");
-    assert.equal(events.filter((event) => event.type === "generation_cancelled").length, 1);
-    assert.equal(events.some((event) => event.type === "generation_completed"), false);
-    assert.equal(events.some((event) => event.type === "preview_ready"), false);
-    assert.equal(await localAgentEngine.cancelPrompt(id, generationId), false);
-  } finally {
-    (multiModelRouter as any).complete = originalComplete;
-    (multiModelRouter as any).getProviders = originalGetProviders;
-    localProjectStore.remove(id);
-    await durableProjectStore.remove(id, tenantId).catch(() => undefined);
   }
 });
 
@@ -508,101 +422,11 @@ test("generated Tailwind CSS cannot break previews with unsupported apply utilit
 
 test("only proven source compilation failures can trigger model-based repair", () => {
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: unexpected token")), true);
-  assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: [deadline_exceeded] the operation timed out because it exceeded timeoutMs")), false);
   assert.equal(isBuildResourceFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), true);
   assert.equal(isSourceBuildFailure(new Error("Generated app failed to compile: Killed\nexit status 137")), false);
   assert.equal(isSourceBuildFailure(new Error("Dependency installation failed: network timeout")), false);
-  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed for icon-package: network timeout")), false);
-  assert.equal(isSourceBuildFailure(new Error("Unsupported generated dependency: icon-package")), true);
-  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code E404\nnpm ERR! 404 '@cairn/sdk@latest' is not in this registry.")), true);
-  assert.equal(isSourceBuildFailure(new Error("Dependency installation failed:\nnpm ERR! code ETARGET\nnpm ERR! No matching version found for package@99.")), true);
   assert.equal(isSourceBuildFailure(new Error("Preview server did not become ready")), false);
   assert.equal(isSourceBuildFailure(new Error("Project persistence is temporarily unavailable")), false);
-});
-
-test("E2B production builds are serialized and queued cancellation is prompt", async () => {
-  const order: string[] = [];
-  let releaseFirst = () => undefined;
-  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-  const first = withE2BBuildSlot(undefined, async () => {
-    order.push("first-start");
-    await firstGate;
-    order.push("first-end");
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  const second = withE2BBuildSlot(undefined, async () => { order.push("second"); });
-  const cancelled = new AbortController();
-  const third = withE2BBuildSlot(cancelled.signal, async () => { order.push("third"); });
-  cancelled.abort(new Error("queued build cancelled"));
-  await assert.rejects(third, /queued build cancelled/);
-  assert.deepEqual(order, ["first-start"]);
-  releaseFirst();
-  await Promise.all([first, second]);
-  assert.deepEqual(order, ["first-start", "first-end", "second"]);
-});
-
-test("E2B build concurrency is configurable without exceeding its capacity", async () => {
-  const previousConcurrency = process.env.E2B_BUILD_CONCURRENCY;
-  process.env.E2B_BUILD_CONCURRENCY = "2";
-  const order: string[] = [];
-  let releaseFirst = () => undefined;
-  let releaseSecond = () => undefined;
-  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-  const secondGate = new Promise<void>((resolve) => { releaseSecond = resolve; });
-  try {
-    const first = withE2BBuildSlot(undefined, async () => { order.push("first"); await firstGate; });
-    const second = withE2BBuildSlot(undefined, async () => { order.push("second"); await secondGate; });
-    const third = withE2BBuildSlot(undefined, async () => { order.push("third"); });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(order, ["first", "second"]);
-    releaseFirst();
-    await first;
-    await third;
-    assert.deepEqual(order, ["first", "second", "third"]);
-    releaseSecond();
-    await second;
-  } finally {
-    if (previousConcurrency === undefined) delete process.env.E2B_BUILD_CONCURRENCY;
-    else process.env.E2B_BUILD_CONCURRENCY = previousConcurrency;
-    releaseFirst();
-    releaseSecond();
-  }
-});
-
-test("generation validation rejects prose-only component files before E2B", () => {
-  const issues = generationValidationIssues([
-    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
-    { path: "src/components/ui/button.tsx", content: `"No custom button is needed"\n(none)` },
-  ]);
-  assert.ok(issues.some((issue) => issue.includes("non-code content in src/components/ui/button.tsx")));
-});
-
-test("generation validation rejects chart dependencies that exceed E2B capacity", () => {
-  const issues = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { LineChart } from "recharts"; export default function App(){ return <LineChart width={320} height={180} data={[]} />; }`,
-  }]);
-  assert.ok(issues.some((issue) => issue.includes("recharts") && issue.includes("sandbox capacity")));
-  assert.equal(generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `export default function App(){ return <svg role="img" aria-label="Trend"><path d="M0 20 L20 5" /></svg>; }`,
-  }]).some((issue) => issue.includes("sandbox capacity")), false);
-});
-
-test("static repair context prioritizes the file named by validation", () => {
-  const context = validationRepairContext([
-    { path: "src/App.tsx", content: "A".repeat(120) },
-    { path: "src/components/Broken.tsx", content: "const broken = <main>repair me</main>;" },
-  ], ["syntax error in src/components/Broken.tsx: '}' expected"], 110);
-
-  assert.match(context, /^### File: src\/components\/Broken\.tsx/);
-  assert.match(context, /repair me/);
-  assert.doesNotMatch(context, /### File: src\/App\.tsx/, "An unrelated file must not be cut off to fit the repair budget");
-  const both = validationRepairContext([
-    { path: "src/App.tsx", content: "export default function App() { return null; }" },
-    { path: "src/components/Broken.tsx", content: "const broken = <main>repair me</main>;" },
-  ], ["syntax error in src/components/Broken.tsx: '}' expected"], 250);
-  assert.ok(both.indexOf("src/components/Broken.tsx") < both.indexOf("src/App.tsx"));
 });
 
 test("runtime-owned model output is discarded without poisoning a valid page", () => {
@@ -639,25 +463,6 @@ test("runtime-owned model output is discarded without poisoning a valid page", (
   }], ["src/lib/db.ts"]), []);
 });
 
-test("generated auth subscriptions normalize an unused provider event to the session-first contract", () => {
-  const files = [{
-    path: "src/App.tsx",
-    content: "export default function App() { auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)); return <main />; }",
-  }];
-  postProcessGeneratedFiles(files);
-  assert.match(files[0].content, /auth\.onAuthStateChange\(\(nextSession\) => setSession\(nextSession\)\)/);
-  assert.doesNotMatch(files[0].content, /_event/);
-});
-
-test("generated auth normalization does not rewrite a raw Supabase client callback", () => {
-  const files = [{
-    path: "src/App.tsx",
-    content: "export default function App() { supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession)); return <main />; }",
-  }];
-  postProcessGeneratedFiles(files);
-  assert.match(files[0].content, /supabase\.auth\.onAuthStateChange\(\(_event, nextSession\) => setSession\(nextSession\)\)/);
-});
-
 test("fresh runtime scaffolding is not misclassified as a follow-up project", () => {
   assert.equal(hasRealGeneratedSource([
     { path: "index.html", content: '<div id="root"></div>' },
@@ -675,10 +480,6 @@ test("fresh runtime scaffolding is not misclassified as a follow-up project", ()
 });
 
 test("generation retries keep only the latest file or deletion action per path", () => {
-  assert.deepEqual(
-    extractDeletionsFromMarkdown("### Delete: src/lib/db.ts\n### Delete: src/lib/auth.ts\n### Delete: src/components/Legacy.tsx"),
-    ["src/components/Legacy.tsx"]
-  );
   const firstRetry = mergeGeneratedActions(
     [
       { path: "src/App.tsx", content: "old app" },
@@ -708,20 +509,6 @@ test("generation retries keep only the latest file or deletion action per path",
     },
   ]);
   assert.deepEqual([...secondRetry.deletions], ["src/components/Legacy.tsx"]);
-
-  const reorderedRetry = mergeGeneratedActions(
-    [
-      { path: "src/App.tsx", content: "old app" },
-      { path: "src/components/Table.tsx", content: "old table" },
-    ],
-    [],
-    [
-      { path: "src/components/Table.tsx", content: "fixed table" },
-      { path: "src/App.tsx", content: "fixed app" },
-    ],
-    []
-  );
-  assert.equal(reorderedRetry.files[0].path, "src/App.tsx");
 });
 
 test("React browser entrypoints retain or recover the createRoot import", () => {
@@ -743,63 +530,6 @@ test("React browser entrypoints retain or recover the createRoot import", () => 
   assert.doesNotMatch(files[1].content, /react-dom\/client/);
 });
 
-test("post-processing places the application entrypoint before secondary files", () => {
-  const files = [
-    { path: "src/components/Card.tsx", content: `export function Card(){ return <div>Card</div>; }` },
-    { path: "src/App.tsx", content: `export default function App(){ return <main>Ready</main>; }` },
-  ];
-  postProcessGeneratedFiles(files);
-  assert.equal(files[0].path, "src/App.tsx");
-  assert.equal(generationValidationIssues(files, [], { requireEntrypointFirst: true }).some((issue) => issue.includes("first generated")), false);
-
-  const duplicateEntrypoints = [
-    { path: "src/app/page.tsx", content: `export default function Page(){ return <main>Page</main>; }` },
-    { path: "src/App.tsx", content: `export default function App(){ return <main>App</main>; }` },
-  ];
-  postProcessGeneratedFiles(duplicateEntrypoints);
-  assert.deepEqual(duplicateEntrypoints.map((file) => file.path), ["src/App.tsx"]);
-});
-
-test("generated typographic punctuation is normalized before source validation", () => {
-  const files = [{
-    path: "src/App.tsx",
-    content: `export default function App(){ return <main>“Ready” — loading…</main>; }`,
-  }];
-  postProcessGeneratedFiles(files);
-  assert.match(files[0].content, />Ready - loading\.\.\.<\/main>/);
-  assert.equal(generationValidationIssues(files).some((issue) => issue.includes("forbidden Unicode")), false);
-});
-
-test("generated apps must use the injected auth client contract", () => {
-  const incompatible = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth";
-export default async function App(){
-  const { data } = await auth.getSession();
-  const { error } = await auth.signIn("person@example.test", "not-a-secret");
-  return <main>{data?.session?.user.email}{error?.message}</main>;
-}`,
-  }]);
-  assert.ok(incompatible.some((issue) => issue.includes("destructures auth.getSession")));
-  assert.ok(incompatible.some((issue) => issue.includes("destructures error from auth.signIn")));
-  const aliasedError = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; export async function login(){ const { error: signInError } = await auth.signIn("person@example.test", "not-a-secret"); return signInError; }`,
-  }]);
-  assert.ok(aliasedError.some((issue) => issue.includes("destructures error from auth.signIn")));
-
-  const compatible = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth";
-export default async function App(){
-  const current = await auth.getSession();
-  try { await auth.signIn("person@example.test", "not-a-secret"); } catch (error) { void error; }
-  return <main>{current?.user.email}</main>;
-}`,
-  }]);
-  assert.equal(compatible.some((issue) => issue.includes("BigBag auth")), false);
-});
-
 test("starter runtime removes the hardcoded page and mounts generated source", () => {
   const workspace = path.join(tempRoot, `runtime-entry-${randomUUID()}`);
   writeStarterTemplate(workspace, "runtime-entry-test");
@@ -813,43 +543,6 @@ test("starter runtime removes the hardcoded page and mounts generated source", (
   const index = fs.readFileSync(path.join(workspace, "index.html"), "utf8");
   assert.match(index, /<div id="root"><\/div>/);
   assert.match(index, /src="\/src\/main\.tsx"/);
-  const viteConfig = fs.readFileSync(path.join(workspace, "vite.config.ts"), "utf8");
-  assert.match(viteConfig, /bigbag-direct-lucide-imports/);
-  assert.match(viteConfig, /__bigbagLucideExistsSync\(modulePath\)/);
-  assert.match(viteConfig, /retainedBindings\.push\(binding\)/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /@bigbag-managed-auth-client/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /clientPromise = null/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /authUnavailable = true/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /registerAuthTokenProvider\(getAuthAccessToken\)/);
-  assert.match(GENERATED_AUTH_BRIDGE_SOURCE, /getPlatformAuthAccessToken/);
-  assert.equal(
-    fs.readFileSync(path.join(workspace, "src/lib/auth-bridge.ts"), "utf8"),
-    GENERATED_AUTH_BRIDGE_SOURCE
-  );
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /AuthChangeEvent/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /callback\.length >= 2/);
-
-  const customAuthWorkspace = path.join(tempRoot, `runtime-custom-auth-${randomUUID()}`);
-  writeStarterTemplate(customAuthWorkspace, "runtime-custom-auth-test");
-  const customAuth = `export const auth = { getSession: async () => null };\n`;
-  fs.writeFileSync(path.join(customAuthWorkspace, "src/lib/auth.ts"), customAuth);
-  writeStarterTemplate(customAuthWorkspace, "runtime-custom-auth-test");
-  assert.equal(fs.readFileSync(path.join(customAuthWorkspace, "src/lib/auth.ts"), "utf8"), customAuth);
-
-  const migratedWorkspace = path.join(tempRoot, `runtime-vite-migration-${randomUUID()}`);
-  writeStarterTemplate(migratedWorkspace, "runtime-vite-migration-test");
-  fs.writeFileSync(
-    path.join(migratedWorkspace, "vite.config.ts"),
-    `import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-const configDir = path.dirname(fileURLToPath(import.meta.url));
-export default defineConfig({ plugins: [react()], resolve: { alias: { "@": path.resolve(configDir, "./src") } } });`
-  );
-  writeStarterTemplate(migratedWorkspace, "runtime-vite-migration-test");
-  const migratedViteConfig = fs.readFileSync(path.join(migratedWorkspace, "vite.config.ts"), "utf8");
-  assert.match(migratedViteConfig, /plugins: \[directLucideImports\(\), react\(\)\],\n\s*build: \{ minify: false }/);
 
   fs.writeFileSync(
     path.join(workspace, "src/App.tsx"),
@@ -1073,195 +766,6 @@ test("generation validation rejects invented durable database methods", () => {
     content: `import db from "@/lib/db"; function run(db: { query: () => void }) { db.query(); } export default function Page(){ return <main />; }`,
   }], ["src/lib/db.ts"]);
   assert.equal(shadowedIssues.some((issue) => issue.includes("invents a database method")), false);
-});
-
-test("generation validation rejects fake browser authentication and exposed server secrets", () => {
-  const clientAuthIssues = generationValidationIssues([
-    {
-      path: "src/App.tsx",
-      content: `export default function App(){ return <main>Sign in</main>; }`,
-    },
-    {
-      path: "src/lib/auth.ts",
-      content: `import db from "@/lib/db";
-const users = db.collection("users");
-async function hashPassword(password: string) { return crypto.subtle.digest("SHA-256", new TextEncoder().encode(password)); }
-export async function signIn(password: string) { const passwordHash = await hashPassword(password); return users.list().then(({ records }) => records.find((user) => user.passwordHash === passwordHash)); }`,
-    },
-    {
-      path: "src/store/session.ts",
-      content: `export const loadSession = () => localStorage.getItem("auth.session.token");`,
-    },
-  ], ["src/lib/db.ts"]);
-  assert.ok(clientAuthIssues.some((issue) => issue.includes("password hashing or comparison")));
-  assert.ok(clientAuthIssues.some((issue) => issue.includes("project CRUD datastore as an authentication system")));
-  assert.ok(clientAuthIssues.some((issue) => issue.includes("browser storage as an authentication authority")));
-
-  const secretIssues = generationValidationIssues([
-    {
-      path: "src/App.tsx",
-      content: `export default function App(){ return <main>{import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY}</main>; }`,
-    },
-    { path: ".env.example", content: "VITE_SUPABASE_SERVICE_ROLE_KEY=" },
-  ]);
-  assert.ok(secretIssues.some((issue) => issue.includes("server-only secret")));
-
-  const ordinaryStorage = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `export default function App(){ localStorage.setItem("theme", "dark"); return <main>Ready</main>; }`,
-  }]);
-  assert.equal(ordinaryStorage.some((issue) => issue.includes("authentication authority")), false);
-  const themeStorageWithAuth = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; localStorage.setItem("theme", "dark"); export const login = () => auth.signIn("person@example.test", "password");`,
-  }]);
-  assert.equal(themeStorageWithAuth.some((issue) => issue.includes("authentication authority")), false);
-
-  const runtimeAuthImport = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; export default function App(){ return <button onClick={() => auth.signOut()}>Sign out</button>; }`,
-  }], ["src/lib/auth.ts"]);
-  assert.equal(runtimeAuthImport.some((issue) => issue.includes("missing local module")), false);
-  assert.ok(generationValidationIssues([{
-    path: "src/lib/auth.ts",
-    content: `export const auth = {};`,
-  }]).some((issue) => issue.includes("runtime-owned file")));
-
-  const narrowEditIssues = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `export default function App(){ return <main className="bg-slate-950">Updated header</main>; }`,
-  }], ["src/lib/auth.ts"], {
-    existingSources: [{
-      path: "src/lib/auth.ts",
-      content: `export const restore = () => sessionStorage.getItem("access_token");`,
-    }],
-  });
-  assert.ok(narrowEditIssues.some((issue) => issue.includes("browser storage as an authentication authority")));
-
-  const inMemoryAuthIssues = generationValidationIssues([
-    { path: "src/App.tsx", content: `export default function App(){ return <main>Sign in</main>; }` },
-    {
-      path: "src/lib/auth.ts",
-      content: `const profiles = new Map<string, { email: string }>(); export async function signUp(email: string) { profiles.set(email, { email }); } export async function signIn(email: string) { return profiles.get(email); }`,
-    },
-  ]);
-  assert.ok(inMemoryAuthIssues.some((issue) => issue.includes("in-memory demo authentication")));
-  const javascriptMapAuthIssues = generationValidationIssues([{
-    path: "src/auth.js",
-    content: `const users = new Map(); export function signIn(email) { return users.get(email); }`,
-  }]);
-  assert.ok(javascriptMapAuthIssues.some((issue) => issue.includes("in-memory demo authentication")));
-  const providerWithUnrelatedMap = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; const filters = new Map(); export const login = () => auth.signIn("person@example.test", "password");`,
-  }]);
-  assert.equal(providerWithUnrelatedMap.some((issue) => issue.includes("in-memory demo authentication")), false);
-
-  const relativeDbCredentialIssues = generationValidationIssues([{
-    path: "src/lib/login.ts",
-    content: `import db from "./db"; const users = db.collection("users"); export const signUp = (password: string) => users.create({ password });`,
-  }]);
-  assert.ok(relativeDbCredentialIssues.some((issue) => issue.includes("CRUD datastore as an authentication system")));
-  const legitimateDbAndAuth = generationValidationIssues([{
-    path: "src/App.tsx",
-    content: `import db from "@/lib/db"; import { auth } from "@/lib/auth"; const tasks = db.collection("tasks"); export async function login(password: string) { await auth.signIn("person@example.test", password); await tasks.create({ title: "Ready" }); }`,
-  }]);
-  assert.equal(legitimateDbAndAuth.some((issue) => issue.includes("CRUD datastore as an authentication system")), false);
-
-  const demoIdentityIssues = generationValidationIssues([
-    { path: "src/App.tsx", content: `export default function App(){ return <main>Jobs</main>; }` },
-    {
-      path: "src/components/IdentityPicker.tsx",
-      content: `import { useState } from "react"; export function IdentityPicker({ onSelect }: { onSelect: (role: string) => void }) { const [role, setRole] = useState("candidate"); return <button onClick={() => { setRole("company"); onSelect(role); }}>Switch identity for this local demo; ownership is client-side</button>; }`,
-    },
-  ]);
-  assert.ok(demoIdentityIssues.some((issue) => issue.includes("local demo identity or role switcher")));
-});
-
-test("generation validation rejects unrequested seed data but permits explicit seed requests", () => {
-  const files = [
-    { path: "src/App.tsx", content: `export default function App(){ return <main>Courses</main>; }` },
-    { path: "src/lib/seed.ts", content: `export const courses = [{ title: "Demo course" }];` },
-  ];
-  assert.ok(generationValidationIssues(files).some((issue) => issue.includes("without an explicit user request")));
-  assert.equal(generationValidationIssues(files, [], { allowSeedData: true }).some((issue) => issue.includes("seed or fixture data")), false);
-  assert.ok(generationValidationIssues([{ path: "src/fixtures.json", content: "[]" }])
-    .some((issue) => issue.includes("without an explicit user request")));
-  const inlineSeed = [{
-    path: "src/components/StoreView.tsx",
-    content: `const SEED: Product[] = [{ name: "Invented coat", price: 42 }];
-const products = db.collection<Product>("products");
-for (const seed of SEED) await products.create(seed);`,
-  }];
-  assert.ok(generationValidationIssues(inlineSeed, ["src/App.tsx"], { allowSeedData: false })
-    .some((issue) => issue.includes("inline seed records")));
-  assert.equal(generationValidationIssues(inlineSeed, ["src/App.tsx"], { allowSeedData: true })
-    .some((issue) => issue.includes("inline seed records")), false);
-  assert.ok(generationValidationIssues([{
-    path: "src/components/StoreView.tsx",
-    content: `const seedProducts = [{ name: "Invented coat" }]; for (const product of seedProducts) await products.create({ ...product });`,
-  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")));
-  for (const body of [
-    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(product);`,
-    `const inventory = [{ name: "Invented coat" }]; inventory.map((product) => products.create(product));`,
-    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create({ ...product });`,
-    `const inventory = [{ name: "Invented coat" }]; inventory.map(({ name }) => products.create({ name }));`,
-    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(product as unknown as Product);`,
-    `const inventory = [{ name: "Invented coat" }]; for (const product of inventory) await products.create(({ ...product }) as Product);`,
-  ]) {
-    assert.ok(generationValidationIssues([{ path: "src/components/StoreView.tsx", content: body }], ["src/App.tsx"], { allowSeedData: false })
-      .some((issue) => issue.includes("inline seed records")));
-  }
-  assert.equal(generationValidationIssues([{
-    path: "src/components/StoreView.tsx",
-    content: `const seed = crypto.getRandomValues(new Uint8Array(4));`,
-  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
-  assert.equal(generationValidationIssues([{
-    path: "src/components/Chart.tsx",
-    content: `const sampleData = [{ value: 4 }]; return sampleData.map(({ value }) => <span>{value}</span>);`,
-  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
-  assert.equal(generationValidationIssues([{
-    path: "src/components/StoreView.tsx",
-    content: `const inventory = [{ name: "Existing record" }]; function sync(inventory: Product[]) { for (const product of inventory) products.create(product); }`,
-  }], ["src/App.tsx"], { allowSeedData: false }).some((issue) => issue.includes("inline seed records")), false);
-  assert.equal(seedRecordIntent("Add five demo products to the catalog"), true);
-  assert.equal(seedRecordIntent("Create sample products and seed the inventory"), true);
-  assert.equal(seedRecordIntent("Seed the database with ten orders"), true);
-  assert.equal(seedRecordIntent("Build a mock app with real products"), null);
-  assert.equal(seedRecordIntent("Never seed demo products or invent catalog entries"), false);
-  assert.equal(seedRecordIntent("Seed data is not needed"), false);
-  assert.equal(seedRecordIntent("Never seed the database. Add sample products for the design"), false);
-  assert.equal(seedRecordIntent("Add persisted category filtering, without sample products"), false);
-  assert.equal(["Add sample products", "Remove sample products", "Change the header"]
-    .reduce((permitted, request) => seedRecordIntent(request) ?? permitted, false), false);
-});
-
-test("generation validation keeps authentication controlled by user intent", () => {
-  const files = [{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; export default function App(){ return <button onClick={() => auth.signOut()}>Sign out</button>; }`,
-  }];
-  assert.ok(generationValidationIssues(files, ["src/lib/auth.ts"], { allowAuthentication: false })
-    .some((issue) => issue.includes("did not request accounts")));
-  assert.equal(generationValidationIssues(files, ["src/lib/auth.ts"], { allowAuthentication: true })
-    .some((issue) => issue.includes("did not request accounts")), false);
-  const relativeImport = [{
-    path: "src/components/Login.tsx",
-    content: `const auth = require("../lib/auth"); export const Login = () => auth.signIn();`,
-  }];
-  assert.ok(generationValidationIssues(relativeImport, ["src/lib/auth.ts"], { allowAuthentication: false })
-    .some((issue) => issue.includes("did not request accounts")));
-});
-
-test("end-user auth state follows committed generated source and can be cleared", () => {
-  assert.equal(generatedSourcesRequireEndUserAuth([{
-    path: "src/App.tsx",
-    content: `import { auth } from "@/lib/auth"; export default () => auth.getSession();`,
-  }]), true);
-  assert.equal(generatedSourcesRequireEndUserAuth([{
-    path: "src/App.tsx",
-    content: `export default function App(){ return <main>Public app</main>; }`,
-  }]), false);
 });
 
 test("generation validation rejects broken imagery and fixed mobile shells", () => {
@@ -1511,41 +1015,11 @@ test("proxy query parameters cannot grant preview document privileges", async ()
   assert.equal(platform.headers.get("content-security-policy"), "frame-ancestors *");
 });
 
-test("preview preflight permits authenticated private file uploads", async () => {
-  const response = await proxy(new NextRequest("https://builder.example.test/api/preview/demo/__bigbag/files", {
-    method: "OPTIONS",
-    headers: {
-      origin: "null",
-      "access-control-request-method": "POST",
-      "access-control-request-headers": "authorization, content-type, x-bigbag-file-name, x-bigbag-folder-id",
-    },
-  }));
-  assert.equal(response.status, 204);
-  assert.equal(response.headers.get("access-control-allow-origin"), "null");
-  const allowed = response.headers.get("access-control-allow-headers")?.toLowerCase() || "";
-  for (const name of ["authorization", "content-type", "x-bigbag-file-name", "x-bigbag-folder-id"]) {
-    assert.match(allowed, new RegExp(`\\b${name}\\b`));
-  }
-});
-
 test("signed auth sessions protect provider-backed APIs", async () => {
   const session = createAuthSession("test-user", 1_000_000);
   assert.equal(verifyAuthSession(session, 1_000_000)?.sub, "test-user");
   assert.equal(verifyAuthSession(`${session}x`, 1_000_000), null);
   assert.equal(verifyAuthSession(session, 1_000_000 + 8 * 24 * 60 * 60_000), null);
-
-  const priorNodeEnv = process.env.NODE_ENV;
-  const priorTenantSecret = process.env.TENANT_COOKIE_SECRET;
-  try {
-    Reflect.set(process.env, "NODE_ENV", "production");
-    delete process.env.TENANT_COOKIE_SECRET;
-    assert.throws(() => createAuthSession("test-user"), /TENANT_COOKIE_SECRET is required/);
-  } finally {
-    if (priorNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
-    else Reflect.set(process.env, "NODE_ENV", priorNodeEnv);
-    if (priorTenantSecret === undefined) delete process.env.TENANT_COOKIE_SECRET;
-    else process.env.TENANT_COOKIE_SECRET = priorTenantSecret;
-  }
 
   const blocked = await proxy(new NextRequest("https://builder.example.test/api/planner"));
   assert.equal(blocked.status, 401);
@@ -1592,80 +1066,174 @@ test("authentication redirects preserve safe app destinations and reject open re
   assert.equal(allowed.status, 200);
 });
 
-test("generation, chat, and reference analysis select only GLM 5.3 Flash", () => {
-  const previous = process.env.ABOVE_API_KEY;
-  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle";
+test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.TELNYX_API_KEY = "test-telnyx";
   try {
-    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), ["above-glm53"]);
-    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.model), ["glm-5.3-flash-modal"]);
-    assert.equal(multiModelRouter.getProviders()[0].maxRetries, GLM_53_MAX_RETRIES);
+    assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), [
+      "gemini-flash",
+      "telnyx-glm",
+    ]);
+    assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
+    assert.equal(GEMINI_MAX_RETRIES, 5);
   } finally {
-    if (previous === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previous;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
   }
 });
 
-test("token-limited model output continues and keeps provider identity private", async () => {
-  const previous = process.env.ABOVE_API_KEY;
+test("token-limited model output continues, merges safely, and keeps provider identity private", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
-  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle-continuation";
+  process.env.GEMINI_API_KEY = "test-gemini";
+  delete process.env.TELNYX_API_KEY;
   const statuses: string[] = [];
   const requestBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
+  let requestCount = 0;
+
   global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     requestBodies.push(JSON.parse(String(init?.body || "{}")));
-    return Response.json({ choices: [{ finish_reason: requestBodies.length === 1 ? "length" : "stop", message: {
-      content: requestBodies.length === 1 ? "<section>continuation-boundary" : "continuation-boundary-complete</section>",
-    } }] });
+    requestCount += 1;
+    if (requestCount === 1) {
+      return Response.json({
+        choices: [{
+          finish_reason: "length",
+          message: { content: "<section>continuation-boundary" },
+        }],
+      });
+    }
+    return Response.json({
+      choices: [{
+        finish_reason: "stop",
+        message: { content: "continuation-boundary-complete</section>" },
+      }],
+    });
   }) as typeof fetch;
+
   try {
-    const result = await multiModelRouter.complete([{ role: "user", content: "Build the complete page" }],
-      (status) => statuses.push(status), { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 });
+    const result = await multiModelRouter.complete(
+      [{ role: "user", content: "Build the complete page" }],
+      (status) => statuses.push(status),
+      { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+    );
     assert.equal(result.text, "<section>continuation-boundary-complete</section>");
     assert.equal(result.publicModelName, "AI");
-    assert.deepEqual(result.failureCategories, []);
-    assert.equal(requestBodies.length, 2);
+    assert.equal(requestCount, 2);
     assert.match(requestBodies[1].messages?.at(-1)?.content || "", /Continue exactly/);
     assert.ok(statuses.some((status) => status.includes("Continuing generation")));
-    assert.ok(statuses.every((status) => !/above|glm-5\.3/i.test(status)));
-    assert.equal(publicModelName("above-glm53"), "AI");
-    assert.equal(appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"), "0123456789abcdefghijkl-complete");
+    assert.ok(statuses.every((status) => !/Gemini|gemini-2\.5|Google/i.test(status)));
+    assert.equal(publicModelName("telnyx-glm"), "AI");
+    assert.equal(
+      appendContinuationChunk("0123456789abcdefghijkl", "6789abcdefghijkl-complete"),
+      "0123456789abcdefghijkl-complete"
+    );
+    assert.equal(
+      appendContinuationChunk("0123456789abcdefghijkl", "0123456789abcdefghijkl"),
+      "0123456789abcdefghijkl"
+    );
   } finally {
     global.fetch = previousFetch;
-    if (previous === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previous;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
   }
 });
 
-test("specialized GLM vision requests preserve image inputs", async () => {
-  const previous = process.env.ABOVE_API_KEY;
+test("provider exhaustion and failover statuses keep provider identity private", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
-  process.env.ABOVE_API_KEY = "synthetic-above-lifecycle-vision";
-  let requestBody: { messages?: Array<{ content?: unknown }> } = {};
-  global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-    requestBody = JSON.parse(String(init?.body || "{}"));
-    return Response.json({ choices: [{ finish_reason: "stop", message: { content: "Observed structured hero." } }] });
-  }) as typeof fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  const statuses: string[] = [];
+  global.fetch = (async () => Response.json(
+    { error: { message: "invalid test credential" } },
+    { status: 401 }
+  )) as typeof fetch;
+
   try {
-    const result = await multiModelRouter.complete([{ role: "user", content: [
-      { type: "text", text: "Analyze this reference." },
-      { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
-    ] }], undefined, { onlyProviderId: "above-glm53", perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 });
-    assert.equal(result.providerId, "above-glm53");
+    await assert.rejects(
+      multiModelRouter.complete(
+        [{ role: "user", content: "Build" }],
+        (status) => statuses.push(status),
+        { perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+      ),
+      (error: Error) => {
+        assert.equal(error.name, "ProviderExhaustedError");
+        assert.doesNotMatch(error.message, /Gemini|Telnyx|gemini-2\.5|GLM-5\.3/i);
+        return true;
+      }
+    );
+    assert.deepEqual(statuses, [
+      "Generating the implementation…",
+      "Continuing generation…",
+      "Generating the implementation…",
+    ]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+  }
+});
+
+test("specialized vision requests stay on the required provider and preserve image inputs", async () => {
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousFetch = global.fetch;
+  process.env.GEMINI_API_KEY = "test-gemini";
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  const requestedUrls: string[] = [];
+  let requestBody: { messages?: Array<{ content?: unknown }> } = {};
+
+  global.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requestedUrls.push(String(input));
+    requestBody = JSON.parse(String(init?.body || "{}"));
+    return Response.json({
+      choices: [{ finish_reason: "stop", message: { content: "Observed a structured hero and compact navigation." } }],
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await multiModelRouter.complete(
+      [{
+        role: "user",
+        content: [
+          { type: "text", text: "Analyze this real reference." },
+          { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
+        ],
+      }],
+      undefined,
+      { onlyProviderId: "telnyx-glm", perProviderTimeoutMs: 2_000, totalTimeoutMs: 5_000 }
+    );
+    assert.equal(result.providerId, "telnyx-glm");
+    assert.equal(requestedUrls.length, 1);
     assert.deepEqual(requestBody.messages?.[0]?.content, [
-      { type: "text", text: "Analyze this reference." },
+      { type: "text", text: "Analyze this real reference." },
       { type: "image_url", image_url: { url: "https://assets.example.test/reference.png" } },
     ]);
   } finally {
     global.fetch = previousFetch;
-    if (previous === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previous;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
   }
 });
 
 test("reference analysis falls back to metadata without retrying non-retryable multimodal requests", async () => {
-  const previousAbove = process.env.ABOVE_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
+  const previousGemini = process.env.GEMINI_API_KEY;
   const previousFetch = global.fetch;
-  process.env.ABOVE_API_KEY = "test-above-reference";
+  process.env.TELNYX_API_KEY = "test-telnyx";
+  delete process.env.GEMINI_API_KEY;
   const requestImageCounts: number[] = [];
   const validSpecification = {
     reference_url: "https://example.test/",
@@ -1726,8 +1294,10 @@ test("reference analysis falls back to metadata without retrying non-retryable m
     assert.match(result.implementationContext, /VALIDATED REFERENCE DESIGN SPECIFICATION/);
   } finally {
     global.fetch = previousFetch;
-    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousAbove;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
   }
 });
 
@@ -1739,9 +1309,11 @@ test("reference design schema rejects incomplete output", () => {
 });
 
 test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
-  const previousAbove = process.env.ABOVE_API_KEY;
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousTelnyx = process.env.TELNYX_API_KEY;
   const previousFetch = global.fetch;
-  process.env.ABOVE_API_KEY = "test-above-overload";
+  process.env.GEMINI_API_KEY = "test-gemini";
+  delete process.env.TELNYX_API_KEY;
   let requestCount = 0;
 
   global.fetch = (async () => {
@@ -1770,36 +1342,20 @@ test("plain-text overloads retry and repeated continuations cannot produce false
     );
     assert.equal(result.text, "recovered without false success");
     assert.equal(requestCount, 4);
-    assert.deepEqual(result.failureCategories, ["provider_unavailable", "output_limit"]);
   } finally {
     global.fetch = previousFetch;
-    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousAbove;
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousTelnyx === undefined) delete process.env.TELNYX_API_KEY;
+    else process.env.TELNYX_API_KEY = previousTelnyx;
   }
 });
 
 test("generated apps use a browser-safe durable data client", async () => {
   assert.match(GENERATED_DB_CLIENT_SOURCE, /\/__bigbag\/data\//);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /collection<T extends object = DbRecord>/);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /type ListResult<T> = \{ records: T\[\]; total: number \}/);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /Promise<ListResult<T>>/);
   assert.match(GENERATED_DB_CLIENT_SOURCE, /X-BigBag-Capability/);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /Authorization/);
-  assert.match(GENERATED_DB_CLIENT_SOURCE, /getPlatformAuthAccessToken/);
-  assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /from "@\/lib\/auth"/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /signInWithPassword/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /signUp/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /onAuthStateChange/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /__bigbag\/auth\/storage/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /storage: previewAuthStorage/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /bigbag-preview-/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /key === previewSessionKey/);
-  assert.match(GENERATED_AUTH_CLIENT_SOURCE, /window\.sessionStorage\.setItem/);
-  assert.doesNotMatch(GENERATED_AUTH_CLIENT_SOURCE, /service.role|SERVICE_ROLE|passwordHash/);
   assert.doesNotMatch(GENERATED_DB_CLIENT_SOURCE, /@libsql|node:|process\.env|process\.cwd|from ["'](?:fs|path)["']/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /\/api\/preview\/runtime-validation\//);
-  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__bigbag\/auth\/config/);
-  assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__bigbag\/auth\/storage/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /__BIGBAG_WRITE_CAPABILITY__/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /Missing or invalid preview write capability/);
   assert.match(GENERATED_RUNTIME_CHECK_SCRIPT, /blocked a non-platform network request/);
@@ -1836,49 +1392,8 @@ test("generated apps use a browser-safe durable data client", async () => {
     assert.deepEqual(collections, [{ name: "tasks", count: 106 }]);
     assert.equal(await durableProjectStore.deleteAppRecord(projectId, "tasks", created._id), true);
     assert.equal((await durableProjectStore.listAppRecords(projectId, "tasks")).total, 105);
-
-    const userA = "auth-user-a";
-    const userB = "auth-user-b";
-    const ownedA = await durableProjectStore.createAppRecord(projectId, "private_tasks", { title: "A" }, userA);
-    const ownedB = await durableProjectStore.createAppRecord(projectId, "private_tasks", { title: "B" }, userB);
-    assert.deepEqual((await durableProjectStore.listAppRecords(projectId, "private_tasks", { ownerId: userA })).records.map((row) => row.title), ["A"]);
-    assert.deepEqual((await durableProjectStore.listAppRecords(projectId, "private_tasks", { ownerId: userB })).records.map((row) => row.title), ["B"]);
-    assert.equal(await durableProjectStore.getAppRecord(projectId, "private_tasks", ownedB._id, userA), null);
-    assert.equal(await durableProjectStore.updateAppRecord(projectId, "private_tasks", ownedB._id, { title: "stolen" }, userA), null);
-    assert.equal(await durableProjectStore.deleteAppRecord(projectId, "private_tasks", ownedB._id, userA), false);
-    assert.equal((await durableProjectStore.getAppRecord(projectId, "private_tasks", ownedA._id, userA))?.title, "A");
   } finally {
     assert.equal(await durableProjectStore.remove(projectId, tenantId), true);
-  }
-});
-
-test("preview auth storage is encrypted and bound to project, guest, key, and expiry", () => {
-  const guestId = randomUUID();
-  const issuedAt = Date.now();
-  const sealed = sealPreviewAuthStorage("project-a", guestId, "session-key", '{"access_token":"private"}', issuedAt);
-  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "session-key", issuedAt), '{"access_token":"private"}');
-  assert.equal(sealed.includes("private"), false);
-  assert.equal(openPreviewAuthStorage(sealed, "project-b", guestId, "session-key", issuedAt), null);
-  assert.equal(openPreviewAuthStorage(sealed, "project-a", randomUUID(), "session-key", issuedAt), null);
-  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "other-key", issuedAt), null);
-  const tampered = `${sealed[0] === "A" ? "B" : "A"}${sealed.slice(1)}`;
-  assert.equal(openPreviewAuthStorage(tampered, "project-a", guestId, "session-key", issuedAt), null);
-  assert.equal(openPreviewAuthStorage(sealed, "project-a", guestId, "session-key", issuedAt + 31 * 24 * 60 * 60_000), null);
-
-  const priorNodeEnv = process.env.NODE_ENV;
-  const priorTenantSecret = process.env.TENANT_COOKIE_SECRET;
-  try {
-    Reflect.set(process.env, "NODE_ENV", "production");
-    delete process.env.TENANT_COOKIE_SECRET;
-    assert.throws(
-      () => sealPreviewAuthStorage("project-a", guestId, "session-key", "value"),
-      /TENANT_COOKIE_SECRET is required/
-    );
-  } finally {
-    if (priorNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
-    else Reflect.set(process.env, "NODE_ENV", priorNodeEnv);
-    if (priorTenantSecret === undefined) delete process.env.TENANT_COOKIE_SECRET;
-    else process.env.TENANT_COOKIE_SECRET = priorTenantSecret;
   }
 });
 
@@ -1895,24 +1410,9 @@ test("preview write capabilities are project-scoped, signed, and expiring", () =
   );
 });
 
-test("guest mutation limits are project-scoped rather than identity-scoped", () => {
-  const projectId = `guest-budget-${randomUUID()}`;
-  const startedAt = 1_000_000;
-  for (let index = 0; index < 60; index += 1) {
-    assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + index), true);
-  }
-  assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + 59_999), false);
-  assert.equal(consumePreviewGuestMutationBudget(projectId, startedAt + 60_000), true);
-});
-
 test("restored workspaces preserve package mode and customized database clients", () => {
   const workspace = path.join(tempRoot, "custom-restored-workspace");
-  const customDbClient = `import { createClient } from "@libsql/client";
-type DbRecord = { _id: string };
-function collectionPath(name: string): string { return name; }
-export function collection<T extends DbRecord = DbRecord>(name: string) { return { name: collectionPath(name), update: (_id: string, data: Partial<T>) => data, client: createClient }; }
-export const customized = true;
-`;
+  const customDbClient = `import { createClient } from "@libsql/client";\nexport const customized = true;\n`;
   fs.mkdirSync(path.join(workspace, "src", "lib"), { recursive: true });
   fs.writeFileSync(path.join(workspace, "package.json"), JSON.stringify({
     name: "custom-restored-workspace",

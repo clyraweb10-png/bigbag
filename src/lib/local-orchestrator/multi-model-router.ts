@@ -1,7 +1,3 @@
-import { createHash } from "node:crypto";
-import { setTimeout as sleep } from "node:timers/promises";
-import { GLM_53_PROVIDER_ID, glm53Config } from "./ai-provider-config";
-
 export interface ModelProviderConfig {
   id: string;
   name: string;
@@ -12,7 +8,6 @@ export interface ModelProviderConfig {
   /** Additional attempts after the first request for transient failures. */
   maxRetries: number;
   reasoningEffort?: "low" | "high" | "max";
-  reasoningFormat?: "hidden";
   extraHeaders?: Record<string, string>;
 }
 
@@ -28,8 +23,6 @@ export interface RouterCompletionResult {
   durationMs: number;
   attempts: number;
   continuationAttempts: number;
-  /** Internal qualification telemetry; never include provider credentials or response content. */
-  failureCategories: ProviderErrorCategory[];
 }
 
 export type ProviderErrorCategory =
@@ -78,67 +71,18 @@ export interface RouterCompletionOptions {
   responseFormat?: "json_object";
   /** Safe diagnostic label; never include user content or credentials. */
   requestLabel?: string;
-  /** Keep the user's request intact while fitting provider-specific input limits. */
-  /** Return null when a provider cannot receive the complete context required for a safe repair. */
-  providerMessageTransform?: (providerId: string, messages: ModelMessage[]) => ModelMessage[] | null;
 }
 
-/** Additional bounded attempts for transient GLM 5.3 Flash failures. */
-export const GLM_53_MAX_RETRIES = 2;
+/** Product policy: Gemini gets five recovery attempts before provider failover. */
+export const GEMINI_MAX_RETRIES = 5;
 /** Maximum number of follow-up requests used to finish a token-limited response. */
 export const MAX_OUTPUT_CONTINUATIONS = 4;
+const DEFAULT_MAX_RETRIES = 2;
 /** Delay in ms between retries. */
 const RETRY_DELAY_MS = 3_000;
-const providerCooldowns = new Map<string, { fingerprint: string; until: number; category: ProviderErrorCategory }>();
 
-function providerFingerprint(provider: ModelProviderConfig): string {
-  return createHash("sha256")
-    .update(`${provider.baseUrl}\0${provider.model}\0${provider.apiKey}`)
-    .digest("hex");
-}
-
-function providerCooldown(provider: ModelProviderConfig): ProviderErrorCategory | null {
-  const cooldown = providerCooldowns.get(provider.id);
-  if (!cooldown || cooldown.fingerprint !== providerFingerprint(provider) || cooldown.until <= Date.now()) {
-    providerCooldowns.delete(provider.id);
-    return null;
-  }
-  return cooldown.category;
-}
-
-function recordProviderFailure(provider: ModelProviderConfig, category: ProviderErrorCategory, retryAfterMs = 0): void {
-  const duration = category === "authentication" || category === "invalid_model" ? 5 * 60_000
-    : category === "rate_limit" ? Math.max(30_000, Math.min(120_000, retryAfterMs))
-      : 0;
-  if (duration > 0) providerCooldowns.set(provider.id, {
-    fingerprint: providerFingerprint(provider), until: Date.now() + duration, category,
-  });
-}
-
-function actionableProviderFailure(errors: ProviderRequestError[]): ProviderRequestError | undefined {
-  // A configured account can be invalid while the only usable account is
-  // temporarily rate-limited. Report the condition that can actually recover.
-  return errors.findLast((error) => error.category === "rate_limit") ||
-    errors.findLast((error) => error.category === "request_too_large" || error.category === "context_limit") ||
-    errors.at(-1);
-}
-
-function resetDelayMs(value: string | null, retryAfter = false): number {
-  if (!value) return 0;
-  const text = value.trim().toLowerCase();
-  const seconds = Number(text);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(120_000, Math.ceil(seconds * 1_000));
-  const milliseconds = /^(\d+(?:\.\d+)?)ms$/.exec(text);
-  if (milliseconds) return Math.min(120_000, Math.ceil(Number(milliseconds[1])));
-  const duration = /^(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/.exec(text);
-  if (duration && (duration[1] || duration[2])) {
-    return Math.min(120_000, Math.ceil((Number(duration[1] || 0) * 60 + Number(duration[2] || 0)) * 1_000));
-  }
-  if (retryAfter) {
-    const dateMs = Date.parse(value);
-    if (Number.isFinite(dateMs)) return Math.min(120_000, Math.max(0, dateMs - Date.now()));
-  }
-  return 0;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function completionText(content: unknown): string {
@@ -153,46 +97,6 @@ function completionText(content: unknown): string {
         : "";
     })
     .join("");
-}
-
-async function readStreamedCompletion(response: Response, onText: (text: string) => void): Promise<{
-  text: string; reasoning: string; finishReason: string;
-}> {
-  if (!response.body) throw new Error("Provider returned an empty stream");
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
-  let text = "";
-  let reasoning = "";
-  let finishReason = "";
-  let doneMarker = false;
-  const readLine = (line: string) => {
-    if (!line.startsWith("data:")) return;
-    const data = line.slice(5).trim();
-    if (!data) return;
-    if (data === "[DONE]") { doneMarker = true; return; }
-    let parsed: { choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown }; finish_reason?: unknown }> };
-    try { parsed = JSON.parse(data); } catch { return; }
-    const choice = parsed.choices?.[0];
-    const delta = completionText(choice?.delta?.content);
-    if (delta) { text += delta; onText(text); }
-    reasoning += completionText(choice?.delta?.reasoning_content);
-    if (typeof choice?.finish_reason === "string") finishReason = choice.finish_reason.toLowerCase();
-  };
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      pending += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() || "";
-      for (const line of lines) readLine(line);
-      if (done) { if (pending) readLine(pending); break; }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (!doneMarker) throw new Error("Network stream ended before completion");
-  return { text, reasoning, finishReason };
 }
 
 export function publicModelName(providerId: string): string {
@@ -218,25 +122,6 @@ export function appendContinuationChunk(current: string, next: string): string {
   return current + next;
 }
 
-function continuationMessages(original: ModelMessage[], accumulated: string, requestLabel: string): ModelMessage[] {
-  const instruction = "Continue exactly where the previous response stopped. Return only the missing remainder. Do not repeat completed content. If the response stopped inside a fenced code block, continue the code directly without opening a new fence. Finish every remaining file block and the complete requested result.";
-  if (requestLabel !== "code_generation") {
-    return [...original, { role: "assistant", content: accumulated }, { role: "user", content: instruction }];
-  }
-  const lastUser = [...original].reverse().find((message) => message.role === "user");
-  const task = (typeof lastUser?.content === "string"
-    ? lastUser.content
-    : Array.isArray(lastUser?.content)
-      ? lastUser.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n")
-      : "").slice(0, 8_000);
-  const paths = [...accumulated.matchAll(/^###\s+(?:File|Delete):\s*(.+)$/gm)]
-    .map((match) => match[1].trim()).slice(-50).join(", ");
-  return [
-    { role: "system", content: "Continue the existing generated-app response. Preserve its file-block format and working implementation. Output only the missing code; never restart the project or claim success." },
-    { role: "user", content: `Original request (abridged):\n${task}\n\nAlready emitted file paths: ${paths || "none"}\n\nResponse tail:\n${accumulated.slice(-12_000)}\n\n${instruction}` },
-  ];
-}
-
 export class ProviderExhaustedError extends Error {
   constructor(
     public readonly category: ProviderErrorCategory = "unknown",
@@ -258,8 +143,7 @@ class ProviderRequestError extends Error {
     public readonly retryable: boolean,
     public readonly partialText = "",
     public readonly finishReason = "",
-    public readonly attempts = 0,
-    public readonly retryAfterMs = 0
+    public readonly attempts = 0
   ) {
     super(message);
     this.name = "ProviderRequestError";
@@ -283,14 +167,7 @@ function messageSize(messages: ModelMessage[]): { textChars: number; imageCount:
 }
 
 function safeProviderMessage(value: string): string {
-  let safe = value;
-  for (const [name, secret] of Object.entries(process.env)) {
-    if (/(?:API_KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL)$/i.test(name) && secret && secret.length >= 8) {
-      safe = safe.replaceAll(secret, "[redacted]");
-    }
-  }
-  return safe
-    .replace(/\b(?:gsk_|sk[-_]|e2b_|fc-|sb_secret_|ghp_|glpat-|xoxb-|AIza|KEY[0-9a-f]{24}_)[a-z0-9._-]{8,}\b/gi, "[redacted]")
+  return value
     .replace(/(bearer|api[-_ ]?key|authorization)\s*[:=]?\s*[^\s,;]+/gi, "$1 [redacted]")
     .replace(/https?:\/\/[^\s"']+/g, "[url]")
     .replace(/\s+/g, " ")
@@ -367,19 +244,44 @@ class MultiModelRouter {
   }
 
   public getProviders(): ModelProviderConfig[] {
-    const config = glm53Config();
-    if (!config) return [];
-    return [{
-      id: GLM_53_PROVIDER_ID,
-      name: "GLM 5.3 Flash",
-      ...config,
-      // Bound the first response so a long reasoning phase cannot consume the
-      // entire request timeout before any usable source arrives. Continuation
-      // requests retain the ability to emit larger applications.
-      maxTokens: 8_192,
-      maxRetries: GLM_53_MAX_RETRIES,
-      reasoningEffort: "low",
-    }];
+    const providers: ModelProviderConfig[] = [];
+
+    // 1. Google Gemini — primary by product policy.
+    const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
+    if (geminiKey) {
+      let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
+      if (geminiBase.includes("generativelanguage.googleapis.com") && !geminiBase.includes("/openai")) {
+        geminiBase = "https://generativelanguage.googleapis.com/v1beta/openai";
+      }
+
+      providers.push({
+        id: "gemini-flash",
+        name: "Google Gemini (gemini-2.5-flash)",
+        baseUrl: geminiBase,
+        apiKey: geminiKey,
+        model: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
+        maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
+        maxRetries: GEMINI_MAX_RETRIES,
+      });
+    }
+
+    // 2. Telnyx GLM-5.3-Flash — fallback when Gemini is unavailable.
+    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (telnyxKey) {
+      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
+      providers.push({
+        id: "telnyx-glm",
+        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
+        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
+        apiKey: telnyxKey,
+        model: telnyxModel,
+        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
+        maxRetries: DEFAULT_MAX_RETRIES,
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
+      });
+    }
+
+    return providers;
   }
 
   /**
@@ -415,8 +317,6 @@ class MultiModelRouter {
 
     let requestAttempts = 0;
     let lastError = new ProviderRequestError("Provider request failed", "unknown", false);
-    const failureCategories: ProviderErrorCategory[] = [];
-    let recoverablePartialText = "";
 
     for (let attempt = 0; attempt <= provider.maxRetries; attempt++) {
       options.signal?.throwIfAborted();
@@ -424,31 +324,26 @@ class MultiModelRouter {
         ? undefined
         : options.deadlineAt - Date.now();
       if (remainingMs !== undefined && remainingMs <= 0) {
-        throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, recoverablePartialText, "", requestAttempts);
+        throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, "", "", requestAttempts);
       }
 
       if (attempt > 0) {
         const retryMsg = `Still working… (attempt ${attempt + 1}/${provider.maxRetries + 1})`;
         console.log(`[MultiModelRouter] Retrying ${provider.name} (attempt ${attempt + 1}/${provider.maxRetries + 1})...`);
         onStatus?.(retryMsg);
-        const delayMs = Math.max(options.retryDelayMs, lastError.retryAfterMs);
-        if (remainingMs !== undefined && delayMs >= remainingMs) throw lastError;
-        await sleep(delayMs, undefined, { signal: options.signal });
+        await sleep(options.retryDelayMs);
         options.signal?.throwIfAborted();
         remainingMs = options.deadlineAt === undefined
           ? undefined
           : options.deadlineAt - Date.now();
         if (remainingMs !== undefined && remainingMs <= 0) {
-          throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, recoverablePartialText, "", requestAttempts);
+          throw new ProviderRequestError("Completion deadline exceeded", "network_timeout", true, "", "", requestAttempts);
         }
       }
 
-      let accumulatedText = recoverablePartialText;
-      let inFlightText = "";
       try {
-        let requestMessages = accumulatedText
-          ? continuationMessages(messages, accumulatedText, options.requestLabel)
-          : messages;
+        let accumulatedText = "";
+        let requestMessages = messages;
 
         for (let continuation = 0; continuation <= options.maxOutputContinuations; continuation += 1) {
           options.signal?.throwIfAborted();
@@ -472,10 +367,7 @@ class MultiModelRouter {
             temperature: 0.2,
             max_tokens: maxTokens,
           };
-          const stream = (options.requestLabel === "code_generation" || options.requestLabel === "code_repair") && !options.responseFormat;
-          if (stream) payload.stream = true;
           if (provider.reasoningEffort) payload.reasoning_effort = provider.reasoningEffort;
-          if (provider.reasoningFormat) payload.reasoning_format = provider.reasoningFormat;
           if (options.responseFormat) payload.response_format = { type: options.responseFormat };
 
           requestAttempts += 1;
@@ -485,7 +377,7 @@ class MultiModelRouter {
             requestLabel: options.requestLabel,
             model: provider.model,
             providerId: provider.id,
-            stream,
+            stream: false,
             textChars: size.textChars,
             imageCount: size.imageCount,
             maxTokens,
@@ -539,43 +431,38 @@ class MultiModelRouter {
             } catch {}
 
             const failure = classifyProviderFailure(res.status, errMsg);
-            const retryAfterMs = res.status === 429 ? Math.max(
-              resetDelayMs(res.headers.get("retry-after"), true),
-              resetDelayMs(res.headers.get("x-ratelimit-reset-tokens")),
-            ) + 250 : 0;
             throw new ProviderRequestError(
-              `HTTP ${res.status} (${failure.category})`,
+              `HTTP ${res.status}: ${safeProviderMessage(errMsg)}`,
               failure.category,
               failure.retryable,
               accumulatedText,
               "",
-              requestAttempts,
-              retryAfterMs
+              requestAttempts
             );
           }
 
-          inFlightText = "";
-          const streamed = stream && res.headers.get("content-type")?.includes("text/event-stream")
-            ? await readStreamedCompletion(res, (value) => { inFlightText = value; })
-            : null;
-          const json = streamed ? null : await res.json().catch(() => {
-            throw new ProviderRequestError("Provider returned malformed JSON", "invalid_response_schema", false,
-              accumulatedText, "", requestAttempts);
+          const json = await res.json().catch(() => {
+            throw new ProviderRequestError(
+              "Provider returned malformed JSON",
+              "invalid_response_schema",
+              false,
+              accumulatedText,
+              "",
+              requestAttempts
+            );
           });
-          const choice = json?.choices?.[0];
-          const text = streamed?.text ?? completionText(choice?.message?.content);
+          const choice = json.choices?.[0];
+          const text = completionText(choice?.message?.content);
           if (!text || text.trim().length === 0) {
-            const hasReasoning = (streamed?.reasoning || completionText(choice?.message?.reasoning_content)).trim().length > 0;
-            const finishReason = streamed?.finishReason || (typeof choice?.finish_reason === "string" ? choice.finish_reason.toLowerCase() : "");
-            const reasoningHitLimit = hasReasoning && ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
+            const hasReasoning = completionText(choice?.message?.reasoning_content).trim().length > 0;
             throw new ProviderRequestError(
               hasReasoning
                 ? "Provider returned reasoning without a final answer"
                 : "Received empty response body from provider",
-              reasoningHitLimit ? "output_limit" : "empty_response",
-              reasoningHitLimit,
+              "empty_response",
+              false,
               accumulatedText,
-              finishReason,
+              typeof choice?.finish_reason === "string" ? choice.finish_reason : "",
               requestAttempts
             );
           }
@@ -592,9 +479,9 @@ class MultiModelRouter {
               requestAttempts
             );
           }
-          const finishReason = streamed?.finishReason || (typeof choice?.finish_reason === "string"
+          const finishReason = typeof choice?.finish_reason === "string"
             ? choice.finish_reason.toLowerCase()
-            : "");
+            : "";
           const wasTruncated = ["length", "max_tokens", "max_output_tokens"].includes(finishReason);
           console.info(`[MultiModelRouter] ${JSON.stringify({
             event: continuation === 0 ? "model_first_response" : "model_continuation_response",
@@ -619,7 +506,6 @@ class MultiModelRouter {
               durationMs: Date.now() - startedAt,
               attempts: requestAttempts,
               continuationAttempts: continuation,
-              failureCategories,
             };
           }
 
@@ -639,14 +525,20 @@ class MultiModelRouter {
           const continuationMsg = "Continuing generation…";
           console.log(`[MultiModelRouter] ${provider.name} reached ${finishReason}; requesting continuation ${continuation + 1}/${options.maxOutputContinuations}.`);
           onStatus?.(continuationMsg);
-          requestMessages = continuationMessages(messages, accumulatedText, options.requestLabel);
+          requestMessages = [
+            ...messages,
+            { role: "assistant", content: accumulatedText },
+            {
+              role: "user",
+              content: "Continue exactly where the previous response stopped. Return only the missing remainder. Do not repeat completed content. If the response stopped inside a fenced code block, continue the code directly without opening a new fence. Finish every remaining file block and the complete requested result.",
+            },
+          ];
         }
       } catch (err: any) {
         if (options.signal?.aborted) {
           throw new ProviderRequestError("Generation cancelled", "cancelled", false, "", "", requestAttempts);
         }
         const message = err?.message || String(err);
-        const partialResponse = appendContinuationChunk(accumulatedText, inFlightText);
         const isTimeout = err?.name === "TimeoutError" || /aborted|timeout/i.test(message);
         const isNetworkFailure = /fetch|network|socket/i.test(message);
         lastError = err instanceof ProviderRequestError
@@ -655,7 +547,7 @@ class MultiModelRouter {
               safeProviderMessage(message),
               isTimeout ? "network_timeout" : isNetworkFailure ? "network_error" : "unknown",
               isTimeout || isNetworkFailure,
-              partialResponse,
+              "",
               "",
               requestAttempts
             );
@@ -670,19 +562,8 @@ class MultiModelRouter {
           partialResponseLength: lastError.partialText.length,
           reason: safeProviderMessage(lastError.message),
         })}`);
-        failureCategories.push(lastError.category);
 
-        // A transport failure can resume a valid partial answer. A repeated
-        // continuation is an output-shape failure: restart from the original
-        // request so a fresh answer is never appended to a stale fragment.
-        recoverablePartialText = lastError.partialText && lastError.retryable &&
-          ["network_timeout", "network_error", "provider_unavailable", "rate_limit"].includes(lastError.category)
-          ? lastError.partialText
-          : "";
-
-        // A long provider reset cannot be repaired by an immediate retry.
-        // Preserve the account's cooldown and give another provider the run.
-        if (!lastError.retryable || (lastError.category === "rate_limit" && lastError.retryAfterMs > 30_000)) break;
+        if (!lastError.retryable) break;
       }
     }
 
@@ -698,7 +579,7 @@ class MultiModelRouter {
 
     if (configuredProviders.length === 0) {
       throw new Error(
-        "GLM 5.3 Flash is not configured. Set ABOVE_API_KEY on the server."
+        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
       );
     }
 
@@ -709,25 +590,13 @@ class MultiModelRouter {
       throw new Error("The required AI capability is not configured.");
     }
 
-    const initialProviders = [...eligibleProviders];
-    const routedProviders = options.deprioritizeProviderId
+    const providers = options.deprioritizeProviderId
       ? [
-          ...initialProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
-          ...initialProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
+          ...eligibleProviders.filter((provider) => provider.id !== options.deprioritizeProviderId),
+          ...eligibleProviders.filter((provider) => provider.id === options.deprioritizeProviderId),
         ]
-      : initialProviders;
-    const skipped = routedProviders.flatMap((provider) => {
-      const category = providerCooldown(provider);
-      return category ? [{ provider, category }] : [];
-    });
-    const providers = routedProviders.filter((provider) => !skipped.some((entry) => entry.provider.id === provider.id));
-    const errors: ProviderRequestError[] = skipped.map(({ category }) =>
-      new ProviderRequestError("Provider is in a temporary health cooldown", category, category === "rate_limit"));
-    if (providers.length === 0) {
-      const blockingError = actionableProviderFailure(errors);
-      throw new ProviderExhaustedError(blockingError?.category || "provider_unavailable", Boolean(blockingError?.retryable), "", "", 0,
-        "Configured AI providers are temporarily unavailable; check their credentials or rate limits.");
-    }
+      : eligibleProviders;
+    const errors: ProviderRequestError[] = [];
     const startedAt = Date.now();
     const deadlineAt = options.totalTimeoutMs === undefined
       ? undefined
@@ -747,17 +616,13 @@ class MultiModelRouter {
         ? undefined
         : Date.now() + Math.max(1, Math.floor(remainingTotalMs / providersRemaining));
 
+      console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
+      // Model inference is still code generation, not a running build. Build
+      // status is emitted separately when validation starts.
+      onStatus?.("Generating the implementation…");
+
       try {
-        const transformed = options.providerMessageTransform?.(provider.id, messages);
-        if (transformed === null) {
-          throw new ProviderRequestError("Complete affected source exceeds this provider's repair context limit", "context_limit", false);
-        }
-        const providerMessages = transformed ?? messages;
-        console.log(`[MultiModelRouter] Attempting provider [${provider.name}] (${provider.model})...`);
-        // Model inference is still code generation, not a running build. Build
-        // status is emitted separately when validation starts.
-        onStatus?.("Generating the implementation…");
-        const result = await this.tryProvider(provider, providerMessages, onStatus, {
+        return await this.tryProvider(provider, messages, onStatus, {
           deadlineAt: providerDeadlineAt,
           perProviderTimeoutMs,
           maxTokens: options.maxTokens,
@@ -770,20 +635,11 @@ class MultiModelRouter {
           signal: options.signal,
           requestLabel: options.requestLabel?.trim() || "generation",
         });
-        providerCooldowns.delete(provider.id);
-        return {
-          ...result,
-          failureCategories: [
-            ...errors.map((error) => error.category),
-            ...result.failureCategories,
-          ],
-        };
       } catch (err: any) {
         const providerError = err instanceof ProviderRequestError
           ? err
           : new ProviderRequestError(safeProviderMessage(err?.message || String(err)), "unknown", false);
         errors.push(providerError);
-        recordProviderFailure(provider, providerError.category, providerError.retryAfterMs);
 
         if (!isLast) {
           const nextProvider = providers[i + 1];
@@ -794,7 +650,7 @@ class MultiModelRouter {
       }
     }
 
-    const finalError = actionableProviderFailure(errors) || new ProviderRequestError("No provider completed the request", "unknown", false);
+    const finalError = errors.at(-1) || new ProviderRequestError("No provider completed the request", "unknown", false);
     console.warn(`[MultiModelRouter] ${JSON.stringify({
       event: "all_providers_failed",
       requestLabel: options.requestLabel?.trim() || "generation",

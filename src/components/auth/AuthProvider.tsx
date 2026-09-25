@@ -9,10 +9,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
-import { establishServerSession } from "@/lib/auth-server-session";
 import { oauthCallbackUrl, resolveAppOrigin } from "@/lib/auth-redirect";
-import { cn } from "@/lib/utils";
-import { extractCleanUserName } from "@/lib/user-name";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface AuthUser {
@@ -50,12 +47,11 @@ async function serializeSessionMutation<T>(operation: () => Promise<T>): Promise
 
 function mapSupabaseUser(sbUser: SupabaseUser | null | undefined): AuthUser | null {
   if (!sbUser) return null;
-  const rawDisplayName =
+  const displayName =
     (sbUser.user_metadata?.full_name as string) ||
     (sbUser.user_metadata?.name as string) ||
     sbUser.email?.split("@")[0] ||
     null;
-  const displayName = rawDisplayName ? extractCleanUserName(rawDisplayName) || rawDisplayName : null;
   const photoURL =
     (sbUser.user_metadata?.avatar_url as string) ||
     (sbUser.user_metadata?.picture as string) ||
@@ -114,24 +110,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (session?.user) {
           const authUser = mapSupabaseUser(session.user);
+          setUser(authUser);
+          setError(null);
+
           // Ensure HttpOnly server cookies are synced
           if (!hasServerSession) {
-            const confirmed = await serializeSessionMutation(async () => {
-              if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return false;
-              await establishServerSession(session.access_token);
-              return true;
+            await serializeSessionMutation(async () => {
+              if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
+              return fetch("/api/auth/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ accessToken: session.access_token }),
+              });
             });
-            if (!confirmed || localStorage.getItem(SIGNING_OUT_KEY) !== null) {
-              setUser(null);
-              setStatus("unauthenticated");
-              return;
-            }
           }
-          if (active) {
-            setUser(authUser);
-            setError(null);
-            setStatus("authenticated");
-          }
+          if (active) setStatus("authenticated");
         } else {
           const signingOut = localStorage.getItem(SIGNING_OUT_KEY) !== null;
           if (hasServerSession && !signingOut && sessionPayload?.data?.user) {
@@ -144,8 +137,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (!active) return;
         console.error("Failed to load Supabase auth session:", err);
-        setUser(null);
-        setError(err instanceof Error ? err.message : "Session verification failed");
         setStatus("unauthenticated");
       } finally {
         serverBootstrapComplete = true;
@@ -174,20 +165,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      const mapped = mapSupabaseUser(session.user);
+      setUser(mapped);
+      setError(null);
+
       try {
-        const confirmed = await serializeSessionMutation(async () => {
-          if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return false;
-          await establishServerSession(session.access_token);
-          return true;
+        await serializeSessionMutation(async () => {
+          if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
+          return fetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: session.access_token }),
+          });
         });
-        if (active && confirmed && localStorage.getItem(SIGNING_OUT_KEY) === null) {
-          setUser(mapSupabaseUser(session.user));
-          setError(null);
-          setStatus("authenticated");
-        }
+        if (active) setStatus("authenticated");
       } catch (sessionError) {
         if (!active) return;
-        setUser(null);
         setError(sessionError instanceof Error ? sessionError.message : "Session verification failed");
         setStatus("unauthenticated");
       }
@@ -420,8 +413,8 @@ export function UserAvatar({
   user: AuthUser | null;
   className?: string;
 }) {
-  const label = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Account";
-  const initials = (label.trim()[0] || "U").toUpperCase();
+  const label = user?.displayName || user?.email || "Account";
+  const initials = label.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   return user?.photoURL ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className={`${className} rounded-full object-cover ring-2 ring-card`} />
@@ -432,39 +425,9 @@ export function UserAvatar({
   );
 }
 
-export function AuthUserMenu({
-  className,
-  showLabel = false,
-  collapsed = false,
-}: {
-  className?: string;
-  showLabel?: boolean;
-  collapsed?: boolean;
-} = {}) {
+export function AuthUserMenu() {
   const { user, signOutUser } = useAuth();
-  const label = user?.displayName || (user?.email ? extractCleanUserName(user.email) : "") || "Account";
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          void signOutUser().catch((signOutError) => {
-            toast.error(signOutError instanceof Error ? signOutError.message : "Sign out failed");
-          });
-        }}
-        title={`Sign out ${label}`}
-        aria-label={`Sign out ${label}`}
-        className={cn(
-          "w-9 h-9 rounded-full flex items-center justify-center hover:opacity-85 transition-opacity cursor-pointer mx-auto relative group outline-none",
-          className
-        )}
-      >
-        <UserAvatar user={user} className="h-7 w-7" />
-      </button>
-    );
-  }
-
+  const label = user?.displayName || user?.email || "Account";
   return (
     <Button
       variant="ghost"
@@ -473,13 +436,10 @@ export function AuthUserMenu({
         toast.error(signOutError instanceof Error ? signOutError.message : "Sign out failed");
       }); }}
       title={`Sign out ${label}`}
-      className={cn(
-        "h-10 gap-2.5 rounded-full border border-border bg-card px-1.5 pr-3 text-xs text-foreground shadow-sm hover:bg-accent",
-        className
-      )}
+      className="h-10 gap-2.5 rounded-full border border-border bg-card px-1.5 pr-3 text-xs text-foreground shadow-sm hover:bg-accent"
     >
       <UserAvatar user={user} className="h-7 w-7" />
-      <span className={cn(showLabel ? "inline" : "hidden sm:inline", "max-w-32 truncate")}>{label}</span>
+      <span className="hidden max-w-32 truncate sm:inline">{label}</span>
       <LogOut className="h-3.5 w-3.5" />
     </Button>
   );

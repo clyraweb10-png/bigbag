@@ -126,15 +126,11 @@ export const PREVIEW_RUNTIME_SHIM = (base: string) => String.raw`
   window.__totalumPreviewShim = true;
 
   var BASE = ${JSON.stringify(base)};
-  var PROJECT_API_BASE = BASE.replace(/\/__published$/, '') + '/__bigbag';
 
   // Root-absolute, but not protocol-relative ("//cdn…") and not already proxied.
   function rewritePath(url) {
     if (url.charCodeAt(0) !== 47) return url;      // not "/"
     if (url.charCodeAt(1) === 47) return url;      // "//host" is another origin
-    // Published pages use frozen assets, while the generated auth/data clients
-    // still call the project's live server API at /__bigbag.
-    if (url === PROJECT_API_BASE || url.lastIndexOf(PROJECT_API_BASE + '/', 0) === 0) return url;
     if (url.lastIndexOf(BASE + '/', 0) === 0) return url;
     if (url === BASE) return url;
     return BASE + url;

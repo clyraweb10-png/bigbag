@@ -4,7 +4,6 @@ import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { localFileManager } from "@/lib/local-orchestrator/file-manager";
 import { e2bSandboxManager } from "@/lib/local-orchestrator/e2b-sandbox-manager";
 import { localAgentEngine } from "@/lib/local-orchestrator/agent-engine";
-import { localProjectTransfer } from "@/lib/local-orchestrator/project-transfer";
 import { extractWebsiteUrl } from "@/lib/local-orchestrator/firecrawl-design";
 import { vcaasRequest, VcaasPathError } from "@/lib/vcaas-server";
 import { normalizeVcaasError, toErrorEnvelope } from "@/lib/vcaas-errors";
@@ -433,7 +432,7 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
       );
     }
     if (subRoute === "deployments/deploy" && method === "POST") {
-      const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true, isDeploy: true });
+      const previewUrl = await e2bSandboxManager.startDevServer(projectId, { rebuild: true });
       return NextResponse.json(
         { ok: true, data: { started: true, status: "success", previewUrl } },
         { status: 200 }
@@ -573,94 +572,6 @@ async function handleLocalRequest(req: NextRequest, path: string[], tenantId: st
     // /projects/:id/figma/status
     if (subRoute === "figma/status") {
       return NextResponse.json({ ok: true, data: { connected: false } }, { status: 200 });
-    }
-
-    // /projects/:id/export
-    if (subRoute === "export" && method === "POST") {
-      const body = await req.json().catch(() => ({}));
-      const includeRecords = Boolean(body?.includeRecords);
-      try {
-        const result = await localProjectTransfer.exportProject(projectId, tenantId, { includeRecords });
-        return NextResponse.json({ ok: true, data: result }, { status: 200 });
-      } catch (error) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: error instanceof Error ? error.message : "Failed to export project",
-          },
-          { status: 500 }
-        );
-      }
-    }
-
-    // /projects/:id/import
-    if (subRoute === "import" && method === "POST") {
-      const body = await req.json().catch(() => ({}));
-      const importCode = typeof body?.importCode === "string" ? body.importCode.trim() : "";
-      if (!importCode) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Paste the import code from the export you want to bring in.",
-            code: "MISSING_IMPORT_CODE",
-          },
-          { status: 400 }
-        );
-      }
-
-      const bundle = await localProjectTransfer.loadBundle(importCode);
-      if (!bundle) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Export bundle not found. Please check the import code and try again.",
-            code: "MISSING_IMPORT_CODE",
-          },
-          { status: 404 }
-        );
-      }
-
-      const rec = localProjectStore.getRecord(projectId);
-      if (!rec) {
-        return NextResponse.json({ ok: false, error: "Project not found", code: "PROJECT_NOT_FOUND" }, { status: 404 });
-      }
-
-      if (rec.importInProgress) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "An import is already running for this project. Wait for it to finish.",
-            code: "IMPORT_IN_PROGRESS",
-          },
-          { status: 409 }
-        );
-      }
-
-      const startedAt = new Date().toISOString();
-      localProjectStore.update(projectId, {
-        importInProgress: { startedAt },
-        serverStatus: "Starting",
-      });
-
-      void localProjectTransfer.applyImport(projectId, bundle, tenantId).catch((error) => {
-        console.error(`[vcaas] Background import failed for ${projectId}:`, error);
-        localProjectStore.update(projectId, {
-          importInProgress: null,
-          serverStatus: "Error",
-        });
-      });
-
-      return NextResponse.json(
-        {
-          ok: true,
-          data: {
-            projectId,
-            status: "importing",
-            message: "Import started",
-          },
-        },
-        { status: 200 }
-      );
     }
   }
 

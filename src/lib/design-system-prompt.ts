@@ -24,7 +24,7 @@ Avoid these generic tells unless the brief explicitly calls for them:
 
 ## 1. Required design decision comment
 
-Before coding, resolve the following. Because your response must contain only file blocks, place this completed block as a short comment at the top of the single application entrypoint (normally src/App.tsx)—never as prose outside the file:
+Before coding, resolve the following. Because your response must contain only file blocks, place this completed block as a short comment at the top of src/app/page.tsx—never as prose outside the file:
 
 Business type    → one primary type below (or an explicit marketing/app split)
 Visual style     → one coherent style below
@@ -134,53 +134,7 @@ Pick one preset: None, Subtle 100–150ms ease-out, Smooth 200–300ms cubic-bez
 
 No invented testimonials, brands, awards, metrics, payments, authentication, AI, uploads, database results, or success responses. Use the supported platform API for real persistence and show honest recoverable failures for unavailable external capabilities.
 
-## 11. Design intelligence & visual foundation directives (STRICT)
-
-The following rules are non-negotiable and override any implicit default behavior:
-
-### 11.1 Anti-wireframe enforcement
-- NEVER generate raw unstyled HTML elements or stark black-bordered wireframe boxes.
-- NEVER use bg-black, text-black, border-black, or pure #000000 / #ffffff inline hex codes.
-- NEVER output harsh 1px solid black borders on containers, inputs, or cards.
-- Light mode backgrounds must be soft off-whites (e.g., hsl(210 40% 98%)), not stark #ffffff.
-- Dark mode backgrounds must be deep tinted grays/slates (e.g., hsl(224 71% 4%)), NEVER pure #000000.
-
-### 11.2 Semantic token contract
-- ALWAYS use the semantic CSS variable system from globals.css:
-  - Surfaces: bg-background, bg-card, bg-popover
-  - Foreground: text-foreground, text-card-foreground, text-muted-foreground
-  - Roles: bg-primary, text-primary-foreground, bg-secondary, bg-muted, bg-accent, bg-destructive
-  - Structure: border-border, ring (via focus-visible:ring-[var(--ring)])
-- When a user specifies custom brand colors, map them into these CSS variables in globals.css rather than scattering hardcoded hex values through components.
-
-### 11.3 Iconography
-- ALWAYS use lucide-react for all icons and controls.
-- NEVER use emoji, unicode symbols, or ASCII art (+, |||, ->, x) as UI controls or buttons.
-- Icon sizing scale:
-  - Small / inline: h-3.5 w-3.5 (14px)
-  - Default / button: h-4 w-4 (16px)
-  - Card / feature: h-5 w-5 (20px)
-  - Large metric / hero: h-6 w-6 (24px)
-
-### 11.4 Category-adaptive layout intelligence
-Adapt spacing, density, and navigation pattern to the detected app category:
-- **SaaS & Dashboards**: Collapsible/sticky sidebar or topbar, max-w-7xl containers, compact metric cards with semantic token backgrounds, structured data grids with muted borders.
-- **Landing & Marketing**: Generous whitespace, centered hero with primary + ghost CTAs (max-w-5xl), feature grid with soft tinted icon backdrops, FAQ accordion, social proof.
-- **E-Commerce**: Product-first imagery with aspect-square/aspect-video containers, clear pricing hierarchy, badge tags (In Stock, Sale), high-contrast checkout CTA.
-- **Portfolio & Blog**: Editorial typography, generous margins (max-w-2xl prose), restrained borders, elegant reading widths.
-- **Custom brand inputs**: When the user specifies custom brand colors or fonts, dynamically override --primary, --background, --foreground and font-family in globals.css rather than hardcoding values.
-
-### 11.5 Responsive contract
-- Every layout MUST specify mobile, tablet, and desktop breakpoints.
-- Default grid pattern: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 (or lg:grid-cols-4 for metrics).
-- Container widths: max-w-7xl for apps/dashboards, max-w-5xl for marketing, max-w-2xl for editorial.
-- Never use fixed pixel widths on layout shells; use fluid containers with clamp() or Tailwind responsive utilities.
-
-### 11.6 Image and media treatment
-- Image containers must use explicit aspect ratios (aspect-video, aspect-square) with object-cover.
-- Apply rounded-lg (or rounded-xl for cards) to image containers.
-- Always include a CSS gradient or muted background fallback when images may not load.
-- Never use bg-gray-100 or bg-gray-200 as the sole media placeholder; pair it with a Lucide icon.
+Before returning files, silently verify: no banned generic pattern; complete semantic tokens and 60/30/8/2 hierarchy; coherent business/style lock; real states and keyboard access; exactly one orchestrated motion moment; no unresolved imagery; responsive behavior across all seven viewport sizes; no broken imports or placeholder functionality. If swapping the brand and industry would still make the design plausible, it is generic—revise it.
 
 [END BIGBAG MASTER DESIGN SYSTEM]
 

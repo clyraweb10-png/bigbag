@@ -1,6 +1,6 @@
 /**
  * Intent Router — classifies what the user wants based on their message and the
- * current project stage. This drives whether we call the GLM planner
+ * current project stage. This drives whether we call the fast Groq/GLM planner
  * or the full code engine.
  *
  * No imports from vcaas or heavy deps — this must be importable server-side and
@@ -10,17 +10,17 @@
 /** Lifecycle stage of a project in the builder flow. */
 export type ProjectStage =
   | "idle"                  // No conversation yet / fresh project
-  | "planning"              // GLM is generating an implementation plan
+  | "planning"              // Groq/GLM is generating an implementation plan
   | "awaiting_confirmation" // Plan shown, waiting for user to confirm or refine
   | "building"              // Code engine running (agent.start called)
   | "active";               // App is live; user is iterating with edits
 
 /** What the user intends with their message. */
 export type UserIntent =
-  | "chat"                 // Casual reply / question — use GLM chat mode
+  | "chat"                 // Casual reply / question — use Groq/GLM chat mode
   | "plan"                 // Describe an app idea — generate Implementation Plan
   | "confirm_build"        // Confirm the plan → call code engine
-  | "update_plan"          // Refine the plan (GLM, not code engine)
+  | "update_plan"          // Refine the plan (Groq/GLM, not code engine)
   | "direct_edit";         // Existing active project — go straight to code engine
 
 /**
