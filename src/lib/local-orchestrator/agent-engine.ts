@@ -953,7 +953,7 @@ export const localAgentEngine = {
               conversation: [...(currentRec?.conversation || []), switchMsg],
             });
           },
-          { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000, onlyProviderId: providers[0]?.id || "above-glm53", signal: controller.signal, requestLabel: "code_generation" }
+          { perProviderTimeoutMs: 240_000, totalTimeoutMs: 360_000, onlyProviderId: providers[0]?.id || "above-glm53", signal: controller.signal, requestLabel: "code_generation" }
         );
         checkCancelled();
 
@@ -1018,8 +1018,8 @@ export const localAgentEngine = {
               {
                 onlyProviderId: providers[0]?.id || "above-glm53",
                 signal: controller.signal,
-                perProviderTimeoutMs: 120_000,
-                totalTimeoutMs: 210_000,
+                perProviderTimeoutMs: 180_000,
+                totalTimeoutMs: 270_000,
               }
             );
             checkCancelled();
@@ -1355,8 +1355,8 @@ export const localAgentEngine = {
                 {
                   onlyProviderId: providers[0]?.id || "above-glm53",
                   signal: controller.signal,
-                  perProviderTimeoutMs: 120_000,
-                  totalTimeoutMs: 210_000,
+                  perProviderTimeoutMs: 180_000,
+                  totalTimeoutMs: 270_000,
                 }
               );
               checkCancelled();

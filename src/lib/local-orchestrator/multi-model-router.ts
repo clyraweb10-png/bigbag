@@ -276,18 +276,7 @@ class MultiModelRouter {
         baseUrl: aboveBaseUrl,
         apiKey: aboveKey,
         model: aboveModel,
-        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
-        maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: "low",
-      });
-      // Backwards-compatible alias for existing references
-      providers.push({
-        id: "telnyx-glm",
-        name: "Above.dev (GLM-5.3-Flash)",
-        baseUrl: aboveBaseUrl,
-        apiKey: aboveKey,
-        model: aboveModel,
-        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
+        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || "8192", 10),
         maxRetries: DEFAULT_MAX_RETRIES,
         reasoningEffort: "low",
       });
@@ -595,8 +584,9 @@ class MultiModelRouter {
       );
     }
 
-    const eligibleProviders = options.onlyProviderId
-      ? configuredProviders.filter((provider) => provider.id === options.onlyProviderId)
+    const targetProviderId = options.onlyProviderId === "telnyx-glm" ? "above-glm53" : options.onlyProviderId;
+    const eligibleProviders = targetProviderId
+      ? configuredProviders.filter((provider) => provider.id === targetProviderId)
       : configuredProviders;
     if (eligibleProviders.length === 0) {
       throw new Error("The required AI capability is not configured.");
