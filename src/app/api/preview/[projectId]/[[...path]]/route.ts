@@ -900,17 +900,24 @@ async function servePersistentDeployment(
     projectId: string,
     segments: string[],
     writeCapability?: string,
-    guestCapability?: string
+    guestCapability?: string,
+    published = false
 ): Promise<NextResponse> {
     const requestedPath = segments.length > 0 ? segments.join("/") : "index.html";
-    let file = await durableProjectStore.readDeploymentFile(projectId, requestedPath);
-    if (!file && requestedPath.startsWith("uploads/")) {
+    let file = published
+        ? await durableProjectStore.readDeploymentFile(projectId, requestedPath)
+        : await durableProjectStore.readPreviewFile(projectId, requestedPath) ||
+          await durableProjectStore.readDeploymentFile(projectId, requestedPath);
+    if (!file && !published && requestedPath.startsWith("uploads/")) {
         file = await durableProjectStore.readPublicSourceFile(projectId, `public/${requestedPath}`);
     }
     if (!file && !requestedPath.split("/").at(-1)?.includes(".")) {
-        file = await durableProjectStore.readDeploymentFile(projectId, "index.html");
+        file = published
+            ? await durableProjectStore.readDeploymentFile(projectId, "index.html")
+            : await durableProjectStore.readPreviewFile(projectId, "index.html") ||
+              await durableProjectStore.readDeploymentFile(projectId, "index.html");
     }
-    if (!file) {
+    if (!file && !published) {
         try {
             const rootDir = localProjectStore.getWorkspaceDir(projectId);
             const hasExt = requestedPath.split("/").at(-1)?.includes(".");
@@ -935,6 +942,12 @@ async function servePersistentDeployment(
         } catch { /* ignore */ }
     }
     if (!file) {
+        if (published) {
+            return NextResponse.json(
+                { ok: false, error: "Project is not published" },
+                { status: 404, headers: { "cache-control": "no-store" } }
+            );
+        }
         // For document requests (browser navigation), show a friendly boot page
         // with auto-refresh instead of raw JSON. The user sees this as "starting"
         // and the iframe will auto-retry every 2 seconds.
@@ -949,7 +962,7 @@ async function servePersistentDeployment(
 
     const extension = file.path.slice(file.path.lastIndexOf(".")).toLowerCase();
     const contentType = STATIC_CONTENT_TYPES[extension] || "application/octet-stream";
-    const base = `/api/preview/${encodeURIComponent(projectId)}`;
+    const base = `/api/preview/${encodeURIComponent(projectId)}${published ? "/__published" : ""}`;
     const isHtml = contentType.includes("text/html");
     const isHashedAsset = /^assets\/.+-[a-z0-9_-]{8,}\.[^/]+$/i.test(file.path);
     const headers = new Headers({
@@ -1221,7 +1234,7 @@ async function handle(
     }
 
     // 2. Enforce trailing slash for root preview documents so relative assets resolve within the project scope
-    if ((!path || path.length === 0) && !request.nextUrl.pathname.endsWith("/")) {
+    if ((!path || path.length === 0 || (path.length === 1 && path[0] === "__published")) && !request.nextUrl.pathname.endsWith("/")) {
         const url = new URL(request.url);
         url.pathname = `${url.pathname}/`;
         return NextResponse.redirect(url, 308);
@@ -1244,7 +1257,8 @@ async function handle(
      * scripted by the workspace at all. In local mode the editor document itself
      * is owner-gated; the static agent contains no tenant data or API capability.
      */
-    if ((path ?? []).length === 1 && path![0] === AGENT_PATH) {
+    if (((path ?? []).length === 1 && path![0] === AGENT_PATH) ||
+        (path?.length === 2 && path[0] === "__published" && path[1] === AGENT_PATH)) {
         /**
          * ⭐ THE SHIM SHIPS AHEAD OF THE AGENT, IN ONE FILE.
          *
@@ -1253,7 +1267,7 @@ async function handle(
          * before anything else executes. Concatenation makes that ordering
          * structural instead of dependent on how the browser schedules two requests.
          */
-        const base = `/api/preview/${encodeURIComponent(projectId)}`;
+        const base = `/api/preview/${encodeURIComponent(projectId)}${path?.[0] === "__published" ? "/__published" : ""}`;
         const body = `${PREVIEW_RUNTIME_SHIM(base)}\n${AGENT_SOURCE}`;
         return new NextResponse(body, {
             status: 200,
@@ -1281,7 +1295,9 @@ async function handle(
     // E2B and served by this existing Render application. Viewing never creates,
     // resumes, or contacts a sandbox.
     if (IS_LOCAL) {
-        const trustedEditor = request.nextUrl.searchParams.get("editor") === "1";
+        const publishedRequest = targetSegments[0] === "__published";
+        const assetSegments = publishedRequest ? targetSegments.slice(1) : targetSegments;
+        const trustedEditor = !publishedRequest && request.nextUrl.searchParams.get("editor") === "1";
         let writeCapability: string | undefined;
         const ownerSession = verifyAuthSession(request.cookies.get(AUTH_COOKIE)?.value);
         if (trustedEditor && !ownerSession) {
@@ -1336,7 +1352,9 @@ async function handle(
             (!usesDisposableE2b && localRecord?.serverStatus === "Active" && localRecord?.port
                 ? `http://127.0.0.1:${localRecord.port}`
                 : null);
-        const response = runningOrigin
+        const response = publishedRequest
+            ? await servePersistentDeployment(request, projectId, assetSegments, undefined, guestCapability, true)
+            : runningOrigin
             ? await proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability, guestCapability)
             : await servePersistentDeployment(request, projectId, targetSegments, writeCapability, guestCapability);
         if (guestContext?.cookieValue) {

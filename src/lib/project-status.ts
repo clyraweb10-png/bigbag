@@ -311,11 +311,14 @@ export function toAbsoluteProjectUrl(value: string | null | undefined): string |
  */
 export function getProductionUrl(detail: VcaasProject | null | undefined): string | null {
     if (!isPublished(detail)) return null;
+    if (process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local") {
+        return getPublishedUrl(detail, detail!.projectId);
+    }
     return toAbsoluteProjectUrl(detail?.customDomain?.hostname || detail?.productionProjectUrl);
 }
 
 /**
- * The HOST this project serves on when published — scheme-less, for DISPLAY.
+ * The URL this project serves on when published, including its scheme and path.
  *
  * ⚠️ IT IS NOT `getProductionUrl`, AND BOTH ARE NEEDED. That one answers "is there a
  * live site to link to" and returns `null` until a deploy has succeeded, which is
@@ -324,21 +327,36 @@ export function getProductionUrl(detail: VcaasProject | null | undefined): strin
  * just-published dialog, which is opened at the instant the deploy settles and
  * cannot wait for the project document to catch up.
  *
- * ⚠️ THE FALLBACK IS THE DOCUMENTED CONVENTION, not a guess: `productionProjectUrl`
- * is absent before the first deploy, and a project always publishes at
- * `{projectId}.totalum-project.com` unless a custom domain is ACTIVE. `pending`
- * domains are deliberately ignored — DNS that has not verified serves nothing, so
- * showing it would name an address that does not answer.
+ * Local mode publishes through this app's persistent preview route. Cloud mode
+ * uses the documented Totalum address until `productionProjectUrl` is available.
+ * Pending domains are ignored because they do not serve the project yet.
  */
-export function getPublishedHost(
+export function getPublishedUrl(
     detail: VcaasProject | null | undefined,
-    projectId: string
+    projectId: string,
+    appOrigin = process.env.NEXT_PUBLIC_APP_URL
 ): string {
     const domain = detail?.customDomain;
-    const host =
-        domain?.status === "active" && domain.hostname
-            ? domain.hostname
-            : detail?.productionProjectUrl || `${projectId}.totalum-project.com`;
+    if (domain?.status === "active" && domain.hostname) {
+        return `https://${domain.hostname.replace(/^https?:\/\//i, "").replace(/\/+$/, "")}`;
+    }
 
-    return host.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    const origin = appOrigin?.trim() || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
+    const published = detail?.productionProjectUrl?.trim();
+    if (published) {
+        try {
+            const url = new URL(published, origin);
+            if (url.protocol === "https:" || url.protocol === "http:") {
+                if (process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local" &&
+                    /^\/api\/preview\/[^/]+\/?$/.test(url.pathname)) {
+                    url.pathname = `${url.pathname.replace(/\/$/, "")}/__published/`;
+                }
+                return url.toString();
+            }
+        } catch { /* use the deployment-mode default */ }
+    }
+    if (process.env.NEXT_PUBLIC_ORCHESTRATOR_MODE === "local") {
+        return new URL(`/api/preview/${encodeURIComponent(projectId)}/__published/`, origin).toString();
+    }
+    return `https://${encodeURIComponent(projectId)}.totalum-project.com`;
 }

@@ -87,7 +87,6 @@ export interface RouterCompletionOptions {
 export const GLM_53_MAX_RETRIES = 2;
 /** Maximum number of follow-up requests used to finish a token-limited response. */
 export const MAX_OUTPUT_CONTINUATIONS = 4;
-const DEFAULT_MAX_RETRIES = 2;
 /** Delay in ms between retries. */
 const RETRY_DELAY_MS = 3_000;
 const providerCooldowns = new Map<string, { fingerprint: string; until: number; category: ProviderErrorCategory }>();

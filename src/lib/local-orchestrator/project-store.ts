@@ -183,9 +183,18 @@ export function persistentPreviewPath(projectId: string): string {
   return `/api/preview/${encodeURIComponent(projectId)}/`;
 }
 
+export function persistentPublishedPath(projectId: string): string {
+  return `/api/preview/${encodeURIComponent(projectId)}/__published/`;
+}
+
 export function persistentPreviewUrl(projectId: string): string {
   const base = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
   return base ? `${base}${persistentPreviewPath(projectId)}` : persistentPreviewPath(projectId);
+}
+
+export function persistentPublishedUrl(projectId: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "");
+  return base ? `${base}${persistentPublishedPath(projectId)}` : persistentPublishedPath(projectId);
 }
 
 import { STARTER_TEMPLATES } from "@/lib/starter-templates";
@@ -250,7 +259,9 @@ export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
     temporalDevelopmentProjectUrl: previewUrl,
     cachedDevelopmentUrl: previewUrl,
     developmentUrlFieldToUse: "temporalDevelopmentProjectUrl",
-    productionProjectUrl: record.productionProjectUrl,
+    productionProjectUrl: record.deployment?.status === "success"
+      ? persistentPublishedUrl(record.projectId)
+      : record.productionProjectUrl,
     previewImageUrl: record.screenshotUrl || resolveStarterPreviewImage(record.label, record.description, record.projectId) || null,
     totalCreditsSpent: 0,
   };

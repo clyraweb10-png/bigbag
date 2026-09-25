@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Sandbox } from "e2b";
-import { localProjectStore, persistentPreviewPath, persistentPreviewUrl } from "./project-store";
+import { localProjectStore, persistentPreviewPath, persistentPublishedUrl } from "./project-store";
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import { GENERATED_RUNTIME_CHECK_SCRIPT } from "./runtime-validator";
@@ -12,6 +12,8 @@ import { ensureWorkspaceDependencies } from "./dependency-scanner";
 import { isRuntimeOwnedGeneratedPath } from "./generation-validator";
 import {
   durableProjectStore,
+  durablePersistenceConfigured,
+  collectDirectoryFiles,
   requireDurablePersistence,
   type PersistedFile,
 } from "./durable-project-store";
@@ -172,7 +174,7 @@ class E2BSandboxManager {
   public isE2BEnabled(): boolean {
     return (
       (process.env.SANDBOX_PROVIDER || "local").toLowerCase() === "e2b" &&
-      Boolean(process.env.E2B_API_KEY)
+      Boolean(process.env.E2B_API_KEY?.trim())
     );
   }
 
@@ -370,10 +372,14 @@ class E2BSandboxManager {
 
   public async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
     options.signal?.throwIfAborted();
+    if (process.env.SANDBOX_PROVIDER?.trim().toLowerCase() === "e2b" && !process.env.E2B_API_KEY?.trim()) {
+      throw new Error("E2B_API_KEY is required when SANDBOX_PROVIDER=e2b");
+    }
     purgeInvalidStaticHtml(localProjectStore.getWorkspaceDir(projectId));
     localSandboxManager.ensureProjectTemplate(projectId);
 
     if (!this.isE2BEnabled()) {
+      if (options.isDeploy) requireDurablePersistence();
       if (options.isDeploy) {
         localProjectStore.update(projectId, {
           deployment: { status: "deploying", createdAt: new Date().toISOString() },
@@ -388,6 +394,16 @@ class E2BSandboxManager {
           localSandboxManager.stopDevServer(projectId);
           options.signal.throwIfAborted();
         }
+        if (durablePersistenceConfigured()) {
+          const current = localProjectStore.update(projectId, {});
+          if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
+          await localProjectStore.flush(projectId);
+          const files = collectDirectoryFiles(path.join(localProjectStore.getWorkspaceDir(projectId), "dist"));
+          await durableProjectStore.savePreview(current, files, options.signal);
+          if (options.isDeploy) {
+            await durableProjectStore.saveDeployment(current, files, options.signal);
+          }
+        }
         localProjectStore.update(projectId, {
           previewUrl,
           serverStatus: "Active",
@@ -397,7 +413,7 @@ class E2BSandboxManager {
               createdAt: new Date().toISOString(),
               versionId: randomUUID(),
             },
-            productionProjectUrl: persistentPreviewUrl(projectId),
+            productionProjectUrl: persistentPublishedUrl(projectId),
           } : {}),
         });
         return previewUrl;
@@ -484,10 +500,14 @@ class E2BSandboxManager {
                 createdAt: new Date().toISOString(),
                 versionId: randomUUID(),
               };
-              deploymentFields.productionProjectUrl = persistentPreviewUrl(projectId);
+              deploymentFields.productionProjectUrl = persistentPublishedUrl(projectId);
             }
-            // Save the compiled files for persistent preview
-            await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
+            // A follow-up build updates only the editor preview. Publishing
+            // explicitly replaces the independently saved public artifact.
+            await durableProjectStore.savePreview({ ...current, ...deploymentFields }, build.files, signal);
+            if (options.isDeploy) {
+              await durableProjectStore.saveDeployment({ ...current, ...deploymentFields }, build.files, signal);
+            }
             signal.throwIfAborted();
             localProjectStore.update(projectId, deploymentFields);
             await sandbox.kill().catch(() => undefined);

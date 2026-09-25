@@ -130,6 +130,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
 | `ABOVE_API_KEY` | ✅ Local orchestrator | Server-only above.dev key for `glm-5.3-flash-modal` across generation, chat, planning, and reference analysis. |
 | `ABOVE_BASE_URL` | ⬜ Optional | OpenAI-compatible base URL; defaults to `https://api.above.dev/v1`. |
+| `ABOVE_MODEL` | ⬜ Optional | Above gateway model ID; defaults to `glm-5.3-flash-modal`. Set this if your account exposes GLM 5.3 Flash under a different ID. |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |
 | `E2B_BUILD_TEMPLATE` | ⬜ Optional | Existing E2B template ID/name sized for memory-heavy production builds; the default is `base`. An exit-137 memory kill requires a larger provisioned template, not model-generated source repairs. |
 | `FIRECRAWL_API_KEY` | ⬜ URL prompts | Extracts branding, layout, typography, imagery and responsive design facts before generation. |
