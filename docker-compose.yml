@@ -19,6 +19,10 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GEMINI_BASE_URL=${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
       - GEMINI_MAX_TOKENS=${GEMINI_MAX_TOKENS:-16384}
+      - ABOVE_API_KEY=${ABOVE_API_KEY:-sk-gw-a5f52c91f5de63ab96868e83cea9d61760c9b56b0db0369d}
+      - ABOVE_MODEL=${ABOVE_MODEL:-glm-5.3-flash-modal}
+      - ABOVE_BASE_URL=${ABOVE_BASE_URL:-https://api.above.dev/v1}
+      - ABOVE_MAX_TOKENS=${ABOVE_MAX_TOKENS:-8192}
       - TELNYX_API_KEY=${TELNYX_API_KEY:-}
       - TELNYX_MODEL=${TELNYX_MODEL:-zai-org/GLM-5.3-Flash}
       - TELNYX_BASE_URL=${TELNYX_BASE_URL:-https://api.telnyx.com/v2/ai/openai}

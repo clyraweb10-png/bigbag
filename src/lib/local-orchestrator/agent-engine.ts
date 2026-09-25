@@ -675,9 +675,9 @@ export const localAgentEngine = {
         localSandboxManager.ensureProjectTemplate(projectId);
         previousWorkspace = snapshotWorkspace(projectId);
 
-        const providers = multiModelRouter.getProviders().filter((provider) => provider.id === "telnyx-glm" && /GLM-5\.3-Flash/i.test(provider.model));
+        const providers = multiModelRouter.getProviders().filter((provider) => (provider.id === "above-glm53" || provider.id === "telnyx-glm") && /GLM-5\.3-Flash|glm-5\.3/i.test(provider.model));
         if (providers.length === 0) {
-          throw new Error("GLM 5.3 Flash is required for code generation; configure TELNYX_MODEL and TELNYX_API_KEY");
+          throw new Error("GLM 5.3 Flash is required for code generation; configure ABOVE_API_KEY");
         }
 
         // ═══⭐⭐ FOLLOW-UP AWARENESS ══════════════════════════════════════════
@@ -953,7 +953,7 @@ export const localAgentEngine = {
               conversation: [...(currentRec?.conversation || []), switchMsg],
             });
           },
-          { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000, onlyProviderId: "telnyx-glm", signal: controller.signal, requestLabel: "code_generation" }
+          { perProviderTimeoutMs: 120_000, totalTimeoutMs: 240_000, onlyProviderId: providers[0]?.id || "above-glm53", signal: controller.signal, requestLabel: "code_generation" }
         );
         checkCancelled();
 
@@ -1016,7 +1016,7 @@ export const localAgentEngine = {
               ],
               () => {},
               {
-                onlyProviderId: "telnyx-glm",
+                onlyProviderId: providers[0]?.id || "above-glm53",
                 signal: controller.signal,
                 perProviderTimeoutMs: 120_000,
                 totalTimeoutMs: 210_000,
@@ -1353,7 +1353,7 @@ export const localAgentEngine = {
                 ],
                 () => undefined,
                 {
-                  onlyProviderId: "telnyx-glm",
+                  onlyProviderId: providers[0]?.id || "above-glm53",
                   signal: controller.signal,
                   perProviderTimeoutMs: 120_000,
                   totalTimeoutMs: 210_000,

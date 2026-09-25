@@ -7,7 +7,7 @@ export function SetupBanners() {
   const FEATURES = [
     { icon: Server, label: "Self-hosted Dev Server" },
     { icon: Database, label: "Built-in Data Storage" },
-    { icon: Sparkles, label: "Multi-Model AI (Gemini, Telnyx)" },
+    { icon: Sparkles, label: "GLM 5.3 Flash (above.dev)" },
     { icon: Globe, label: "Custom Domains" },
     { icon: Github, label: "GitHub Integration" },
     { icon: Box, label: "Sandboxes & Live Preview" },
@@ -34,8 +34,8 @@ export function SetupBanners() {
             </p>
             <div className="mt-2.5 rounded-lg bg-gray-950 text-white font-mono text-xs p-3.5 space-y-1 overflow-x-auto ring-1 ring-white/10">
               <div><span className="text-emerald-400">ORCHESTRATOR_MODE</span>=<span className="text-gray-400">local</span></div>
-              <div><span className="text-emerald-400">GEMINI_API_KEY</span>=<span className="text-gray-400">your_gemini_key</span> <span className="text-gray-400"># primary</span></div>
-              <div><span className="text-emerald-400">TELNYX_API_KEY</span>=<span className="text-gray-400">your_telnyx_key</span> <span className="text-gray-400"># fallback</span></div>
+              <div><span className="text-emerald-400">ABOVE_API_KEY</span>=<span className="text-gray-400">sk-gw-...</span> <span className="text-gray-400"># above.dev GLM-5.3</span></div>
+              <div><span className="text-emerald-400">GEMINI_API_KEY</span>=<span className="text-gray-400">your_gemini_key</span></div>
               <div><span className="text-emerald-400">E2B_API_KEY</span>=<span className="text-gray-400">your_e2b_key</span></div>
               <div><span className="text-emerald-400">FIRECRAWL_API_KEY</span>=<span className="text-gray-400">your_firecrawl_key</span></div>
               <div><span className="text-emerald-400">SUPABASE_DATABASE_URL</span>=<span className="text-gray-400">postgresql://...</span></div>

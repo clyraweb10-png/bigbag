@@ -13,7 +13,7 @@ import "server-only";
 export interface PlannerResult {
   text: string;
   durationMs: number;
-  provider: "glm-47-flash" | "groq" | "gemini-flash" | "glm-45-flash" | "telnyx-glm";
+  provider: "glm-47-flash" | "groq" | "gemini-flash" | "glm-45-flash" | "telnyx-glm" | "above-glm53";
 }
 
 export type ChatStreamEvent =
@@ -30,11 +30,15 @@ export async function* streamChatResponse(
 ): AsyncGenerator<ChatStreamEvent> {
   const wordCount = userMessage.trim().split(/\s+/).length;
   const short = wordCount <= 50;
-  const model = short ? process.env.GROQ_MODEL || "qwen/qwen3.8-27b" : process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
-  const apiKey = short ? process.env.GROQ_API_KEY : process.env.TELNYX_API_KEY;
-  const baseUrl = short ? process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1" : process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai";
+  const aboveApiKey = (process.env.ABOVE_API_KEY || process.env.TELNYX_API_KEY || "sk-gw-a5f52c91f5de63ab96868e83cea9d61760c9b56b0db0369d").trim();
+  const aboveBaseUrl = (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, "");
+  const aboveModel = (process.env.ABOVE_MODEL || process.env.TELNYX_MODEL || "glm-5.3-flash-modal").trim();
+
+  const model = short ? (process.env.GROQ_MODEL || aboveModel) : aboveModel;
+  const apiKey = short ? (process.env.GROQ_API_KEY || aboveApiKey) : aboveApiKey;
+  const baseUrl = short ? (process.env.GROQ_BASE_URL || aboveBaseUrl) : aboveBaseUrl;
   const routingReason = short ? "chat_or_question_at_most_50_words" : "chat_or_question_over_50_words";
-  if (!apiKey || (!short && !/GLM-5\.3-Flash/i.test(model))) {
+  if (!apiKey) {
     throw new Error(`${short ? "Groq Qwen" : "GLM 5.3 Flash"} chat provider is not configured`);
   }
   const startedAt = Date.now();
@@ -169,16 +173,18 @@ export async function callPlanner(
   options: { groqMaxTokens?: number; onlyGlm53?: boolean } = {}
 ): Promise<PlannerResult> {
   if (options.onlyGlm53) {
-    const apiKey = process.env.TELNYX_API_KEY;
-    const model = process.env.TELNYX_MODEL || "zai-org/GLM-5.3-Flash";
-    if (!apiKey || !/GLM-5\.3-Flash/i.test(model)) throw new Error("GLM 5.3 Flash planning provider is not configured");
+    const apiKey = (process.env.ABOVE_API_KEY || process.env.TELNYX_API_KEY || "sk-gw-a5f52c91f5de63ab96868e83cea9d61760c9b56b0db0369d").trim();
+    const model = (process.env.ABOVE_MODEL || process.env.TELNYX_MODEL || "glm-5.3-flash-modal").trim();
+    const baseUrl = (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, "");
+    if (!apiKey) throw new Error("GLM 5.3 Flash planning provider is not configured");
     const startedAt = Date.now();
     const text = await callOpenAICompat(
-      process.env.TELNYX_BASE_URL || "https://api.telnyx.com/v2/ai/openai",
+      baseUrl,
       apiKey, model, [{ role: "system", content: systemPrompt }, ...messages],
-      4_096, 45_000
+      4_096, 45_000,
+      { reasoning_effort: "low" }
     );
-    return { text, durationMs: Date.now() - startedAt, provider: "telnyx-glm" };
+    return { text, durationMs: Date.now() - startedAt, provider: "above-glm53" };
   }
   const groqApiKey = process.env.GROQ_API_KEY;
   const groqBaseUrl = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
