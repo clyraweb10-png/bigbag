@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import {
     authFailed,
@@ -15,7 +16,7 @@ import type { VcaasProject } from "@/lib/vcaas-types";
 import { AGENT_PATH, AGENT_SOURCE, PREVIEW_RUNTIME_SHIM } from "@/lib/visual-edit-agent";
 import { injectAgent, rewriteCss, rewriteHtml, rewriteJavaScript } from "@/lib/preview-proxy";
 import { isLocalOrchestratorEnabled } from "@/lib/orchestrator-mode";
-import { durableProjectStore } from "@/lib/local-orchestrator/durable-project-store";
+import { BookingConflictError, BookingInputError, durableProjectStore } from "@/lib/local-orchestrator/durable-project-store";
 import { localSandboxManager } from "@/lib/local-orchestrator/sandbox-manager";
 import { localProjectStore } from "@/lib/local-orchestrator/project-store";
 import { AUTH_COOKIE, verifyAuthSession } from "@/lib/auth-session";
@@ -116,6 +117,9 @@ function previewBootPage(): NextResponse {
 
 const APP_DATA_PATH = "__bigbag";
 const APP_DATA_MAX_BODY_BYTES = 64 * 1024;
+const PRIVATE_FILE_BUCKET = "bigbag-generated-files";
+const PRIVATE_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const PRIVATE_FILE_LIMIT_PER_USER = 50;
 const PREVIEW_GUEST_PROJECT_RECORD_LIMIT = 500;
 const PREVIEW_AUTH_STORAGE_COOKIE = "bigbag_preview_auth";
 
@@ -127,7 +131,7 @@ function appDataHeaders(): HeadersInit {
     return {
         "access-control-allow-origin": "*",
         "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS",
-        "access-control-allow-headers": "content-type, authorization, x-bigbag-capability, x-bigbag-guest",
+        "access-control-allow-headers": "content-type, authorization, x-bigbag-capability, x-bigbag-guest, x-bigbag-file-name, x-bigbag-folder-id",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
     };
@@ -311,6 +315,263 @@ async function readAppDataBody(request: NextRequest): Promise<Record<string, unk
     return data as Record<string, unknown>;
 }
 
+class CommerceOrderValidationError extends Error {}
+class CommerceSubscriptionValidationError extends Error {}
+
+function verifiedCommercePlan(body: Record<string, unknown>, partial = false): Record<string, unknown> {
+    const data: Record<string, unknown> = {};
+    if (body.name !== undefined || !partial) {
+        if (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 160) {
+            throw new CommerceSubscriptionValidationError("Plan name is invalid");
+        }
+        data.name = body.name.trim();
+    }
+    if (body.description !== undefined) {
+        if (typeof body.description !== "string" || body.description.length > 2_000) {
+            throw new CommerceSubscriptionValidationError("Plan description is invalid");
+        }
+        data.description = body.description.trim();
+    }
+    if (body.priceCents !== undefined || !partial) {
+        if (!Number.isSafeInteger(body.priceCents) || (body.priceCents as number) < 0 || (body.priceCents as number) > 100_000_000) {
+            throw new CommerceSubscriptionValidationError("Plan price is invalid");
+        }
+        data.priceCents = body.priceCents;
+    }
+    if (body.interval !== undefined || !partial) {
+        if (body.interval !== "monthly" && body.interval !== "yearly") {
+            throw new CommerceSubscriptionValidationError("Plan interval is invalid");
+        }
+        data.interval = body.interval;
+    }
+    if (body.features !== undefined) {
+        if (!Array.isArray(body.features) || body.features.length > 30 ||
+            body.features.some((feature) => typeof feature !== "string" || !feature.trim() || feature.length > 240)) {
+            throw new CommerceSubscriptionValidationError("Plan features are invalid");
+        }
+        data.features = body.features.map((feature: string) => feature.trim());
+    }
+    if (body.active !== undefined) {
+        if (typeof body.active !== "boolean") throw new CommerceSubscriptionValidationError("Plan status is invalid");
+        data.active = body.active;
+    } else if (!partial) {
+        data.active = true;
+    }
+    if (partial && Object.keys(data).length === 0) throw new CommerceSubscriptionValidationError("Plan changes are empty");
+    return data;
+}
+
+async function verifiedCommerceSubscription(projectId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (typeof body.planId !== "string" || !/^[a-f0-9-]{36}$/i.test(body.planId)) {
+        throw new CommerceSubscriptionValidationError("Subscription plan is invalid");
+    }
+    const plan = await durableProjectStore.getAppRecord(projectId, "plans", body.planId);
+    if (!plan || plan.active !== true || typeof plan.name !== "string" ||
+        !Number.isSafeInteger(plan.priceCents) || (plan.priceCents as number) < 0 ||
+        (plan.interval !== "monthly" && plan.interval !== "yearly")) {
+        throw new CommerceSubscriptionValidationError("Selected plan is unavailable");
+    }
+    return { planId: body.planId, planName: plan.name, priceCents: plan.priceCents,
+        interval: plan.interval, status: "pending_payment" };
+}
+
+async function verifiedCommerceOrder(projectId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 50) {
+        throw new CommerceOrderValidationError("An order needs between 1 and 50 products");
+    }
+    const contact: Record<string, string> = {};
+    const contactLimits: Record<string, number> = { customerName: 160, email: 254, address: 2_000, phone: 40, notes: 2_000 };
+    for (const [field, limit] of Object.entries(contactLimits)) {
+        const value = body[field];
+        if (value === undefined || value === null || value === "") continue;
+        if (typeof value !== "string" || value.trim().length > limit) {
+            throw new CommerceOrderValidationError(`Order ${field} is invalid`);
+        }
+        contact[field] = value.trim();
+    }
+    if (contact.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) {
+        throw new CommerceOrderValidationError("Order email is invalid");
+    }
+    const items = [];
+    let subtotalCents = 0;
+    const requestedVariantQuantities = new Map<string, number>();
+    for (const rawItem of body.items) {
+        if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) {
+            throw new CommerceOrderValidationError("Order items are invalid");
+        }
+        const item = rawItem as Record<string, unknown>;
+        const productId = item.productId;
+        const qty = item.qty;
+        if (typeof productId !== "string" || !/^[a-f0-9-]{36}$/i.test(productId) ||
+            !Number.isSafeInteger(qty) || (qty as number) < 1 || (qty as number) > 100) {
+            throw new CommerceOrderValidationError("Order product or quantity is invalid");
+        }
+        const product = await durableProjectStore.getAppRecord(projectId, "products", productId);
+        if (!product || product.active === false ||
+            typeof product.name !== "string" || !Number.isSafeInteger(product.priceCents) ||
+            (product.priceCents as number) < 0) {
+            throw new CommerceOrderValidationError("A selected product is unavailable");
+        }
+        const variants = Array.isArray(product.variants) ? product.variants : [];
+        let variantLabel = "";
+        let variantId: string | undefined;
+        if (variants.length) {
+            const variant = variants.find((candidate) => {
+                if (!candidate || typeof candidate !== "object") return false;
+                const value = candidate as Record<string, unknown>;
+                const label = [value.color, value.size].filter((part) => typeof part === "string" && part).join(" / ");
+                return (typeof item.variantId === "string" && value.id === item.variantId) ||
+                    (typeof item.variantLabel === "string" && label === item.variantLabel);
+            }) as Record<string, unknown> | undefined;
+            if (!variant || typeof variant.id !== "string" || !variant.id.trim() ||
+                !Number.isSafeInteger(variant.stock) || (variant.stock as number) < (qty as number)) {
+                throw new CommerceOrderValidationError("The selected product option is unavailable");
+            }
+            variantId = variant.id.trim();
+            variantLabel = [variant.color, variant.size].filter((part) => typeof part === "string" && part).join(" / ");
+            // This checks the current catalogue only. Pending orders do not
+            // reserve inventory; a payment integration must recheck it atomically.
+            const stockKey = `${productId}:${variantId}`;
+            const requested = (requestedVariantQuantities.get(stockKey) || 0) + (qty as number);
+            if (requested > (variant.stock as number)) throw new CommerceOrderValidationError("The selected product option is unavailable");
+            requestedVariantQuantities.set(stockKey, requested);
+        }
+        const lineTotal = (product.priceCents as number) * (qty as number);
+        subtotalCents += lineTotal;
+        if (!Number.isSafeInteger(subtotalCents) || subtotalCents > 100_000_000) {
+            throw new CommerceOrderValidationError("Order total is too large");
+        }
+        items.push({ productId, ...(variantId ? { variantId } : {}), name: product.name, variantLabel,
+            unitPriceCents: product.priceCents, qty });
+    }
+    return { ...contact, items, subtotalCents, status: "pending_payment" };
+}
+
+async function serveProjectRole(request: NextRequest, projectId: string): Promise<NextResponse> {
+    const project = localProjectStore.getRecord(projectId) || await durableProjectStore.loadRecordByProjectId(projectId);
+    if (!project) return appDataJson({ ok: false, error: "Project not found" }, 404);
+    const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (!bearer) {
+        const capabilityTenantId = verifyPreviewWriteCapability(request.headers.get("x-bigbag-capability"), projectId);
+        return appDataJson({ ok: true, data: { role: capabilityTenantId === project.tenantId ? "owner" : "visitor" } });
+    }
+    const supabase = getSupabaseAdminClient() || getSupabaseClient();
+    if (!supabase) return appDataJson({ ok: false, error: "Authentication is not configured" }, 503);
+    const { data, error } = await supabase.auth.getUser(bearer);
+    if (error || !data.user) return appDataJson({ ok: false, error: "A valid user session is required" }, 401);
+    const role = tenantContextForIdentity(data.user.id).tenantId === project.tenantId ? "owner" : "customer";
+    return appDataJson({ ok: true, data: { role } });
+}
+
+async function servePrivateProjectFile(
+    request: NextRequest,
+    projectId: string,
+    segments: string[]
+): Promise<NextResponse> {
+    if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers: appDataHeaders() });
+    const fileId = segments.length === 3 ? segments[2] : undefined;
+    if (segments.length !== (fileId ? 3 : 2) || (fileId && !/^[a-z0-9-]{1,120}$/i.test(fileId))) {
+        return appDataJson({ ok: false, error: "Invalid file path" }, 404);
+    }
+    if (!fileId && request.method !== "POST" || fileId && request.method !== "GET" && request.method !== "DELETE") {
+        return appDataJson({ ok: false, error: "Method not allowed" }, 405);
+    }
+    const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (!bearer) return appDataJson({ ok: false, error: "Sign in to access private files" }, 401);
+    const admin = getSupabaseAdminClient();
+    if (!admin) return appDataJson({ ok: false, error: "Private file storage is not configured" }, 503);
+    const { data: identity, error: identityError } = await admin.auth.getUser(bearer);
+    if (identityError || !identity.user) return appDataJson({ ok: false, error: "A valid user session is required" }, 401);
+    const project = localProjectStore.getRecord(projectId) || await durableProjectStore.loadRecordByProjectId(projectId);
+    if (!project) return appDataJson({ ok: false, error: "Project not found" }, 404);
+    if (!project.privateFilesEnabled) return appDataJson({ ok: false, error: "Private file storage is not enabled for this project" }, 403);
+    const ownerId = identity.user.id;
+    const storage = admin.storage.from(PRIVATE_FILE_BUCKET);
+
+    if (!fileId) {
+        const declaredSize = Number(request.headers.get("content-length") || "0");
+        if (declaredSize > PRIVATE_FILE_MAX_BYTES) return appDataJson({ ok: false, error: "File exceeds the 8 MB limit" }, 413);
+        let name: string;
+        try { name = decodeURIComponent(request.headers.get("x-bigbag-file-name") || "").trim(); }
+        catch { return appDataJson({ ok: false, error: "Invalid file name" }, 400); }
+        if (!name || name.length > 180 || /[\\/\x00-\x1f\x7f]/.test(name)) {
+            return appDataJson({ ok: false, error: "Choose a file with a valid name" }, 400);
+        }
+        const mimeHeader = request.headers.get("content-type") || "";
+        const mime = /^[a-z0-9.+_-]+\/[a-z0-9.+_-]+$/i.test(mimeHeader)
+            ? mimeHeader.toLowerCase() : "application/octet-stream";
+        const folderId = request.headers.get("x-bigbag-folder-id")?.trim() || null;
+        if (folderId) {
+            if (!/^[a-z0-9-]{1,120}$/i.test(folderId) ||
+                !await durableProjectStore.getAppRecord(projectId, "folders", folderId, ownerId)) {
+                return appDataJson({ ok: false, error: "Selected folder does not belong to this account" }, 400);
+            }
+        }
+        const existing = await durableProjectStore.listAppRecords(projectId, "documents", { limit: 1, ownerId });
+        if (existing.total >= PRIVATE_FILE_LIMIT_PER_USER) {
+            return appDataJson({ ok: false, error: "This workspace has reached its 50-file limit" }, 429);
+        }
+        if (!request.body) return appDataJson({ ok: false, error: "Choose a non-empty file" }, 400);
+        const reader = request.body.getReader();
+        const chunks: Buffer[] = [];
+        let sizeBytes = 0;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                sizeBytes += value.byteLength;
+                if (sizeBytes > PRIVATE_FILE_MAX_BYTES) {
+                    await reader.cancel().catch(() => undefined);
+                    return appDataJson({ ok: false, error: "File exceeds the 8 MB limit" }, 413);
+                }
+                chunks.push(Buffer.from(value));
+            }
+        } finally {
+            reader.releaseLock();
+        }
+        if (!sizeBytes) return appDataJson({ ok: false, error: "Choose a non-empty file" }, 400);
+        const objectId = randomUUID();
+        const objectPath = `${projectId}/${ownerId}/${objectId}`;
+        const uploaded = await storage.upload(objectPath, Buffer.concat(chunks), { contentType: mime, upsert: false });
+        if (uploaded.error) return appDataJson({ ok: false, error: "Private file storage is unavailable. Try again shortly." }, 503);
+        try {
+            const record = await durableProjectStore.createAppRecord(projectId, "documents", {
+                name, mime, sizeBytes, fileId: objectId, folderId,
+            }, ownerId);
+            return appDataJson({ ok: true, data: record }, 201);
+        } catch {
+            await storage.remove([objectPath]).catch(() => undefined);
+            return appDataJson({ ok: false, error: "The file could not be saved. Nothing was added to your documents." }, 503);
+        }
+    }
+
+    const record = await durableProjectStore.getAppRecord(projectId, "documents", fileId, ownerId);
+    if (!record || typeof record.fileId !== "string" || !/^[a-f0-9-]{36}$/i.test(record.fileId)) {
+        return appDataJson({ ok: false, error: "File not found" }, 404);
+    }
+    const objectPath = `${projectId}/${ownerId}/${record.fileId}`;
+    if (request.method === "GET") {
+        const downloaded = await storage.download(objectPath);
+        if (downloaded.error || !downloaded.data) {
+            return appDataJson({ ok: false, error: "The private file is unavailable" }, 503);
+        }
+        const filename = typeof record.name === "string" ? record.name : "document";
+        return new NextResponse(downloaded.data, {
+            headers: {
+                ...appDataHeaders(),
+                "content-type": "application/octet-stream",
+                "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+            },
+        });
+    }
+    const removed = await storage.remove([objectPath]);
+    if (removed.error) return appDataJson({ ok: false, error: "The file could not be removed from private storage" }, 503);
+    const deleted = await durableProjectStore.deleteAppRecord(projectId, "documents", fileId, ownerId);
+    return deleted
+        ? appDataJson({ ok: true, data: { deleted: true } })
+        : appDataJson({ ok: false, error: "File metadata could not be removed" }, 503);
+}
+
 /**
  * Project-scoped CRUD used by generated apps. Auth-required projects accept
  * only a verified end-user bearer token. Public projects may use signed,
@@ -332,8 +593,10 @@ async function serveAppData(
         const authorization = request.headers.get("authorization") || "";
         const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
         let ownerId: string | undefined;
+        let authenticatedEmail: string | undefined;
         let hasAuthenticatedUser = false;
         let isGuestAccess = false;
+        let builderCapabilityTenantId: string | null = null;
         let projectRecord = localProjectStore.getRecord(projectId);
         if (bearer) {
             const supabase = getSupabaseAdminClient() || getSupabaseClient();
@@ -341,6 +604,7 @@ async function serveAppData(
             const { data, error } = await supabase.auth.getUser(bearer);
             if (error || !data.user) return appDataJson({ ok: false, error: "A valid user session is required" }, 401);
             ownerId = data.user.id;
+            authenticatedEmail = data.user.email;
             hasAuthenticatedUser = true;
             projectRecord ||= await durableProjectStore.loadRecordByProjectId(projectId);
             if (!projectRecord) return appDataJson({ ok: false, error: "Project not found" }, 404);
@@ -350,6 +614,7 @@ async function serveAppData(
                 projectId
             );
             if (tenantId) {
+                builderCapabilityTenantId = tenantId;
                 if (!(await localProjectStore.hydrateProject(projectId, tenantId))) {
                     return appDataJson({ ok: false, error: "Project not found" }, 404);
                 }
@@ -366,8 +631,60 @@ async function serveAppData(
                 isGuestAccess = true;
             }
         }
-        if (projectRecord?.requiresEndUserAuth && !hasAuthenticatedUser) {
+        const commerceProducts = Boolean(projectRecord?.commerceEnabled && collection === "products");
+        const commercePlans = Boolean(projectRecord?.commerceEnabled && collection === "plans");
+        const commerceCatalog = commerceProducts || commercePlans;
+        const sharedCatalog = Boolean(
+            (collection === "events" || collection === "courses" || collection === "services" || collection === "tables" || collection === "listings") &&
+            projectRecord?.sharedCatalogCollections?.includes(collection)
+        );
+        const serviceBookings = Boolean(
+            collection === "bookings" && projectRecord?.sharedCatalogCollections?.includes("services")
+        );
+        const tableReservations = Boolean(
+            (collection === "reservations" || collection === "table_reservations") &&
+            projectRecord?.sharedCatalogCollections?.includes("tables")
+        );
+        const reservationSlots = Boolean(
+            collection === "reservation_slots" && projectRecord?.sharedCatalogCollections?.includes("tables")
+        );
+        const propertyInquiries = Boolean(
+            collection === "inquiries" && projectRecord?.sharedCatalogCollections?.includes("listings")
+        );
+        const privateDocuments = Boolean(collection === "documents" && projectRecord?.privateFilesEnabled);
+        const publicCatalog = commerceCatalog || sharedCatalog || reservationSlots;
+        const commerceOrders = Boolean(projectRecord?.commerceEnabled && collection === "orders");
+        const commerceSubscriptions = Boolean(projectRecord?.commerceEnabled && collection === "subscriptions");
+        const guestCommerceCart = Boolean(projectRecord?.commerceEnabled && collection === "carts" && isGuestAccess);
+        const isProjectOwner = Boolean(projectRecord && (
+            builderCapabilityTenantId === projectRecord.tenantId ||
+            (hasAuthenticatedUser && ownerId && tenantContextForIdentity(ownerId).tenantId === projectRecord.tenantId)
+        ));
+        const isCommerceOwner = Boolean(projectRecord?.commerceEnabled && (commerceCatalog || commerceOrders) && isProjectOwner);
+        const isCatalogOwner = Boolean(publicCatalog && isProjectOwner);
+        const canManageReservations = Boolean(tableReservations && isProjectOwner);
+        const canManageInquiries = Boolean(propertyInquiries && isProjectOwner);
+        if (projectRecord?.requiresEndUserAuth && !hasAuthenticatedUser &&
+            !(publicCatalog && request.method === "GET") && !guestCommerceCart && !isCatalogOwner && !isCommerceOwner) {
             return appDataJson({ ok: false, error: "A signed-in user session is required" }, 401);
+        }
+        if (publicCatalog && request.method !== "GET" && !isCatalogOwner) {
+            return appDataJson({ ok: false, error: "Only the project owner can change the catalogue" }, 403);
+        }
+        if (reservationSlots && (request.method !== "GET" || recordId)) {
+            return appDataJson({ ok: false, error: "Availability is read-only" }, 405);
+        }
+        if (propertyInquiries && !hasAuthenticatedUser && !isProjectOwner) {
+            return appDataJson({ ok: false, error: "Sign in to send or view property inquiries" }, 401);
+        }
+        if (propertyInquiries && request.method !== "GET" && request.method !== "POST") {
+            return appDataJson({ ok: false, error: "Property inquiries are a permanent record" }, 403);
+        }
+        if (privateDocuments && (request.method === "POST" || request.method === "DELETE")) {
+            return appDataJson({ ok: false, error: "Use the private file service to add or remove documents" }, 403);
+        }
+        if ((commerceOrders || commerceSubscriptions) && request.method === "POST" && !hasAuthenticatedUser) {
+            return appDataJson({ ok: false, error: "Sign in before starting checkout" }, 401);
         }
         if (isGuestAccess && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
             if (!consumePreviewGuestMutationBudget(projectId)) {
@@ -382,8 +699,15 @@ async function serveAppData(
             }
         }
         if (request.method === "GET") {
+            if (reservationSlots) {
+                return appDataJson({ ok: true, data: await durableProjectStore.listTableReservationSlots(projectId) });
+            }
             if (recordId) {
-                const record = await durableProjectStore.getAppRecord(projectId, collection, recordId, ownerId);
+                const record = await durableProjectStore.getAppRecord(projectId, collection, recordId,
+                    publicCatalog || (commerceOrders && isCommerceOwner) || canManageReservations || canManageInquiries ? undefined : ownerId);
+                if (sharedCatalog && collection !== "services" && collection !== "tables" && !isCatalogOwner && record?.published !== true) {
+                    return appDataJson({ ok: false, error: "Record not found" }, 404);
+                }
                 return record
                     ? appDataJson({ ok: true, data: record })
                     : appDataJson({ ok: false, error: "Record not found" }, 404);
@@ -396,32 +720,120 @@ async function serveAppData(
             const offset = Number.isInteger(requestedOffset)
                 ? Math.max(0, requestedOffset)
                 : 0;
-            const data = await durableProjectStore.listAppRecords(projectId, collection, { limit, offset, ownerId });
+            const data = await durableProjectStore.listAppRecords(projectId, collection, {
+                limit, offset, ownerId: publicCatalog || (commerceOrders && isCommerceOwner) || canManageReservations || canManageInquiries ? undefined : ownerId,
+                publishedOnly: sharedCatalog && collection !== "services" && collection !== "tables" && !isCatalogOwner,
+            });
             return appDataJson({ ok: true, data });
         }
         if (request.method === "POST" && !recordId) {
+            let body = await readAppDataBody(request);
+            if (serviceBookings) {
+                if (!hasAuthenticatedUser || !ownerId) return appDataJson({ ok: false, error: "Sign in to book an appointment" }, 401);
+                const data = await durableProjectStore.createServiceBooking(projectId, body, ownerId);
+                return appDataJson({ ok: true, data }, 201);
+            }
+            if (tableReservations) {
+                if (!hasAuthenticatedUser || !ownerId) return appDataJson({ ok: false, error: "Sign in to reserve a table" }, 401);
+                const data = await durableProjectStore.createTableReservation(projectId, body, ownerId, collection as "reservations" | "table_reservations");
+                return appDataJson({ ok: true, data }, 201);
+            }
+            if (propertyInquiries) {
+                if (!hasAuthenticatedUser || !ownerId) return appDataJson({ ok: false, error: "Sign in to inquire about a property" }, 401);
+                const listingId = typeof body.listingId === "string" ? body.listingId.trim() : "";
+                if (!/^[a-z0-9-]{1,120}$/i.test(listingId)) return appDataJson({ ok: false, error: "Select a valid property" }, 400);
+                const listing = await durableProjectStore.getAppRecord(projectId, "listings", listingId);
+                if (!listing || listing.published !== true) return appDataJson({ ok: false, error: "Published property not found" }, 404);
+                const name = typeof body.name === "string" ? body.name.trim() : "";
+                const message = typeof body.message === "string" ? body.message.trim() : "";
+                if (name.length < 2 || name.length > 120 || message.length < 10 || message.length > 2_000) {
+                    return appDataJson({ ok: false, error: "Enter your name and a message between 10 and 2,000 characters" }, 400);
+                }
+                if (!authenticatedEmail) return appDataJson({ ok: false, error: "Account email is required to send an inquiry" }, 400);
+                body = { listingId, listingTitle: listing.title, name, email: authenticatedEmail, message, status: "unread" };
+            }
+            if (commerceOrders) body = await verifiedCommerceOrder(projectId, body);
+            if (commercePlans) body = verifiedCommercePlan(body);
+            if (commerceSubscriptions) body = await verifiedCommerceSubscription(projectId, body);
             const data = await durableProjectStore.createAppRecord(
                 projectId,
                 collection,
-                await readAppDataBody(request),
-                ownerId
+                body,
+                publicCatalog ? undefined : ownerId
             );
             return appDataJson({ ok: true, data }, 201);
         }
         if (request.method === "PATCH" && recordId) {
+            let body = await readAppDataBody(request);
+            if (privateDocuments) {
+                if (Object.keys(body).length !== 1 || !("folderId" in body) ||
+                    !(body.folderId === null || typeof body.folderId === "string")) {
+                    return appDataJson({ ok: false, error: "Only the document folder can be changed here" }, 403);
+                }
+                if (typeof body.folderId === "string" &&
+                    (!/^[a-z0-9-]{1,120}$/i.test(body.folderId) ||
+                        !await durableProjectStore.getAppRecord(projectId, "folders", body.folderId, ownerId))) {
+                    return appDataJson({ ok: false, error: "Selected folder does not belong to this account" }, 400);
+                }
+            }
+            if (serviceBookings) {
+                const keys = Object.keys(body).sort().join(",");
+                if (keys === "date,startMinutes") {
+                    if (!hasAuthenticatedUser || !ownerId) return appDataJson({ ok: false, error: "Sign in to reschedule" }, 401);
+                    const updated = await durableProjectStore.rescheduleServiceBooking(projectId, recordId, body, ownerId);
+                    return updated
+                        ? appDataJson({ ok: true, data: updated })
+                        : appDataJson({ ok: false, error: "Record not found" }, 404);
+                }
+                if (keys !== "status" || body.status !== "cancelled") {
+                    return appDataJson({ ok: false, error: "Change the appointment time or cancel it" }, 403);
+                }
+            }
+            if (tableReservations && (Object.keys(body).length !== 1 || body.status !== "cancelled")) {
+                return appDataJson({ ok: false, error: "Reservations can only be cancelled" }, 403);
+            }
+            if (commercePlans) body = verifiedCommercePlan(body, true);
+            if (commerceOrders) {
+                if (Object.keys(body).length !== 1 || body.status !== "cancelled") {
+                    return appDataJson({ ok: false, error: "Order changes require a verified payment or fulfillment provider" }, 403);
+                }
+                const current = await durableProjectStore.getAppRecord(projectId, collection, recordId,
+                    isCommerceOwner ? undefined : ownerId);
+                if (!current) return appDataJson({ ok: false, error: "Record not found" }, 404);
+                if (current.status !== "pending_payment") {
+                    return appDataJson({ ok: false, error: "This order can no longer be cancelled" }, 409);
+                }
+            }
+            if (commerceSubscriptions) {
+                if (Object.keys(body).length !== 1 || body.status !== "cancelled") {
+                    return appDataJson({ ok: false, error: "Subscription changes require a verified payment provider" }, 403);
+                }
+                const current = await durableProjectStore.getAppRecord(projectId, collection, recordId, ownerId);
+                if (!current) return appDataJson({ ok: false, error: "Record not found" }, 404);
+                if (current.status !== "pending_payment") {
+                    return appDataJson({ ok: false, error: "This subscription can no longer be cancelled" }, 409);
+                }
+            }
             const data = await durableProjectStore.updateAppRecord(
                 projectId,
                 collection,
                 recordId,
-                await readAppDataBody(request),
-                ownerId
+                body,
+                publicCatalog || (commerceOrders && isCommerceOwner) || canManageReservations ? undefined : ownerId
             );
             return data
                 ? appDataJson({ ok: true, data })
                 : appDataJson({ ok: false, error: "Record not found" }, 404);
         }
         if (request.method === "DELETE" && recordId) {
-            const deleted = await durableProjectStore.deleteAppRecord(projectId, collection, recordId, ownerId);
+            if (serviceBookings) return appDataJson({ ok: false, error: "Cancel the appointment to preserve its history" }, 403);
+            if (tableReservations) return appDataJson({ ok: false, error: "Cancel the reservation to preserve its history" }, 403);
+            if (commerceSubscriptions) return appDataJson({ ok: false, error: "Cancel a subscription to preserve its history" }, 403);
+            if (commerceOrders && !isCommerceOwner) {
+                return appDataJson({ ok: false, error: "Orders cannot be deleted by customers" }, 403);
+            }
+            const deleted = await durableProjectStore.deleteAppRecord(projectId, collection, recordId,
+                publicCatalog || commerceOrders ? undefined : ownerId);
             return deleted
                 ? appDataJson({ ok: true, data: { deleted: true } })
                 : appDataJson({ ok: false, error: "Record not found" }, 404);
@@ -429,10 +841,33 @@ async function serveAppData(
         return appDataJson({ ok: false, error: "Method not allowed" }, 405);
     } catch (error) {
         const message = error instanceof Error ? error.message : "Database request failed";
-        const clientError = error instanceof SyntaxError || /invalid|must contain|too large/i.test(message);
+        if (error instanceof BookingConflictError) return appDataJson({ ok: false, error: error.message }, 409);
+        const clientError = error instanceof BookingInputError || error instanceof SyntaxError || error instanceof CommerceOrderValidationError ||
+            error instanceof CommerceSubscriptionValidationError || /invalid|must contain|too large/i.test(message);
         if (clientError) return appDataJson({ ok: false, error: message }, 400);
         console.error("[preview-data] Request failed", error);
         return appDataJson({ ok: false, error: "Database request failed" }, 500);
+    }
+}
+
+async function serveGuestCartClaim(request: NextRequest, projectId: string): Promise<NextResponse> {
+    if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers: appDataHeaders() });
+    if (request.method !== "POST") return appDataJson({ ok: false, error: "Method not allowed" }, 405);
+    const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    const guestId = verifyPreviewGuestCapability(request.headers.get("x-bigbag-guest"), projectId);
+    if (!bearer || !guestId) return appDataJson({ ok: false, error: "Sign in with the same browser to restore your bag" }, 401);
+    const project = await durableProjectStore.loadRecordByProjectId(projectId);
+    if (!project?.commerceEnabled) return appDataJson({ ok: false, error: "This project does not have a shop" }, 404);
+    const supabase = getSupabaseAdminClient() || getSupabaseClient();
+    if (!supabase) return appDataJson({ ok: false, error: "Authentication is not configured" }, 503);
+    const { data, error } = await supabase.auth.getUser(bearer);
+    if (error || !data.user) return appDataJson({ ok: false, error: "A valid user session is required" }, 401);
+    try {
+        const cart = await durableProjectStore.claimGuestCart(projectId, guestId, data.user.id);
+        return appDataJson({ ok: true, data: { cart } });
+    } catch (error) {
+        console.error("[preview-commerce] Guest cart claim failed", error);
+        return appDataJson({ ok: false, error: "Your saved bag could not be moved to your account. Please retry." }, 500);
     }
 }
 
@@ -862,7 +1297,7 @@ async function handle(
         const guestCapability = guestContext
             ? createPreviewGuestCapability(projectId, guestContext.guestId)
             : undefined;
-        if (ownerSession && (trustedEditor || documentRequest)) {
+        if (ownerSession && trustedEditor) {
             const ownerTenant = tenantContextForIdentity(ownerSession.sub);
             if (await localProjectStore.hydrateProject(projectId, ownerTenant.tenantId)) {
                 writeCapability = createPreviewWriteCapability(projectId, ownerTenant.tenantId);
@@ -871,12 +1306,24 @@ async function handle(
             }
         }
         if (targetSegments[0] === APP_DATA_PATH) {
+            if (targetSegments[1] === "files") {
+                return servePrivateProjectFile(request, projectId, targetSegments);
+            }
+            if (targetSegments[1] === "commerce" && targetSegments[2] === "claim-cart" && targetSegments.length === 3) {
+                return serveGuestCartClaim(request, projectId);
+            }
             if (targetSegments[1] === "auth" && targetSegments[2] === "storage" && targetSegments.length === 3) {
                 return servePreviewAuthStorage(request, projectId);
             }
             if (targetSegments[1] === "auth" && targetSegments[2] === "config" && targetSegments.length === 3) {
                 return request.method === "GET"
                     ? serveAppAuthConfig()
+                    : appDataJson({ ok: false, error: "Method not allowed" }, 405);
+            }
+            if (targetSegments[1] === "auth" && targetSegments[2] === "role" && targetSegments.length === 3) {
+                if (request.method === "OPTIONS") return new NextResponse(null, { status: 204, headers: appDataHeaders() });
+                return request.method === "GET"
+                    ? serveProjectRole(request, projectId)
                     : appDataJson({ ok: false, error: "Method not allowed" }, 405);
             }
             return serveAppData(request, projectId, targetSegments);

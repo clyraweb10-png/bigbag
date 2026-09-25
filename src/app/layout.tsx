@@ -1,7 +1,7 @@
 // src/app/layout.tsx
 import React from "react";
 import type { Metadata } from "next";
-import { DM_Sans, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { GlobalErrorCatcher } from "@/components/GlobalErrorCatcher";
 import { Toaster } from "@/components/ui/sonner";
@@ -9,8 +9,8 @@ import { InsufficientCreditsModal } from "@/components/workspace/InsufficientCre
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/components/auth/AuthProvider";
 
-const dmSans = DM_Sans({ variable: "--font-dm-sans", subsets: ["latin"], weight: ["300", "400", "500", "600", "700"], preload: false });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"], preload: false });
+const dmSans = localFont({ src: "./fonts/DMSans.ttf", variable: "--font-dm-sans", weight: "300 700", display: "swap" });
+const geistMono = localFont({ src: "./fonts/GeistMono.ttf", variable: "--font-geist-mono", weight: "100 900", display: "swap" });
 
 export const metadata: Metadata = {
   title: "BigBag — </> AI App Builder",

@@ -1,17 +1,15 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
-import { X, Search, ChevronLeft, Check, Eye, EyeOff, Unlink, Plug } from "lucide-react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { X, Search, ChevronLeft, Check, Plug } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
 import { ConnectorBrandIcon } from "./ConnectorBrandIcons";
 
 /* ─────────────────── Types ─────────────────── */
 
 export type Category =
   | "All"
-  | "Enabled"
+  | "Configured"
   | "Ecommerce"
   | "Marketing"
   | "Messaging"
@@ -42,60 +40,17 @@ interface Connector {
   capabilities: string[];
 }
 
-/* ─────────────────── Credential Storage ─────────────────── */
-
-const LS_KEY = (id: string) => `bigbag:connector:${id}`;
-const CONNECTED_SET_KEY = "bigbag:connected_connectors";
-
-function getStoredConnected(): Set<string> {
-  if (typeof window === "undefined") {
-    return new Set();
-  }
+/* Remove credentials written by older versions. Provider keys must stay on the server. */
+function purgeLegacyCredentials() {
   try {
-    const raw = localStorage.getItem(CONNECTED_SET_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return new Set(arr);
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key?.startsWith("bigbag:connector:")) localStorage.removeItem(key);
     }
+    localStorage.removeItem("bigbag:connected_connectors");
   } catch {
-    // fallback
+    // Storage may be disabled; server configuration remains authoritative.
   }
-  return new Set();
-}
-
-function persistConnected(set: Set<string>) {
-  try {
-    localStorage.setItem(CONNECTED_SET_KEY, JSON.stringify([...set]));
-  } catch {
-    // ignore
-  }
-}
-
-function removeCreds(id: string) {
-  try {
-    localStorage.removeItem(LS_KEY(id));
-  } catch {
-    // ignore
-  }
-}
-
-function saveCreds(id: string, data: Record<string, string>) {
-  try {
-    localStorage.setItem(LS_KEY(id), JSON.stringify(data));
-  } catch {
-    // ignore
-  }
-}
-
-function loadCreds(id: string): Record<string, string> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(LS_KEY(id));
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // ignore
-  }
-  return null;
 }
 
 /* ─────────────────── Categories List ─────────────────── */
@@ -139,6 +94,16 @@ const CONNECTORS: Connector[] = [
       { key: "apiKey", label: "API Key", placeholder: "fc-...", secret: true },
     ],
     capabilities: ["Scrape any URL into clean Markdown", "Crawl entire websites", "Extract structured data with AI", "Full-page screenshots"],
+  },
+  {
+    id: "pexels",
+    name: "Pexels",
+    description: "Source relevant photography for generated apps",
+    categories: ["Marketing", "AI & Automation"],
+    color: "#05A081",
+    docsHint: "Configure a Pexels API key in the server environment",
+    fields: [{ key: "apiKey", label: "API Key", secret: true }],
+    capabilities: ["Search real image candidates during generation", "Match hero and supporting imagery to the prompt", "Keep image sourcing optional when unavailable"],
   },
   {
     id: "google-sheets",
@@ -518,7 +483,30 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<Category>("All");
   const [selected, setSelected] = useState<Connector | null>(null);
-  const [connectedIds, setConnectedIds] = useState<Set<string>>(() => getStoredConnected());
+  const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set());
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    purgeLegacyCredentials();
+    const controller = new AbortController();
+    setLoadingStatus(true);
+    setStatusError(null);
+    fetch("/api/connectors/status", { credentials: "same-origin", cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(response.status === 401 ? "Sign in to view connector configuration" : "Connector status is unavailable");
+        const payload = await response.json() as { data?: Record<string, boolean> };
+        setConnectedIds(new Set(Object.entries(payload.data || {}).filter(([, configured]) => configured).map(([id]) => id)));
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setConnectedIds(new Set());
+        setStatusError(error instanceof Error ? error.message : "Connector status is unavailable");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoadingStatus(false); });
+    return () => controller.abort();
+  }, [open]);
 
   const handleClose = useCallback(() => {
     setSelected(null);
@@ -527,28 +515,9 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const handleConnected = useCallback((id: string) => {
-    setConnectedIds((prev) => {
-      const next = new Set([...prev, id]);
-      persistConnected(next);
-      return next;
-    });
-    setSelected(null);
-  }, []);
-
-  const handleDisconnected = useCallback((id: string) => {
-    setConnectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      persistConnected(next);
-      return next;
-    });
-    setSelected(null);
-  }, []);
-
   const filtered = useMemo(() => {
     let list = CONNECTORS;
-    if (activeCategory === "Enabled") {
+    if (activeCategory === "Configured") {
       list = list.filter((c) => connectedIds.has(c.id));
     } else if (activeCategory !== "All") {
       list = list.filter((c) => c.categories.includes(activeCategory));
@@ -566,7 +535,7 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
     return list;
   }, [search, activeCategory, connectedIds]);
 
-  const enabledCount = connectedIds.size;
+  const configuredCount = CONNECTORS.filter((connector) => connectedIds.has(connector.id)).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
@@ -625,16 +594,16 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
               </button>
               <button
                 onClick={() => {
-                  setActiveCategory("Enabled");
+                  setActiveCategory("Configured");
                   setSearch("");
                 }}
                 className={`px-2.5 py-1 rounded-full whitespace-nowrap text-xs transition-colors shrink-0 ${
-                  activeCategory === "Enabled"
+                  activeCategory === "Configured"
                     ? "bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30"
                     : "bg-white/5 text-zinc-400 hover:text-white"
                 }`}
               >
-                Enabled ({enabledCount})
+                Configured ({configuredCount})
               </button>
               {CATEGORIES_NAV.map((cat) => {
                 const count = CONNECTORS.filter((c) => c.categories.includes(cat)).length;
@@ -680,11 +649,11 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
           {/* Categories Nav */}
           <div className="flex-1 overflow-y-auto px-2 pb-3 custom-scrollbar">
             <CategoryItem
-              label="Enabled"
-              count={enabledCount}
-              active={activeCategory === "Enabled"}
+              label="Configured"
+              count={configuredCount}
+              active={activeCategory === "Configured"}
               onClick={() => {
-                setActiveCategory("Enabled");
+                setActiveCategory("Configured");
                 setSearch("");
               }}
             />
@@ -726,10 +695,10 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
             <CredentialsPanel
               connector={selected}
               connected={connectedIds.has(selected.id)}
+              loadingStatus={loadingStatus}
               onBack={() => setSelected(null)}
               onClose={handleClose}
-              onConnected={handleConnected}
-              onDisconnected={handleDisconnected}
+              statusError={statusError}
             />
           ) : (
             <>
@@ -751,14 +720,18 @@ export function ConnectorsModal({ open, onOpenChange }: Props) {
                 </button>
               </div>
 
+              {statusError && <p role="alert" className="px-5 pt-3 text-xs text-amber-300">{statusError}</p>}
+              {loadingStatus && <p role="status" className="px-5 pt-3 text-xs text-zinc-400">Checking server configuration…</p>}
               {/* Cards Grid */}
               <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
                 {filtered.length === 0 ? (
                   <div className="text-center py-20 text-zinc-500">
                     <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">
-                      {activeCategory === "Enabled"
-                        ? "No connectors connected yet."
+                      {loadingStatus && activeCategory === "Configured"
+                        ? "Checking server configuration…"
+                        : activeCategory === "Configured"
+                        ? "No supported connectors are configured on the server."
                         : `No connectors match "${search}"`}
                     </p>
                   </div>
@@ -842,73 +815,35 @@ function ConnectorCard({
       {connected && (
         <span className="absolute top-3 right-3 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          Enabled
+          Configured
         </span>
       )}
     </button>
   );
 }
 
-/* ─────────────────── CredentialsPanel ─────────────────── */
-
-interface CredPanelProps {
-  connector: Connector;
-  connected: boolean;
-  onBack: () => void;
-  onClose: () => void;
-  onConnected: (id: string) => void;
-  onDisconnected: (id: string) => void;
-}
+/* ─────────────────── Connector details ─────────────────── */
 
 function CredentialsPanel({
   connector,
   connected,
+  loadingStatus,
   onBack,
   onClose,
-  onConnected,
-  onDisconnected,
-}: CredPanelProps) {
-  const [form, setForm] = useState<Record<string, string>>(() => loadCreds(connector.id) || {});
-  const [showFields, setShowFields] = useState<Record<string, boolean>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const validate = () => {
-    const errs: Record<string, string> = {};
-    for (const f of connector.fields) {
-      if (!f.optional && !form[f.key]?.trim() && !connected) {
-        errs[f.key] = `${f.label} is required`;
-      }
-    }
-    return errs;
-  };
-
-  const handleSave = () => {
-    const errs = validate();
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      return;
-    }
-    saveCreds(connector.id, form);
-    toast.success(`${connector.name} connected successfully`);
-    onConnected(connector.id);
-  };
-
-  const handleDisconnect = () => {
-    removeCreds(connector.id);
-    setForm({});
-    toast.success(`${connector.name} disconnected`);
-    onDisconnected(connector.id);
-  };
-
+  statusError,
+}: {
+  connector: Connector;
+  connected: boolean;
+  loadingStatus: boolean;
+  onBack: () => void;
+  onClose: () => void;
+  statusError: string | null;
+}) {
+  const supported = ["supabase", "firecrawl", "pexels"].includes(connector.id);
   return (
     <>
-      {/* Header */}
       <div className="flex items-center gap-3 border-b border-white/8 px-6 py-3.5 shrink-0">
-        <button
-          onClick={onBack}
-          className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-          aria-label="Back"
-        >
+        <button onClick={onBack} className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10" aria-label="Back">
           <ChevronLeft className="w-4 h-4" />
         </button>
         <ConnectorBrandIcon id={connector.id} size="sm" />
@@ -916,142 +851,30 @@ function CredentialsPanel({
           <DialogTitle className="text-sm font-semibold text-white">{connector.name}</DialogTitle>
           <p className="text-xs text-zinc-400 truncate">{connector.description}</p>
         </div>
-        {connected && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full shrink-0 mr-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Enabled
-          </span>
-        )}
-        <button
-          onClick={onClose}
-          className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-          aria-label="Close"
-        >
+        <button onClick={onClose} className="h-7 w-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10" aria-label="Close">
           <X className="w-4 h-4" />
         </button>
       </div>
-
-      {/* Body */}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5 custom-scrollbar">
-        {/* Docs hint */}
-        <div className="text-xs text-zinc-300 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-          <span className="font-semibold text-white">Where to find credentials:</span>{" "}
-          {connector.docsHint}
+        <div role="status" className={`rounded-xl border px-4 py-3 text-sm ${connected ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-white/5 text-zinc-300"}`}>
+          {loadingStatus ? "Checking server configuration…" : statusError || (connected
+            ? "Configured on the server. Live provider operations have not been checked here."
+            : supported
+              ? "This connector is not configured on the server. An administrator can add its credential to the server environment. Other app features remain available."
+              : "This connector is in the catalogue, but a server integration is not available yet. It cannot be connected from this screen.")}
         </div>
-
-        {/* Credential fields */}
-        <div className="space-y-3.5">
-          {connector.fields.map((f) => {
-            const isSecret = f.secret;
-            const shown = showFields[f.key];
-            return (
-              <div key={f.key}>
-                <label className="block text-xs font-medium text-zinc-200 mb-1.5">
-                  {f.label}
-                  {f.optional && (
-                    <span className="ml-1.5 text-[10px] text-zinc-500 font-normal">
-                      (optional)
-                    </span>
-                  )}
-                </label>
-                <div className="relative">
-                  {isSecret ? (
-                    <>
-                      <input
-                        type={shown ? "text" : "password"}
-                        value={form[f.key] ?? ""}
-                        onChange={(e) => {
-                          setForm((p) => ({ ...p, [f.key]: e.target.value }));
-                          setErrors((p) => {
-                            const n = { ...p };
-                            delete n[f.key];
-                            return n;
-                          });
-                        }}
-                        placeholder={f.placeholder}
-                        className={`w-full h-9 pl-3 pr-9 text-xs rounded-lg border bg-[#222225] text-white placeholder:text-zinc-500 outline-none focus:ring-1 focus:ring-white/20 transition-colors ${
-                          errors[f.key] ? "border-red-500/60" : "border-white/10 focus:border-white/20"
-                        }`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowFields((p) => ({ ...p, [f.key]: !p[f.key] }))}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors"
-                      >
-                        {shown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
-                    </>
-                  ) : (
-                    <input
-                      type="text"
-                      value={form[f.key] ?? ""}
-                      onChange={(e) => {
-                        setForm((p) => ({ ...p, [f.key]: e.target.value }));
-                        setErrors((p) => {
-                          const n = { ...p };
-                          delete n[f.key];
-                          return n;
-                        });
-                      }}
-                      placeholder={f.placeholder}
-                      className={`w-full h-9 px-3 text-xs rounded-lg border bg-[#222225] text-white placeholder:text-zinc-500 outline-none focus:ring-1 focus:ring-white/20 transition-colors ${
-                        errors[f.key] ? "border-red-500/60" : "border-white/10 focus:border-white/20"
-                      }`}
-                    />
-                  )}
-                </div>
-                {errors[f.key] && (
-                  <p className="text-[11px] text-red-400 mt-1">{errors[f.key]}</p>
-                )}
-                {f.hint && !errors[f.key] && (
-                  <p className="text-[11px] text-zinc-500 mt-1">{f.hint}</p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Capabilities */}
+        {supported && !loadingStatus && !connected && !statusError && (
+          <p className="text-xs text-zinc-400">{connector.docsHint}. Keep credentials in server environment settings; never paste private keys into generated app code.</p>
+        )}
         <div>
-          <p className="text-xs font-semibold text-zinc-300 mb-2.5">
-            What you can do with {connector.name}
-          </p>
+          <p className="text-xs font-semibold text-zinc-300 mb-2.5">Available when integrated</p>
           <ul className="space-y-1.5">
-            {connector.capabilities.map((cap, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-zinc-400">
-                <Check className="w-3.5 h-3.5 shrink-0 text-emerald-400 mt-0.5" />
-                {cap}
-              </li>
-            ))}
+            {connector.capabilities.map((cap) => <li key={cap} className="flex items-start gap-2 text-xs text-zinc-400"><Check className="w-3.5 h-3.5 shrink-0 text-emerald-400 mt-0.5" />{cap}</li>)}
           </ul>
         </div>
       </div>
-
-      {/* Footer */}
-      <div className="border-t border-white/8 px-6 py-3.5 flex items-center justify-between shrink-0">
-        <button
-          onClick={onBack}
-          className="text-xs text-zinc-400 hover:text-white transition-colors flex items-center gap-1"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" /> Back
-        </button>
-        <div className="flex items-center gap-2.5">
-          {connected && (
-            <button
-              onClick={handleDisconnect}
-              className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 border border-red-500/25 hover:border-red-500/50 rounded-lg px-3 py-1.5 transition-colors"
-            >
-              <Unlink className="w-3 h-3" /> Disconnect
-            </button>
-          )}
-          <Button
-            size="sm"
-            onClick={handleSave}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 min-w-[100px] text-xs h-8 rounded-lg"
-          >
-            {connected ? "Save" : "Connect"}
-          </Button>
-        </div>
+      <div className="border-t border-white/8 px-6 py-3.5 shrink-0">
+        <button onClick={onBack} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1"><ChevronLeft className="w-3.5 h-3.5" /> Back</button>
       </div>
     </>
   );

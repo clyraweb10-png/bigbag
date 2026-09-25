@@ -11,6 +11,8 @@ export type AppRecord = Record<string, unknown> & {
   createdAt: string;
   updatedAt: string;
 };
+export class BookingConflictError extends Error {}
+export class BookingInputError extends Error {}
 export type QualificationEvidence = Record<string, unknown> & {
   projectNumber: number;
   projectName: string;
@@ -82,6 +84,49 @@ async function ensureSchema(): Promise<Pool | null> {
     schemaReady = (async () => {
       const client = await pool.connect();
       try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('bigbag-builder-schema-v1'))");
+        const marker = await client.query("SELECT to_regclass('public.builder_schema_version') AS table_name");
+        if (marker.rows[0]?.table_name) {
+          const current = await client.query("SELECT version FROM public.builder_schema_version WHERE version = 5");
+          if (current.rowCount) {
+            await client.query("COMMIT");
+            return;
+          }
+          await client.query(`
+            CREATE INDEX IF NOT EXISTS builder_app_records_published_catalog
+              ON public.builder_app_records (project_id, collection_name, updated_at DESC)
+              WHERE (data_json::jsonb ->> 'published') = 'true';
+            CREATE TABLE IF NOT EXISTS public.builder_project_snapshots (
+              project_id TEXT NOT NULL,
+              tenant_id TEXT NOT NULL,
+              kind TEXT NOT NULL CHECK (kind IN ('source', 'deployment')),
+              version_at TEXT NOT NULL,
+              PRIMARY KEY (project_id, kind),
+              FOREIGN KEY (project_id) REFERENCES public.builder_projects(project_id) ON DELETE CASCADE
+            );
+            INSERT INTO public.builder_project_snapshots (project_id, tenant_id, kind, version_at)
+            SELECT DISTINCT files.project_id, files.tenant_id, files.kind, projects.updated_at
+            FROM public.builder_project_files AS files
+            JOIN public.builder_projects AS projects ON projects.project_id = files.project_id
+            ON CONFLICT (project_id, kind) DO NOTHING;
+            INSERT INTO public.builder_schema_version (version) VALUES (2) ON CONFLICT DO NOTHING;
+            CREATE INDEX IF NOT EXISTS builder_bookings_slot_lookup
+              ON public.builder_app_records (project_id, (data_json::jsonb ->> 'serviceId'), (data_json::jsonb ->> 'date'))
+              WHERE collection_name = 'bookings';
+            CREATE INDEX IF NOT EXISTS builder_reservations_slot_lookup
+              ON public.builder_app_records (project_id, (data_json::jsonb ->> 'date'), (data_json::jsonb ->> 'time'))
+              WHERE collection_name = 'reservations';
+            CREATE INDEX IF NOT EXISTS builder_table_reservations_slot_lookup
+              ON public.builder_app_records (project_id, (data_json::jsonb ->> 'date'), (data_json::jsonb ->> 'time'))
+              WHERE collection_name = 'table_reservations';
+            INSERT INTO public.builder_schema_version (version) VALUES (3) ON CONFLICT DO NOTHING;
+            INSERT INTO public.builder_schema_version (version) VALUES (4) ON CONFLICT DO NOTHING;
+            INSERT INTO public.builder_schema_version (version) VALUES (5) ON CONFLICT DO NOTHING;
+          `);
+          await client.query("COMMIT");
+          return;
+        }
         await client.query(`
           CREATE TABLE IF NOT EXISTS public.builder_projects (
             project_id TEXT PRIMARY KEY,
@@ -103,6 +148,14 @@ async function ensureSchema(): Promise<Pool | null> {
           );
           CREATE INDEX IF NOT EXISTS builder_project_files_lookup
             ON public.builder_project_files (project_id, kind, path);
+          CREATE TABLE IF NOT EXISTS public.builder_project_snapshots (
+            project_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('source', 'deployment')),
+            version_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, kind),
+            FOREIGN KEY (project_id) REFERENCES public.builder_projects(project_id) ON DELETE CASCADE
+          );
           CREATE TABLE IF NOT EXISTS public.builder_app_records (
             project_id TEXT NOT NULL,
             collection_name TEXT NOT NULL,
@@ -119,6 +172,18 @@ async function ensureSchema(): Promise<Pool | null> {
           ALTER TABLE public.builder_app_records ADD COLUMN IF NOT EXISTS owner_id TEXT;
           CREATE INDEX IF NOT EXISTS builder_app_records_owner
             ON public.builder_app_records (project_id, collection_name, owner_id, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS builder_app_records_published_catalog
+            ON public.builder_app_records (project_id, collection_name, updated_at DESC)
+            WHERE (data_json::jsonb ->> 'published') = 'true';
+          CREATE INDEX IF NOT EXISTS builder_bookings_slot_lookup
+            ON public.builder_app_records (project_id, (data_json::jsonb ->> 'serviceId'), (data_json::jsonb ->> 'date'))
+            WHERE collection_name = 'bookings';
+          CREATE INDEX IF NOT EXISTS builder_reservations_slot_lookup
+            ON public.builder_app_records (project_id, (data_json::jsonb ->> 'date'), (data_json::jsonb ->> 'time'))
+            WHERE collection_name = 'reservations';
+          CREATE INDEX IF NOT EXISTS builder_table_reservations_slot_lookup
+            ON public.builder_app_records (project_id, (data_json::jsonb ->> 'date'), (data_json::jsonb ->> 'time'))
+            WHERE collection_name = 'table_reservations';
           CREATE TABLE IF NOT EXISTS public.builder_preview_auth_storage (
             project_id TEXT NOT NULL,
             guest_id TEXT NOT NULL,
@@ -185,7 +250,13 @@ async function ensureSchema(): Promise<Pool | null> {
           );
           CREATE INDEX IF NOT EXISTS builder_project_exports_created
             ON public.builder_project_exports (created_at DESC);
+          CREATE TABLE IF NOT EXISTS public.builder_schema_version (version INTEGER PRIMARY KEY);
+          INSERT INTO public.builder_schema_version (version) VALUES (1), (2), (3), (4), (5) ON CONFLICT DO NOTHING;
         `);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
       } finally {
         client.release();
       }
@@ -318,12 +389,34 @@ async function persistSnapshot(
        ON CONFLICT (project_id) DO UPDATE SET
          record_json = EXCLUDED.record_json,
          updated_at = EXCLUDED.updated_at
-       WHERE builder_projects.tenant_id = EXCLUDED.tenant_id`,
+       WHERE builder_projects.tenant_id = EXCLUDED.tenant_id
+         AND builder_projects.updated_at <= EXCLUDED.updated_at`,
       [record.projectId, record.tenantId, JSON.stringify(record), record.lastModifiedAt || updatedAt]
     );
 
     if (upsertRes.rowCount === 0) {
-      throw new Error("That project id is already owned by another tenant");
+      const currentOwner = await client.query(
+        "SELECT tenant_id FROM public.builder_projects WHERE project_id = $1 LIMIT 1",
+        [record.projectId]
+      );
+      if (rowText(currentOwner.rows[0]?.tenant_id) !== record.tenantId) {
+        throw new Error("That project id is already owned by another tenant");
+      }
+      // Source and deployment snapshots can follow a newer metadata write.
+      // Their own versions below decide whether the files may be replaced.
+    }
+
+    const snapshotVersion = record.lastModifiedAt || updatedAt;
+    const snapshotClaim = await client.query(
+      `INSERT INTO public.builder_project_snapshots (project_id, tenant_id, kind, version_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (project_id, kind) DO UPDATE SET version_at = EXCLUDED.version_at
+       WHERE builder_project_snapshots.tenant_id = EXCLUDED.tenant_id
+         AND builder_project_snapshots.version_at < EXCLUDED.version_at`,
+      [record.projectId, record.tenantId, kind, snapshotVersion]
+    );
+    if (snapshotClaim.rowCount === 0) {
+      throw new Error(`A newer ${kind} snapshot is already stored for this project`);
     }
 
     await client.query(
@@ -354,6 +447,14 @@ async function persistSnapshot(
 }
 
 export const durableProjectStore = {
+  /** Release the pool after a standalone qualification command finishes. */
+  async closeConnections(): Promise<void> {
+    const pool = pgPool;
+    pgPool = null;
+    schemaReady = null;
+    if (pool) await pool.end();
+  },
+
   async saveRecord(record: LocalProjectRecord): Promise<void> {
     const pool = await ensureSchema();
     if (!pool) return;
@@ -364,11 +465,19 @@ export const durableProjectStore = {
        ON CONFLICT (project_id) DO UPDATE SET
          record_json = EXCLUDED.record_json,
          updated_at = EXCLUDED.updated_at
-       WHERE builder_projects.tenant_id = EXCLUDED.tenant_id`,
+       WHERE builder_projects.tenant_id = EXCLUDED.tenant_id
+         AND builder_projects.updated_at <= EXCLUDED.updated_at`,
       [record.projectId, record.tenantId, JSON.stringify(record), record.lastModifiedAt || new Date().toISOString()]
     );
     if (res.rowCount === 0) {
-      throw new Error("That project id is already owned by another tenant");
+      const owner = await pool.query(
+        "SELECT tenant_id FROM public.builder_projects WHERE project_id = $1 LIMIT 1",
+        [record.projectId]
+      );
+      if (owner.rows[0]?.tenant_id !== record.tenantId) {
+        throw new Error("That project id is already owned by another tenant");
+      }
+      // A newer write from another worker already won. Never overwrite it.
     }
   },
 
@@ -560,7 +669,7 @@ export const durableProjectStore = {
   async listAppRecords(
     projectId: string,
     collectionName: string,
-    options: { limit?: number; offset?: number; ownerId?: string } = {}
+    options: { limit?: number; offset?: number; ownerId?: string; publishedOnly?: boolean } = {}
   ): Promise<{ records: AppRecord[]; total: number }> {
     const pool = await requireSchema();
     const collection = assertAppCollectionName(collectionName);
@@ -573,14 +682,16 @@ export const durableProjectStore = {
          FROM public.builder_app_records
          WHERE project_id = $1 AND collection_name = $2
            AND ($5::text IS NULL OR owner_id = $5)
+           AND ($6::boolean = false OR data_json::jsonb ->> 'published' = 'true')
          ORDER BY updated_at DESC LIMIT $3 OFFSET $4`,
-        [projectId, collection, limit, offset, options.ownerId || null]
+        [projectId, collection, limit, offset, options.ownerId || null, options.publishedOnly === true]
       ),
       pool.query(
         `SELECT COUNT(*) AS record_count FROM public.builder_app_records
          WHERE project_id = $1 AND collection_name = $2
-           AND ($3::text IS NULL OR owner_id = $3)`,
-        [projectId, collection, options.ownerId || null]
+           AND ($3::text IS NULL OR owner_id = $3)
+           AND ($4::boolean = false OR data_json::jsonb ->> 'published' = 'true')`,
+        [projectId, collection, options.ownerId || null, options.publishedOnly === true]
       ),
     ]);
     return {
@@ -638,6 +749,287 @@ export const durableProjectStore = {
     );
     if ((res.rowCount ?? 0) !== 1) throw new Error("Project not found");
     return { ...data, _id: recordId, createdAt: now, updatedAt: now };
+  },
+
+  async createServiceBooking(
+    projectId: string,
+    value: Record<string, unknown>,
+    ownerId: string
+  ): Promise<AppRecord> {
+    const serviceId = value.serviceId;
+    const date = value.date;
+    const startMinutes = value.startMinutes;
+    if (typeof serviceId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(serviceId) ||
+        typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+        new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ||
+        typeof startMinutes !== "number" || !Number.isInteger(startMinutes) || startMinutes < 0 || startMinutes >= 1440) {
+      throw new BookingInputError("Choose a valid service, date, and time");
+    }
+    const pool = await requireSchema();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))", [projectId, `${serviceId}:${date}`]);
+      const serviceRows = await client.query(
+        `SELECT data_json FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'services' AND record_id = $2 LIMIT 1`,
+        [projectId, serviceId]
+      );
+      if (!serviceRows.rowCount) throw new BookingInputError("This service is no longer available");
+      const service = JSON.parse(rowText(serviceRows.rows[0].data_json)) as Record<string, unknown>;
+      const durationMinutes = service.durationMinutes;
+      if (typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || Number(durationMinutes) < 1 ||
+          Number(durationMinutes) > 1440 || Number(startMinutes) + Number(durationMinutes) > 1440) {
+        throw new BookingInputError("This appointment time is unavailable");
+      }
+      const existing = await client.query(
+        `SELECT data_json FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'bookings'
+           AND data_json::jsonb ->> 'serviceId' = $2
+           AND data_json::jsonb ->> 'date' = $3`,
+        [projectId, serviceId, date]
+      );
+      const overlaps = existing.rows.some((row) => {
+        const booking = JSON.parse(rowText(row.data_json)) as Record<string, unknown>;
+        if (booking.status === "cancelled") return false;
+        const previousStart = Number(booking.startMinutes);
+        const previousDuration = Number(booking.durationMinutes);
+        if (!Number.isFinite(previousStart) || !Number.isFinite(previousDuration)) return false;
+        return Number(startMinutes) < previousStart + previousDuration && previousStart < Number(startMinutes) + Number(durationMinutes);
+      });
+      if (overlaps) throw new BookingConflictError("This time was just booked. Choose another slot.");
+      const recordId = randomUUID();
+      const now = new Date().toISOString();
+      const data = {
+        serviceId,
+        serviceName: typeof service.name === "string" ? service.name : "Appointment",
+        date,
+        startMinutes,
+        durationMinutes,
+        status: "confirmed",
+        ...(typeof value.description === "string" ? { description: value.description.slice(0, 500) } : {}),
+      };
+      const inserted = await client.query(
+        `INSERT INTO public.builder_app_records
+         (project_id, collection_name, record_id, owner_id, data_json, created_at, updated_at)
+         SELECT project_id, 'bookings', $1, $2, $3, $4, $5
+         FROM public.builder_projects WHERE project_id = $6`,
+        [recordId, ownerId, JSON.stringify(data), now, now, projectId]
+      );
+      if (inserted.rowCount !== 1) throw new BookingInputError("This project is unavailable");
+      await client.query("COMMIT");
+      return { ...data, _id: recordId, createdAt: now, updatedAt: now };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async createTableReservation(
+    projectId: string,
+    value: Record<string, unknown>,
+    ownerId: string,
+    collection: "reservations" | "table_reservations" = "reservations"
+  ): Promise<AppRecord> {
+    const date = value.date;
+    const time = value.time;
+    const partySize = value.partySize;
+    const guestName = value.guestName;
+    const guestEmail = value.guestEmail;
+    const slotMatch = typeof time === "string" ? /^(\d{2}):(\d{2})$/.exec(time) : null;
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+        new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ||
+        !slotMatch || Number(slotMatch[1]) > 23 || Number(slotMatch[2]) > 59 ||
+        typeof partySize !== "number" || !Number.isInteger(partySize) || partySize < 1 || partySize > 100 ||
+        typeof guestName !== "string" || !guestName.trim() || guestName.length > 120 ||
+        typeof guestEmail !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail) || guestEmail.length > 254) {
+      throw new BookingInputError("Enter a valid date, time, party size, name, and email");
+    }
+    const requestedStart = Number(slotMatch[1]) * 60 + Number(slotMatch[2]);
+    const durationMinutes = 120;
+    if (requestedStart + durationMinutes > 24 * 60) {
+      throw new BookingInputError("Choose a reservation time that ends by midnight");
+    }
+    const pool = await requireSchema();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))", [projectId, `reservations:${date}`]);
+      const tableRows = await client.query(
+        `SELECT record_id, data_json FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'tables'`, [projectId]
+      );
+      const tables = tableRows.rows.map((row): { id: string; seats: number; location?: string } => {
+        const data = JSON.parse(rowText(row.data_json)) as Record<string, unknown>;
+        return {
+          id: rowText(row.record_id),
+          seats: typeof data.seats === "number" ? data.seats : NaN,
+          location: typeof data.location === "string" ? data.location : undefined,
+        };
+      }).filter((table) => Number.isInteger(table.seats) && table.seats >= partySize);
+      if (!tables.length) throw new BookingInputError("No table can seat this party. Choose a smaller party or ask the restaurant.");
+      const reservationRows = await client.query(
+        `SELECT data_json FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name IN ('reservations', 'table_reservations')
+           AND data_json::jsonb ->> 'date' = $2`, [projectId, date]
+      );
+      const occupied = new Set<string>();
+      const overlapping = reservationRows.rows.map((row) => JSON.parse(rowText(row.data_json)) as Record<string, unknown>)
+        .filter((reservation) => {
+          if (reservation.status === "cancelled" || typeof reservation.time !== "string") return false;
+          const match = /^(\d{2}):(\d{2})$/.exec(reservation.time);
+          if (!match) return false;
+          const existingStart = Number(match[1]) * 60 + Number(match[2]);
+          const existingDuration = typeof reservation.durationMinutes === "number" ? reservation.durationMinutes : durationMinutes;
+          return requestedStart < existingStart + existingDuration && existingStart < requestedStart + durationMinutes;
+        }).sort((a, b) => Number(b.partySize || 0) - Number(a.partySize || 0));
+      for (const reservation of overlapping) {
+        if (typeof reservation.tableId === "string") occupied.add(reservation.tableId);
+      }
+      for (const reservation of overlapping) {
+        if (typeof reservation.tableId === "string") continue;
+        const legacyTable = tables.filter((table) => !occupied.has(table.id) && Number(table.seats) >= Number(reservation.partySize))
+          .sort((a, b) => Number(a.seats) - Number(b.seats))[0];
+        if (legacyTable) occupied.add(legacyTable.id);
+      }
+      const preference = typeof value.seatingPreference === "string" ? value.seatingPreference.slice(0, 80) : "No preference";
+      const available = tables.filter((table) => !occupied.has(table.id)).sort((a, b) => {
+        const aPreferred = preference !== "No preference" && a.location === preference ? 0 : 1;
+        const bPreferred = preference !== "No preference" && b.location === preference ? 0 : 1;
+        return aPreferred - bPreferred || Number(a.seats) - Number(b.seats);
+      });
+      const assigned = available[0];
+      if (!assigned) throw new BookingConflictError("This time was just booked. Choose another slot.");
+      const recordId = randomUUID();
+      const now = new Date().toISOString();
+      const data = {
+        date, time, partySize, tableId: assigned.id, durationMinutes,
+        guestName: guestName.trim(), guestEmail: guestEmail.trim(), seatingPreference: preference,
+        notes: typeof value.notes === "string" ? value.notes.slice(0, 500) : "",
+        status: "confirmed",
+      };
+      const inserted = await client.query(
+        `INSERT INTO public.builder_app_records
+         (project_id, collection_name, record_id, owner_id, data_json, created_at, updated_at)
+         SELECT project_id, $1, $2, $3, $4, $5, $6
+         FROM public.builder_projects WHERE project_id = $7`,
+        [collection, recordId, ownerId, JSON.stringify(data), now, now, projectId]
+      );
+      if (inserted.rowCount !== 1) throw new BookingInputError("This project is unavailable");
+      await client.query("COMMIT");
+      return { ...data, _id: recordId, createdAt: now, updatedAt: now };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  async listTableReservationSlots(projectId: string): Promise<{ records: Array<Record<string, unknown>>; total: number }> {
+    const pool = await requireSchema();
+    const today = new Date().toISOString().slice(0, 10);
+    const through = new Date(Date.now() + 15 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const rows = await pool.query(
+      `SELECT record_id, data_json FROM public.builder_app_records
+       WHERE project_id = $1 AND collection_name IN ('reservations', 'table_reservations')
+         AND data_json::jsonb ->> 'date' BETWEEN $2 AND $3
+       ORDER BY created_at DESC LIMIT 5000`, [projectId, today, through]
+    );
+    const records = rows.rows.map((row) => {
+      const reservation = JSON.parse(rowText(row.data_json)) as Record<string, unknown>;
+      return {
+        _id: rowText(row.record_id),
+        date: reservation.date,
+        time: reservation.time,
+        partySize: reservation.partySize,
+        tableId: reservation.tableId,
+        durationMinutes: reservation.durationMinutes,
+        status: reservation.status,
+      };
+    });
+    return { records, total: records.length };
+  },
+
+  async rescheduleServiceBooking(
+    projectId: string,
+    recordId: string,
+    value: Record<string, unknown>,
+    ownerId: string
+  ): Promise<AppRecord | null> {
+    const date = value.date;
+    const startMinutes = value.startMinutes;
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+        Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ||
+        new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date ||
+        typeof startMinutes !== "number" || !Number.isInteger(startMinutes) || startMinutes < 0 || startMinutes >= 1440) {
+      throw new BookingInputError("Choose a valid date and time");
+    }
+    const pool = await requireSchema();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const bookingRows = await client.query(
+        `SELECT data_json, created_at FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'bookings' AND record_id = $2 AND owner_id = $3
+         FOR UPDATE`,
+        [projectId, recordId, ownerId]
+      );
+      if (!bookingRows.rowCount) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const current = JSON.parse(rowText(bookingRows.rows[0].data_json)) as Record<string, unknown>;
+      if (current.status !== "confirmed") throw new BookingConflictError("Cancelled appointments cannot be rescheduled");
+      const serviceId = current.serviceId;
+      const durationMinutes = current.durationMinutes;
+      if (typeof serviceId !== "string" || typeof durationMinutes !== "number" ||
+          !Number.isInteger(durationMinutes) || durationMinutes < 1 ||
+          startMinutes + durationMinutes > 1440) {
+        throw new BookingInputError("This appointment time is unavailable");
+      }
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))", [projectId, `${serviceId}:${date}`]);
+      const serviceRows = await client.query(
+        `SELECT 1 FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'services' AND record_id = $2 LIMIT 1`,
+        [projectId, serviceId]
+      );
+      if (!serviceRows.rowCount) throw new BookingInputError("This service is no longer available");
+      const existing = await client.query(
+        `SELECT data_json FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'bookings' AND record_id <> $2
+           AND data_json::jsonb ->> 'serviceId' = $3
+           AND data_json::jsonb ->> 'date' = $4`,
+        [projectId, recordId, serviceId, date]
+      );
+      const overlaps = existing.rows.some((row) => {
+        const other = JSON.parse(rowText(row.data_json)) as Record<string, unknown>;
+        if (other.status === "cancelled") return false;
+        const otherStart = Number(other.startMinutes);
+        const otherDuration = Number(other.durationMinutes);
+        return Number.isFinite(otherStart) && Number.isFinite(otherDuration) &&
+          startMinutes < otherStart + otherDuration && otherStart < startMinutes + durationMinutes;
+      });
+      if (overlaps) throw new BookingConflictError("This time was just booked. Choose another slot.");
+      const data = { ...current, date, startMinutes };
+      const updatedAt = new Date().toISOString();
+      await client.query(
+        `UPDATE public.builder_app_records SET data_json = $1, updated_at = $2
+         WHERE project_id = $3 AND collection_name = 'bookings' AND record_id = $4 AND owner_id = $5`,
+        [JSON.stringify(data), updatedAt, projectId, recordId, ownerId]
+      );
+      await client.query("COMMIT");
+      return { ...data, _id: recordId, createdAt: rowText(bookingRows.rows[0].created_at), updatedAt };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async upsertAppRecord(
@@ -725,6 +1117,82 @@ export const durableProjectStore = {
       [projectId, collection, recordId, ownerId || null]
     );
     return (res.rowCount ?? 0) > 0;
+  },
+
+  /** Atomically move only this browser's guest cart into its verified user account. */
+  async claimGuestCart(projectId: string, guestId: string, userId: string): Promise<AppRecord | null> {
+    const pool = await requireSchema();
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      // Two different guest sessions can sign in to the same account at once.
+      // Serialize their claims even when the user has no cart row yet to lock.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [projectId, userId]);
+      const records = await client.query(
+        `SELECT record_id, owner_id, data_json, created_at, updated_at
+         FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'carts' AND owner_id IN ($2, $3)
+         ORDER BY updated_at DESC FOR UPDATE`,
+        [projectId, `guest:${guestId}`, userId]
+      );
+      const guestRows = records.rows.filter((row) => rowText(row.owner_id) === `guest:${guestId}`);
+      const userRows = records.rows.filter((row) => rowText(row.owner_id) === userId);
+      if (guestRows.length === 0) {
+        await client.query("COMMIT");
+        return userRows[0] ? appRecordFromRow(userRows[0]) : null;
+      }
+
+      const merged = new Map<string, Record<string, unknown>>();
+      for (const row of [...userRows, ...guestRows]) {
+        const items = JSON.parse(rowText(row.data_json))?.items;
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+          if (!item || typeof item !== "object" ||
+            typeof item.productId !== "string" || !item.productId ||
+            !Number.isSafeInteger(item.qty) || item.qty < 1 || item.qty > 100) continue;
+          const variantId = typeof item.variantId === "string" ? item.variantId : "";
+          const key = `${item.productId}\0${variantId}`;
+          const previous = merged.get(key);
+          merged.set(key, previous
+            ? { ...previous, qty: Math.min(100, Number(previous.qty) + item.qty) }
+            : { ...item });
+          if (merged.size > 100) throw new Error("The saved bag has too many distinct products");
+        }
+      }
+      const items = [...merged.values()];
+      const now = new Date().toISOString();
+      const existing = userRows[0];
+      const recordId = existing ? rowText(existing.record_id) : randomUUID();
+      const base = existing ? JSON.parse(rowText(existing.data_json)) as Record<string, unknown> : {};
+      const data = { ...base, cartKey: userId, items };
+      if (existing) {
+        await client.query(
+          `UPDATE public.builder_app_records SET data_json = $1, updated_at = $2
+           WHERE project_id = $3 AND collection_name = 'carts' AND record_id = $4 AND owner_id = $5`,
+          [JSON.stringify(data), now, projectId, recordId, userId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO public.builder_app_records
+           (project_id, collection_name, record_id, owner_id, data_json, created_at, updated_at)
+           VALUES ($1, 'carts', $2, $3, $4, $5, $5)`,
+          [projectId, recordId, userId, JSON.stringify(data), now]
+        );
+      }
+      await client.query(
+        `DELETE FROM public.builder_app_records
+         WHERE project_id = $1 AND collection_name = 'carts'
+           AND (owner_id = $2 OR (owner_id = $3 AND record_id <> $4))`,
+        [projectId, `guest:${guestId}`, userId, recordId]
+      );
+      await client.query("COMMIT");
+      return { ...data, _id: recordId, createdAt: existing ? rowText(existing.created_at) : now, updatedAt: now };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async readPreviewAuthStorage(projectId: string, guestId: string, storageKey: string): Promise<string | null> {

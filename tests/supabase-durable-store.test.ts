@@ -66,6 +66,12 @@ test("Supabase PostgreSQL: durable project record persistence and tenant isolati
       /That project id is already owned by another tenant/
     );
 
+    // A delayed writer from another worker must not restore stale metadata.
+    const newer = { ...record, label: "Newest state", lastModifiedAt: new Date(Date.now() + 1_000).toISOString() };
+    await durableProjectStore.saveRecord(newer);
+    await durableProjectStore.saveRecord({ ...record, label: "Stale state" });
+    assert.equal((await durableProjectStore.loadRecord(projectId, tenant1))?.label, "Newest state");
+
     // 4. List records for tenant
     const records = await durableProjectStore.listRecords(tenant1);
     assert.ok(records.some((r) => r.projectId === projectId));
@@ -121,6 +127,38 @@ test("Supabase PostgreSQL: source and deployment snapshots with binary BYTEA int
     await durableProjectStore.remove(projectId, tenantId);
     fs.rmSync(tempWorkspace, { recursive: true, force: true });
     fs.rmSync(restoreWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("Supabase PostgreSQL: delayed source and deployment writers cannot replace newer snapshots", async () => {
+  const tenantId = `tenant-snapshot-${randomUUID()}`;
+  const projectId = `project-snapshot-${randomUUID()}`;
+  const older = mockRecord(tenantId, projectId);
+  const newer = { ...older, lastModifiedAt: new Date(Date.parse(older.lastModifiedAt) + 1_000).toISOString() };
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sb-snapshot-order-"));
+  const restored = fs.mkdtempSync(path.join(os.tmpdir(), "sb-snapshot-restored-"));
+  try {
+    fs.writeFileSync(path.join(workspace, "index.ts"), "export const version = 'old';");
+    await durableProjectStore.saveSource(older, workspace);
+    await durableProjectStore.saveDeployment(older, [{ path: "index.html", content: Buffer.from("old") }]);
+
+    fs.writeFileSync(path.join(workspace, "index.ts"), "export const version = 'new';");
+    await durableProjectStore.saveSource(newer, workspace);
+    await durableProjectStore.saveDeployment(newer, [{ path: "index.html", content: Buffer.from("new") }]);
+
+    fs.writeFileSync(path.join(workspace, "index.ts"), "export const version = 'stale';");
+    await assert.rejects(() => durableProjectStore.saveSource(older, workspace), /newer source snapshot/);
+    await assert.rejects(
+      () => durableProjectStore.saveDeployment(older, [{ path: "index.html", content: Buffer.from("stale") }]),
+      /newer deployment snapshot/
+    );
+    await durableProjectStore.restoreSource(projectId, tenantId, restored);
+    assert.equal(fs.readFileSync(path.join(restored, "index.ts"), "utf8"), "export const version = 'new';");
+    assert.equal(Buffer.from((await durableProjectStore.readDeploymentFile(projectId, "index.html"))!.content).toString(), "new");
+  } finally {
+    await durableProjectStore.remove(projectId, tenantId);
+    fs.rmSync(workspace, { recursive: true, force: true });
+    fs.rmSync(restored, { recursive: true, force: true });
   }
 });
 

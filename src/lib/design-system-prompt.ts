@@ -24,7 +24,7 @@ Avoid these generic tells unless the brief explicitly calls for them:
 
 ## 1. Required design decision comment
 
-Before coding, resolve the following. Because your response must contain only file blocks, place this completed block as a short comment at the top of src/app/page.tsx—never as prose outside the file:
+Before coding, resolve the following. Because your response must contain only file blocks, place this completed block as a short comment at the top of the single application entrypoint (normally src/App.tsx)—never as prose outside the file:
 
 Business type    → one primary type below (or an explicit marketing/app split)
 Visual style     → one coherent style below

@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
 import net from "net";
-import http from "http";
 import { spawn, ChildProcess } from "child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { localProjectStore } from "./project-store";
 import { purgeInvalidStaticHtml, writeStarterTemplate } from "./starter-template";
 import { validateGeneratedRuntime } from "./runtime-validator";
+import { probeBuiltPreview } from "./preview-readiness";
+import { generatedProcessEnvironment } from "./process-env";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const activeBuildProcesses = new Map<string, ChildProcess>();
@@ -28,33 +29,21 @@ function killProcessTree(proc: ChildProcess): void {
  */
 async function waitForServerReady(port: number, timeoutMs = 45000, signal?: AbortSignal): Promise<void> {
   const startTime = Date.now();
+  let lastError = "Preview did not answer";
 
   while (Date.now() - startTime < timeoutMs) {
     signal?.throwIfAborted();
-    const ok = await new Promise<boolean>((resolve) => {
-      const req = http.get(
-        { hostname: "127.0.0.1", port, path: "/", timeout: 2000, signal },
-        (res) => {
-          const healthy = (res.statusCode ?? 500) < 500;
-          res.resume();
-          resolve(healthy);
-        }
-      );
-      req.on("error", () => resolve(false));
-      req.on("timeout", () => {
-        req.destroy();
-        resolve(false);
-      });
-    });
+    const readiness = await probeBuiltPreview(`http://127.0.0.1:${port}/`, { signal, timeoutMs: 2_000 });
     signal?.throwIfAborted();
-    if (ok) {
+    if (readiness.ok) {
       console.log(`[local-sandbox] Server on port ${port} is ready`);
       return;
     }
+    lastError = readiness.error || lastError;
     await delay(250, undefined, { signal });
   }
 
-  throw new Error(`Server on port ${port} did not become ready within ${timeoutMs}ms`);
+  throw new Error(`Server on port ${port} did not become ready within ${timeoutMs}ms: ${lastError}`);
 }
 
 function linkSharedNodeModules(dir: string, projectId: string): void {
@@ -122,11 +111,9 @@ async function buildWorkspace(dir: string, viteBin: string, projectId: string, s
   const rootTsc = path.join(/* turbopackIgnore: true */ process.cwd(), ...tscSegments);
   const tscBin = fs.existsSync(workspaceTsc) ? workspaceTsc : rootTsc;
   if (tscBin && fs.existsSync(tscBin)) {
-    try {
-      await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
-    } catch (tscErr) {
-      console.warn(`[local-sandbox] Type validation warning for ${projectId} (proceeding with production build):`, tscErr instanceof Error ? tscErr.message : tscErr);
-    }
+    await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
+  } else {
+    throw new Error("Generated app type validation is unavailable because TypeScript is not installed");
   }
   await runBuildCommand(dir, [viteBin, "build"], projectId, "production build", signal);
   signal?.throwIfAborted();
@@ -146,7 +133,7 @@ async function runBuildCommand(
       cwd: dir,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: { ...process.env, NODE_ENV: "production" },
+      env: generatedProcessEnvironment("production"),
     });
     activeBuildProcesses.set(projectId, build);
     const onAbort = () => {
@@ -191,6 +178,15 @@ export const localSandboxManager = {
     const dir = localProjectStore.getWorkspaceDir(projectId);
     writeStarterTemplate(dir, projectId);
     linkSharedNodeModules(dir, projectId);
+  },
+
+  async validateTypes(projectId: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const dir = localProjectStore.getWorkspaceDir(projectId);
+    this.ensureProjectTemplate(projectId);
+    const tscBin = path.join(process.cwd(), "node_modules", "typescript", "bin", "tsc");
+    if (!fs.existsSync(tscBin)) throw new Error("Generated app type validation is unavailable because TypeScript is not installed");
+    await runBuildCommand(dir, [tscBin, "--noEmit"], projectId, "type validation", signal);
   },
 
   /** Live origin if a workspace process is already bound — does not wait or start. */
@@ -267,7 +263,7 @@ export const localSandboxManager = {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         env: {
-          ...process.env,
+          ...generatedProcessEnvironment("development"),
           NODE_ENV: "development",
           PORT: String(record.port),
           HOSTNAME: "127.0.0.1",

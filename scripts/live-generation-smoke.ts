@@ -89,7 +89,8 @@ async function main(): Promise<void> {
     const generationCompletedIndex = events.findIndex((event) => event.type === "generation_completed");
     assert.ok(previewReadyIndex >= 0 && generationCompletedIndex > previewReadyIndex,
       "Generation completed before preview readiness was verified");
-    assert.equal(record?.deployment?.status, "success", "Live generation did not produce a successful deployment");
+    assert.equal(record?.serverStatus, "Active", "Live generation did not mark the verified preview active");
+    assert.equal(record?.previewUrl, persistentPreviewPath(projectId), "Live generation did not publish the stable preview path");
     const index = await durableProjectStore.readDeploymentFile(projectId, "index.html");
     assert.ok(index, "Persistent preview index.html is missing");
     const html = Buffer.from(index.content).toString("utf8");

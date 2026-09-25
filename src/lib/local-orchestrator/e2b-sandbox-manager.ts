@@ -7,6 +7,9 @@ import { localProjectStore, persistentPreviewPath, persistentPreviewUrl } from "
 import { localSandboxManager } from "./sandbox-manager";
 import { purgeInvalidStaticHtml } from "./starter-template";
 import { GENERATED_RUNTIME_CHECK_SCRIPT } from "./runtime-validator";
+import { probeBuiltPreview, type PreviewReadiness } from "./preview-readiness";
+import { ensureWorkspaceDependencies } from "./dependency-scanner";
+import { isRuntimeOwnedGeneratedPath } from "./generation-validator";
 import {
   durableProjectStore,
   requireDurablePersistence,
@@ -224,17 +227,8 @@ class E2BSandboxManager {
     console.log(`[E2B] Synced ${files.length} source files for ${projectId}`);
   }
 
-  private async previewIsReady(previewUrl: string, signal?: AbortSignal): Promise<boolean> {
-    try {
-      const response = await fetch(previewUrl, {
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(4_000)]) : AbortSignal.timeout(4_000),
-        cache: "no-store",
-      });
-      return response.ok;
-    } catch {
-      signal?.throwIfAborted();
-      return false;
-    }
+  private async previewIsReady(previewUrl: string, signal?: AbortSignal): Promise<PreviewReadiness> {
+    return probeBuiltPreview(previewUrl, { signal });
   }
 
   private async createSandbox(projectId: string, apiKey: string): Promise<Sandbox> {
@@ -288,6 +282,20 @@ class E2BSandboxManager {
 
   private async compileAndStart(projectId: string, sandbox: Sandbox, signal?: AbortSignal): Promise<{ previewUrl: string; files: PersistedFile[] }> {
     signal?.throwIfAborted();
+    const workspaceDir = localProjectStore.getWorkspaceDir(projectId);
+    const generatedSources = this.collectWorkspaceFiles(projectId)
+      .filter((file) => file.path.startsWith("src/") && /\.[cm]?[jt]sx?$/.test(file.path))
+      .map((file) => ({ path: file.path, content: Buffer.from(file.content).toString("utf8") }))
+      .filter((file) => !isRuntimeOwnedGeneratedPath(file.path, file.content));
+    const dependencyChanges = await ensureWorkspaceDependencies(generatedSources, workspaceDir, signal);
+    if (dependencyChanges.added.length || dependencyChanges.installed.length) {
+      await localProjectStore.persistSource(projectId);
+    }
+    signal?.throwIfAborted();
+    // TypeScript needs more heap than the small E2B base VM offers for complex
+    // apps. It parses source without executing it, with no provider secrets in
+    // its environment. The executable build and preview still run in E2B.
+    await localSandboxManager.validateTypes(projectId, signal);
     await this.syncAllWorkspaceFiles(projectId, sandbox);
     signal?.throwIfAborted();
 
@@ -298,16 +306,6 @@ class E2BSandboxManager {
       );
     } catch (error) {
       throw commandFailure("Dependency installation failed", error);
-    }
-    signal?.throwIfAborted();
-
-    // Vite transpiles TypeScript without type-checking. An undeclared runtime
-    // symbol can therefore bundle successfully and crash only in the browser.
-    // Reject that class of failure before a preview can be marked ready.
-    try {
-      await sandbox.commands.run("npm exec tsc -- --noEmit", { timeoutMs: BUILD_TIMEOUT_MS });
-    } catch (error) {
-      throw commandFailure("Generated app failed to compile during type validation", error);
     }
     signal?.throwIfAborted();
 
@@ -350,13 +348,16 @@ class E2BSandboxManager {
     signal?.throwIfAborted();
 
     const previewUrl = `https://${sandbox.getHost(PREVIEW_PORT)}`;
+    let readinessError = "Preview did not answer";
     for (let attempt = 0; attempt < 30; attempt += 1) {
       signal?.throwIfAborted();
-      if (await this.previewIsReady(previewUrl, signal)) {
+      const readiness = await this.previewIsReady(previewUrl, signal);
+      if (readiness.ok) {
         const files = await this.downloadBuild(sandbox);
         signal?.throwIfAborted();
         return { previewUrl, files };
       }
+      readinessError = readiness.error || readinessError;
       await delay(1_000, undefined, { signal });
     }
 
@@ -364,7 +365,7 @@ class E2BSandboxManager {
       .run("tail -n 120 /tmp/bigbag-preview.log 2>/dev/null || true", { timeoutMs: 10_000 })
       .then((result) => boundedLog(result.stdout || result.stderr))
       .catch(() => "No preview logs were available");
-    throw new Error(`Preview server did not become ready:\n${logs}`);
+    throw new Error(`Preview server did not become ready: ${readinessError}\n${logs}`);
   }
 
   public async startDevServer(projectId: string, options: StartOptions = {}): Promise<string> {
@@ -466,8 +467,12 @@ class E2BSandboxManager {
           try {
             const build = await this.compileAndStart(projectId, sandbox, signal);
             signal.throwIfAborted();
-            const current = localProjectStore.getRecord(projectId);
+            // Claim a fresh deployment version for every validated build.
+            // Otherwise a retry of the same source has the previous snapshot
+            // timestamp and the durable store correctly rejects it as stale.
+            const current = localProjectStore.update(projectId, {});
             if (!current) throw new Error(`Project ${projectId} disappeared during deployment`);
+            await localProjectStore.flush(projectId);
             const deploymentFields: Record<string, unknown> = {
               serverStatus: "Active" as const,
               previewUrl: persistentPreviewPath(projectId),

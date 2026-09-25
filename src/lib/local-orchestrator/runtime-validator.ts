@@ -22,6 +22,19 @@ async function main() {
     pretendToBeVisual: true,
   });
   const window = dom.window;
+  for (const link of window.document.querySelectorAll('link[rel="stylesheet"][href]')) {
+    const href = link.getAttribute("href") || "";
+    const stylesheetUrl = new URL(href, "http://preview.invalid/");
+    // Optional font and third-party stylesheets do not determine whether our
+    // compiled application can start. Validate only build-owned CSS assets.
+    if (stylesheetUrl.origin !== "http://preview.invalid") continue;
+    const stylesheetPath = path.resolve(root, stylesheetUrl.pathname.replace(/^\/+/, ""));
+    if (!stylesheetPath.startsWith(root + path.sep)) throw new Error("Built preview references an unsafe stylesheet path");
+    const css = fs.readFileSync(stylesheetPath, "utf8");
+    if (!css.trim() || /@tailwind\s+utilities\b/.test(css)) {
+      throw new Error("Built preview stylesheet is empty or Tailwind utilities were not compiled");
+    }
+  }
   window.addEventListener("error", event => errors.push(event.error?.stack || event.message));
   window.addEventListener("unhandledrejection", event => errors.push(event.reason?.stack || String(event.reason)));
   window.matchMedia ||= () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
