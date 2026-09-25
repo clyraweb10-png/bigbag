@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { useTheme } from "next-themes";
 import { CLOUDINARY_ASSETS } from "@/lib/cloudinary-assets";
 import { getSupabaseClient } from "@/lib/supabase";
+import { establishServerSession } from "@/lib/auth-server-session";
 import { oauthCallbackUrl, resolveAppOrigin } from "@/lib/auth-redirect";
 import { cn } from "@/lib/utils";
 import { extractCleanUserName } from "@/lib/user-name";
@@ -113,21 +114,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (session?.user) {
           const authUser = mapSupabaseUser(session.user);
-          setUser(authUser);
-          setError(null);
-
           // Ensure HttpOnly server cookies are synced
           if (!hasServerSession) {
-            await serializeSessionMutation(async () => {
-              if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
-              return fetch("/api/auth/session", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ accessToken: session.access_token }),
-              });
+            const confirmed = await serializeSessionMutation(async () => {
+              if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return false;
+              await establishServerSession(session.access_token);
+              return true;
             });
+            if (!confirmed || localStorage.getItem(SIGNING_OUT_KEY) !== null) {
+              setUser(null);
+              setStatus("unauthenticated");
+              return;
+            }
           }
-          if (active) setStatus("authenticated");
+          if (active) {
+            setUser(authUser);
+            setError(null);
+            setStatus("authenticated");
+          }
         } else {
           const signingOut = localStorage.getItem(SIGNING_OUT_KEY) !== null;
           if (hasServerSession && !signingOut && sessionPayload?.data?.user) {
@@ -140,6 +144,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if (!active) return;
         console.error("Failed to load Supabase auth session:", err);
+        setUser(null);
+        setError(err instanceof Error ? err.message : "Session verification failed");
         setStatus("unauthenticated");
       } finally {
         serverBootstrapComplete = true;
@@ -168,22 +174,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const mapped = mapSupabaseUser(session.user);
-      setUser(mapped);
-      setError(null);
-
       try {
-        await serializeSessionMutation(async () => {
-          if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return null;
-          return fetch("/api/auth/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken: session.access_token }),
-          });
+        const confirmed = await serializeSessionMutation(async () => {
+          if (localStorage.getItem(SIGNING_OUT_KEY) !== null) return false;
+          await establishServerSession(session.access_token);
+          return true;
         });
-        if (active) setStatus("authenticated");
+        if (active && confirmed && localStorage.getItem(SIGNING_OUT_KEY) === null) {
+          setUser(mapSupabaseUser(session.user));
+          setError(null);
+          setStatus("authenticated");
+        }
       } catch (sessionError) {
         if (!active) return;
+        setUser(null);
         setError(sessionError instanceof Error ? sessionError.message : "Session verification failed");
         setStatus("unauthenticated");
       }

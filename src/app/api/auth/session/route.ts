@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE, authCookieOptions, createAuthSession, verifyAuthSession } from "@/lib/auth-session";
 import { attachLocalTenantCookie, tenantContextForIdentity, TENANT_COOKIE } from "@/lib/local-orchestrator/tenant-context";
-import { getSupabaseAdminClient, getSupabaseClient, getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase";
+import { getSupabaseClient, getSupabaseUrl, getSupabaseAnonKey } from "@/lib/supabase";
 import { extractCleanUserName } from "@/lib/user-name";
 
 export async function POST(request: NextRequest) {
-  const supabase = getSupabaseAdminClient() || getSupabaseClient();
+  // Token verification needs the public Auth API, not the administrative key.
+  // An invalid service-role key must not block an otherwise valid Google login.
+  const supabase = getSupabaseClient();
   if (!supabase) {
     return NextResponse.json({ ok: false, error: "Supabase authentication is not configured" }, { status: 503 });
   }
