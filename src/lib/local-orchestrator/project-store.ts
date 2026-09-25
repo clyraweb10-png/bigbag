@@ -55,12 +55,16 @@ export function persistentPreviewUrl(projectId: string): string {
 export function toVcaasProject(record: LocalProjectRecord): VcaasProject {
   const previewUrl = persistentPreviewPath(record.projectId);
   
-  // Map local server status to VCaaS expected status
+  // Map local server status to VCaaS expected status.
+  // "Error" and "Stopped" map to "Archived" so the workspace's server-wake flow
+  // activates and the user is prompted to restart instead of seeing a misleading
+  // "Starting" spinner that never resolves. "Starting" stays as-is for projects
+  // genuinely mid-start (e.g. build in progress).
   let serverStatus: "Active" | "Starting" | "Creating" | "Archived" | "Unarchiving" | "Archiving";
   if (record.serverStatus === "Active") {
     serverStatus = "Active";
-  } else if (record.serverStatus === "Error") {
-    serverStatus = "Starting"; // Treat errors as needing to start
+  } else if (record.serverStatus === "Error" || record.serverStatus === "Stopped") {
+    serverStatus = "Archived";
   } else {
     serverStatus = "Starting";
   }

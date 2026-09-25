@@ -104,6 +104,47 @@ function previewBootPage(): NextResponse {
     });
 }
 
+/**
+ * Shown when the project's build failed and there is nothing to preview.
+ * Uses a slower auto-refresh (30 s) and an actionable message so the user
+ * is not left staring at an infinite spinner.
+ */
+function previewErrorPage(errorMessage?: string): NextResponse {
+    const detail = errorMessage
+        ? `<p style="margin-top:8px;font-size:13px;max-width:480px;word-break:break-word;color:#71717a;">${escapeHtml(errorMessage)}</p>`
+        : "";
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="refresh" content="30" />
+  <title>Preview unavailable</title>
+  <style>
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      font-family: ui-sans-serif, system-ui, sans-serif; background:#1d1d1c; color:#a1a1aa; }
+    .card { text-align:center; max-width:520px; padding:24px; }
+    .icon { font-size:32px; margin-bottom:12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">⚠️</div>
+    <p><strong style="color:#e4e4e7;">Preview unavailable</strong></p>
+    <p style="font-size:14px;">The last build did not complete successfully. Send a new prompt in the chat to regenerate the project.</p>
+    ${detail}
+  </div>
+</body>
+</html>`;
+    return new NextResponse(html, {
+        status: 503,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "retry-after": "30" },
+    });
+}
+
+function escapeHtml(text: string): string {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 const APP_DATA_PATH = "__bigbag";
 const APP_DATA_MAX_BODY_BYTES = 64 * 1024;
 
@@ -617,6 +658,20 @@ async function handle(
         if (runningOrigin) {
             return proxyLocalDevelopment(request, projectId, targetSegments, runningOrigin, writeCapability);
         }
+
+        // When the project is in error state with no successful deployment,
+        // show a clear error page instead of the infinite "Starting preview…"
+        // boot spinner. The boot page auto-refreshes every 5 s and is designed
+        // for a server that IS coming up; a failed build will never come up on
+        // its own, so the user needs an actionable message instead.
+        if (
+            localRecord?.serverStatus === "Error" &&
+            localRecord.deployment?.status !== "success" &&
+            documentRequest
+        ) {
+            return previewErrorPage(localRecord.deployment?.errorMessage);
+        }
+
         return servePersistentDeployment(request, projectId, targetSegments, writeCapability);
     }
 
