@@ -91,7 +91,7 @@ async function main(): Promise<void> {
       "Generation completed before preview readiness was verified");
     assert.equal(record?.serverStatus, "Active", "Live generation did not mark the verified preview active");
     assert.equal(record?.previewUrl, persistentPreviewPath(projectId), "Live generation did not publish the stable preview path");
-    const index = await durableProjectStore.readDeploymentFile(projectId, "index.html");
+    const index = await durableProjectStore.readPreviewFile(projectId, "index.html");
     assert.ok(index, "Persistent preview index.html is missing");
     const html = Buffer.from(index.content).toString("utf8");
     assert.match(html, /<div id="root"><\/div>/, "Persistent preview has no React root");
