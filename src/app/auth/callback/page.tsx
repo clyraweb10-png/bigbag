@@ -6,6 +6,7 @@ import { BigBagLogo } from "@/components/BigBagLogo";
 import { Loader2 } from "lucide-react";
 import { safeAuthReturnPath, resolveAppOrigin } from "@/lib/auth-redirect";
 import { extractCleanUserName } from "@/lib/user-name";
+import { establishServerSession } from "@/lib/auth-server-session";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 // The canonical destination after auth.
@@ -137,31 +138,11 @@ export default function AuthCallbackPage() {
               try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
             }
           }
-          const res = await fetch("/api/auth/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken }),
-          });
-          const payload = (await res.json().catch(() => null)) as {
-            ok?: boolean;
-            data?: { displayName?: string; email?: string };
-          } | null;
-
-          if (payload?.data) {
-            const name = extractCleanUserName(payload.data.displayName || payload.data.email);
-            if (name) {
-              setUserName(name);
-              try { localStorage.setItem("bigbag:auth:user-name", name); } catch {}
-            }
-          }
-
-          if (payload?.ok) {
-            const destination = getAuthDestination(searchParams);
-            const origin = resolveAppOrigin();
-            window.location.href = `${origin}${destination}`;
-            return true;
-          }
-          return false;
+          await establishServerSession(accessToken);
+          const destination = getAuthDestination(searchParams);
+          const origin = resolveAppOrigin();
+          window.location.href = `${origin}${destination}`;
+          return true;
         };
 
         // 5. Try to get the session immediately (exchange above may have set it)
