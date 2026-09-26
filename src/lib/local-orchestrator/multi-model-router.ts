@@ -244,49 +244,33 @@ class MultiModelRouter {
   public getProviders(): ModelProviderConfig[] {
     const providers: ModelProviderConfig[] = [];
 
-    // 1. Google Gemini — primary by product policy.
-    const geminiKey = process.env.GEMINI_API_KEY?.trim() || "";
-    if (geminiKey) {
-      let geminiBase = (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").trim();
-      if (geminiBase.includes("generativelanguage.googleapis.com") && !geminiBase.includes("/openai")) {
-        geminiBase = "https://generativelanguage.googleapis.com/v1beta/openai";
-      }
-
-      providers.push({
-        id: "gemini-flash",
-        name: "Google Gemini (gemini-2.5-flash)",
-        baseUrl: geminiBase,
-        apiKey: geminiKey,
-        model: process.env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
-        maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || "16384", 10),
-        maxRetries: GEMINI_MAX_RETRIES,
-      });
-    }
-
-    // 2. Above.dev GLM-5.3-Flash — fallback when Gemini is unavailable.
+    // Above.dev GLM-5.3-Flash — sole generation provider.
     const aboveKey = (process.env.ABOVE_API_KEY || process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
     if (aboveKey) {
       const aboveModel = (process.env.ABOVE_MODEL || process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "glm-5.3-flash-modal").trim();
+      const aboveBase = (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, "");
+      const aboveMaxTokens = parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10);
+      const aboveEffort = /(?:^|\/)glm-5\.3(?:-|$)/i.test(aboveModel) ? "low" : undefined;
       providers.push({
         id: "above-glm53",
         name: "Above.dev (GLM-5.3-Flash)",
-        baseUrl: (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, ""),
+        baseUrl: aboveBase,
         apiKey: aboveKey,
         model: aboveModel,
-        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
+        maxTokens: aboveMaxTokens,
         maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(aboveModel) ? "low" : undefined,
+        reasoningEffort: aboveEffort,
       });
-      // Backwards-compatible alias so any existing references to "telnyx-glm" still resolve.
+      // Backwards-compatible alias for any existing "telnyx-glm" references.
       providers.push({
         id: "telnyx-glm",
         name: "Above.dev (GLM-5.3-Flash)",
-        baseUrl: (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, ""),
+        baseUrl: aboveBase,
         apiKey: aboveKey,
         model: aboveModel,
-        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
+        maxTokens: aboveMaxTokens,
         maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(aboveModel) ? "low" : undefined,
+        reasoningEffort: aboveEffort,
       });
     }
 

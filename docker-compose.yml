@@ -13,12 +13,8 @@ services:
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - ORCHESTRATOR_MODE=${ORCHESTRATOR_MODE:-local}
-      - SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-local}
+      - SANDBOX_PROVIDER=${SANDBOX_PROVIDER:-e2b}
       - E2B_API_KEY=${E2B_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
-      - GEMINI_BASE_URL=${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
-      - GEMINI_MAX_TOKENS=${GEMINI_MAX_TOKENS:-16384}
       - ABOVE_API_KEY=${ABOVE_API_KEY:-}
       - ABOVE_MODEL=${ABOVE_MODEL:-glm-5.3-flash-modal}
       - ABOVE_BASE_URL=${ABOVE_BASE_URL:-https://api.above.dev/v1}

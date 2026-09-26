@@ -1032,32 +1032,25 @@ test("authentication redirects preserve safe app destinations and reject open re
 });
 
 test("Gemini is first and GLM-5.3-Flash is the fallback", () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.ABOVE_API_KEY;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.ABOVE_API_KEY = "test-above";
+    const previousAbove = process.env.ABOVE_API_KEY;
+    process.env.ABOVE_API_KEY = "test-above";
   try {
     assert.deepEqual(multiModelRouter.getProviders().map((provider) => provider.id), [
-      "gemini-flash",
       "above-glm53",
       "telnyx-glm",
     ]);
     assert.equal(multiModelRouter.getProviders()[0].maxRetries, 5);
     assert.equal(GEMINI_MAX_RETRIES, 5);
   } finally {
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
 test("token-limited model output continues, merges safely, and keeps provider identity private", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.ABOVE_API_KEY;
+  const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  delete process.env.ABOVE_API_KEY;
+  process.env.ABOVE_API_KEY = "test-above";
   const statuses: string[] = [];
   const requestBodies: Array<{ messages?: Array<{ role: string; content: string }> }> = [];
   let requestCount = 0;
@@ -1104,19 +1097,15 @@ test("token-limited model output continues, merges safely, and keeps provider id
     );
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
 test("provider exhaustion and failover statuses keep provider identity private", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.ABOVE_API_KEY;
+    const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.ABOVE_API_KEY = "test-above";
+    process.env.ABOVE_API_KEY = "test-above";
   const statuses: string[] = [];
   global.fetch = (async () => Response.json(
     { error: { message: "invalid test credential" } },
@@ -1143,19 +1132,15 @@ test("provider exhaustion and failover statuses keep provider identity private",
     ]);
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
 test("specialized vision requests stay on the required provider and preserve image inputs", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.ABOVE_API_KEY;
+    const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  process.env.ABOVE_API_KEY = "test-above";
+    process.env.ABOVE_API_KEY = "test-above";
   const requestedUrls: string[] = [];
   let requestBody: { messages?: Array<{ content?: unknown }> } = {};
 
@@ -1187,20 +1172,16 @@ test("specialized vision requests stay on the required provider and preserve ima
     ]);
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
 test("reference analysis falls back to metadata without retrying non-retryable multimodal requests", async () => {
-  const previousTelnyx = process.env.ABOVE_API_KEY;
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousFetch = global.fetch;
+  const previousAbove = process.env.ABOVE_API_KEY;
+    const previousFetch = global.fetch;
   process.env.ABOVE_API_KEY = "test-above";
-  delete process.env.GEMINI_API_KEY;
-  const requestImageCounts: number[] = [];
+    const requestImageCounts: number[] = [];
   const validSpecification = {
     reference_url: "https://example.test/",
     design_summary: "A restrained editorial landing page with a centered content column.",
@@ -1260,10 +1241,8 @@ test("reference analysis falls back to metadata without retrying non-retryable m
     assert.match(result.implementationContext, /VALIDATED REFERENCE DESIGN SPECIFICATION/);
   } finally {
     global.fetch = previousFetch;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
@@ -1275,11 +1254,9 @@ test("reference design schema rejects incomplete output", () => {
 });
 
 test("plain-text overloads retry and repeated continuations cannot produce false success", async () => {
-  const previousGemini = process.env.GEMINI_API_KEY;
-  const previousTelnyx = process.env.ABOVE_API_KEY;
+    const previousAbove = process.env.ABOVE_API_KEY;
   const previousFetch = global.fetch;
-  process.env.GEMINI_API_KEY = "test-gemini";
-  delete process.env.ABOVE_API_KEY;
+    delete process.env.ABOVE_API_KEY;
   let requestCount = 0;
 
   global.fetch = (async () => {
@@ -1310,10 +1287,8 @@ test("plain-text overloads retry and repeated continuations cannot produce false
     assert.equal(requestCount, 4);
   } finally {
     global.fetch = previousFetch;
-    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousGemini;
-    if (previousTelnyx === undefined) delete process.env.ABOVE_API_KEY;
-    else process.env.ABOVE_API_KEY = previousTelnyx;
+    if (previousAbove === undefined) delete process.env.ABOVE_API_KEY;
+    else process.env.ABOVE_API_KEY = previousAbove;
   }
 });
 
