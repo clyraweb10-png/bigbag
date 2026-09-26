@@ -263,19 +263,30 @@ class MultiModelRouter {
       });
     }
 
-    // 2. Telnyx GLM-5.3-Flash — fallback when Gemini is unavailable.
-    const telnyxKey = (process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
-    if (telnyxKey) {
-      const telnyxModel = (process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "zai-org/GLM-5.3-Flash").trim();
+    // 2. Above.dev GLM-5.3-Flash — fallback when Gemini is unavailable.
+    const aboveKey = (process.env.ABOVE_API_KEY || process.env.TELNYX_API_KEY || process.env.CUSTOM_OPENAI_API_KEY || "").trim();
+    if (aboveKey) {
+      const aboveModel = (process.env.ABOVE_MODEL || process.env.TELNYX_MODEL || process.env.CUSTOM_OPENAI_MODEL || "glm-5.3-flash-modal").trim();
+      providers.push({
+        id: "above-glm53",
+        name: "Above.dev (GLM-5.3-Flash)",
+        baseUrl: (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, ""),
+        apiKey: aboveKey,
+        model: aboveModel,
+        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
+        maxRetries: DEFAULT_MAX_RETRIES,
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(aboveModel) ? "low" : undefined,
+      });
+      // Backwards-compatible alias so any existing references to "telnyx-glm" still resolve.
       providers.push({
         id: "telnyx-glm",
-        name: "Telnyx AI (zai-org/GLM-5.3-Flash)",
-        baseUrl: (process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.telnyx.com/v2/ai/openai").trim(),
-        apiKey: telnyxKey,
-        model: telnyxModel,
-        maxTokens: parseInt(process.env.TELNYX_MAX_TOKENS || "16384", 10),
+        name: "Above.dev (GLM-5.3-Flash)",
+        baseUrl: (process.env.ABOVE_BASE_URL || process.env.TELNYX_BASE_URL || process.env.CUSTOM_OPENAI_BASE_URL || "https://api.above.dev/v1").trim().replace(/\/$/, ""),
+        apiKey: aboveKey,
+        model: aboveModel,
+        maxTokens: parseInt(process.env.ABOVE_MAX_TOKENS || process.env.TELNYX_MAX_TOKENS || "8192", 10),
         maxRetries: DEFAULT_MAX_RETRIES,
-        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(telnyxModel) ? "low" : undefined,
+        reasoningEffort: /(?:^|\/)glm-5\.3(?:-|$)/i.test(aboveModel) ? "low" : undefined,
       });
     }
 
@@ -567,7 +578,7 @@ class MultiModelRouter {
 
     if (configuredProviders.length === 0) {
       throw new Error(
-        "No AI API keys configured. Please configure GEMINI_API_KEY or TELNYX_API_KEY."
+        "No AI API keys configured. Please configure GEMINI_API_KEY or ABOVE_API_KEY."
       );
     }
 

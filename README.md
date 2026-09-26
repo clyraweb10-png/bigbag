@@ -97,9 +97,9 @@ Create a `.env.local` file in the project root:
 ORCHESTRATOR_MODE=local
 SANDBOX_PROVIDER=e2b
 
-# Gemini is primary; Telnyx GLM-5.3-Flash is the automatic fallback:
+# Gemini is primary; Above.dev GLM-5.3-Flash is the automatic fallback:
 GEMINI_API_KEY=your_gemini_api_key
-TELNYX_API_KEY=your_telnyx_api_key
+ABOVE_API_KEY=your_above_api_key
 
 # Fast chat and planning tier:
 GROQ_API_KEY=your_groq_api_key
@@ -134,7 +134,7 @@ Open **[http://localhost:3000](http://localhost:3000)**, type what you want to b
 | `ORCHESTRATOR_MODE` | ⬜ Optional | Set to `local` to use the built-in multi-model local orchestrator. |
 | `SANDBOX_PROVIDER` | ⬜ Optional | Sandbox runtime (`local` or `e2b`). |
 | `GEMINI_API_KEY` | ⬜ Optional | Google Gemini API key for code generation (`gemini-2.5-flash`). |
-| `TELNYX_API_KEY` | ⬜ Optional | Telnyx API key for fallback inference (`zai-org/GLM-5.3-Flash`). |
+| `ABOVE_API_KEY` | ⬜ Optional | Above.dev API key for fallback inference (`glm-5.3-flash-modal`). |
 | `GROQ_API_KEY` | ⬜ Optional | Primary fast provider for chat, implementation planning, and plan refinement. |
 | `GLM_API_KEY` | ⬜ Optional | Zhipu BigModel fallback for chat and planning (`GLM-4.7-Flash`, then `glm-4.5-flash`). |
 | `E2B_API_KEY` | ✅ E2B mode | Disposable coding/build sandboxes. Hobby's one-hour maximum is supported. |

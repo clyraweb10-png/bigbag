@@ -19,10 +19,10 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GEMINI_BASE_URL=${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
       - GEMINI_MAX_TOKENS=${GEMINI_MAX_TOKENS:-16384}
-      - TELNYX_API_KEY=${TELNYX_API_KEY:-}
-      - TELNYX_MODEL=${TELNYX_MODEL:-zai-org/GLM-5.3-Flash}
-      - TELNYX_BASE_URL=${TELNYX_BASE_URL:-https://api.telnyx.com/v2/ai/openai}
-      - TELNYX_MAX_TOKENS=${TELNYX_MAX_TOKENS:-16384}
+      - ABOVE_API_KEY=${ABOVE_API_KEY:-}
+      - ABOVE_MODEL=${ABOVE_MODEL:-glm-5.3-flash-modal}
+      - ABOVE_BASE_URL=${ABOVE_BASE_URL:-https://api.above.dev/v1}
+      - ABOVE_MAX_TOKENS=${ABOVE_MAX_TOKENS:-8192}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://vibecode-spzy.onrender.com}
       - TOTALUM_VCAAS_API_KEY=${TOTALUM_VCAAS_API_KEY:-local-orchestrator-active}
     volumes:
